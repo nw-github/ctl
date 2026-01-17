@@ -281,6 +281,10 @@ impl<T> Located<T> {
     pub fn nowhere(data: T) -> Self {
         Self { span: Span::default(), data }
     }
+
+    pub fn as_ref(&self) -> Located<&T> {
+        Located::new(self.span, &self.data)
+    }
 }
 
 impl<T: std::fmt::Debug> std::fmt::Debug for Located<T> {

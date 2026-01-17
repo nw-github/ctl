@@ -938,12 +938,13 @@ fn get_document_symbols(proj: &Project, src: &str, file: FileId) -> Vec<Document
             kind = SymbolKind::ENUM_MEMBER;
         }
 
-        let range = Diagnostics::get_span_range(src, func.name.span, OffsetMode::Utf16);
+        let selection_range = Diagnostics::get_span_range(src, func.name.span, OffsetMode::Utf16);
+        let range = Diagnostics::get_span_range(src, func.full_span, OffsetMode::Utf16);
         DocumentSymbol {
             name: proj.strings.resolve(&func.name.data).into(),
             kind,
             range,
-            selection_range: range,
+            selection_range,
             children: None,
             detail: None,
             tags: None,
@@ -993,12 +994,13 @@ fn get_document_symbols(proj: &Project, src: &str, file: FileId) -> Vec<Document
             });
         }
 
-        let range = Diagnostics::get_span_range(src, ut.name.span, OffsetMode::Utf16);
+        let range = Diagnostics::get_span_range(src, ut.full_span, OffsetMode::Utf16);
+        let selection_range = Diagnostics::get_span_range(src, ut.name.span, OffsetMode::Utf16);
         result.push(DocumentSymbol {
             name: proj.strings.resolve(&ut.name.data).into(),
             kind,
             range,
-            selection_range: range,
+            selection_range,
             children: (!children.is_empty()).then_some(children),
             detail: None,
             tags: None,

@@ -810,11 +810,17 @@ impl<'a> TypeChecker<'a> {
         id
     }
 
-    fn declare_struct(&mut self, base: &Struct, attrs: &Attributes, packed: bool) -> DStmt {
+    fn declare_struct(
+        &mut self,
+        span: Span,
+        base: &Struct,
+        attrs: &Attributes,
+        packed: bool,
+    ) -> DStmt {
         let pub_constructor = base.public && !base.members.iter().any(|m| !m.public);
         let (ut, init, fns, impls) = self.enter(ScopeKind::None, |this| {
             let init = this.enter(ScopeKind::None, |this| {
-                this.declare_fn(&Fn {
+                this.declare_fn(Located::nowhere(&Fn {
                     public: pub_constructor,
                     name: base.name,
                     is_async: false,
@@ -836,7 +842,7 @@ impl<'a> TypeChecker<'a> {
                     body: None,
                     attrs: Default::default(),
                     typ: FunctionType::Normal,
-                })
+                }))
             });
             let mut members = IndexMap::with_capacity(base.members.len());
             for member in base.members.iter() {
@@ -869,6 +875,7 @@ impl<'a> TypeChecker<'a> {
                 block_data,
                 &blocks,
                 &subscripts,
+                span,
             );
 
             fns.extend(subscripts);
@@ -896,6 +903,7 @@ impl<'a> TypeChecker<'a> {
 
     fn declare_union(
         &mut self,
+        span: Span,
         tag: Option<TypeHint>,
         base: &Struct,
         pvariants: &[Variant],
@@ -976,7 +984,7 @@ impl<'a> TypeChecker<'a> {
                     },
                 );
 
-                fns.push(this.declare_fn(&Fn {
+                fns.push(this.declare_fn(Located::nowhere(&Fn {
                     public: base.public,
                     name: Located::new(variant.name.span, variant.name.data),
                     is_extern: false,
@@ -989,7 +997,7 @@ impl<'a> TypeChecker<'a> {
                     body: None,
                     attrs: Default::default(),
                     typ: FunctionType::Normal,
-                }));
+                })));
             }
             let member_cons_len = fns.len();
             fns.extend(this.declare_fns_iter(&base.functions));
@@ -1006,6 +1014,7 @@ impl<'a> TypeChecker<'a> {
                 block_data,
                 &blocks,
                 &subscripts,
+                span,
             );
 
             fns.extend(subscripts);
@@ -1021,7 +1030,7 @@ impl<'a> TypeChecker<'a> {
         DStmt::Union { id, impls, fns }
     }
 
-    fn declare_unsafe_union(&mut self, base: &Struct, attrs: &Attributes) -> DStmt {
+    fn declare_unsafe_union(&mut self, span: Span, base: &Struct, attrs: &Attributes) -> DStmt {
         let (ut, fns, impls) = self.enter(ScopeKind::None, |this| {
             let mut members = IndexMap::with_capacity(base.members.len());
             for member in base.members.iter() {
@@ -1050,6 +1059,7 @@ impl<'a> TypeChecker<'a> {
                 block_data,
                 &blocks,
                 &subscripts,
+                span,
             );
             fns.extend(subscripts);
             (ut, fns, blocks)
@@ -1139,11 +1149,15 @@ impl<'a> TypeChecker<'a> {
                     DStmt::ModuleOOL { name }
                 }
             }
-            PStmtData::Struct { base, packed } => self.declare_struct(base, &stmt.attrs, *packed),
-            PStmtData::Union { tag, base, variants } => {
-                self.declare_union(*tag, base, variants, &stmt.attrs)
+            PStmtData::Struct { base, packed } => {
+                self.declare_struct(stmt.data.span, base, &stmt.attrs, *packed)
             }
-            PStmtData::UnsafeUnion(base) => self.declare_unsafe_union(base, &stmt.attrs),
+            PStmtData::Union { tag, base, variants } => {
+                self.declare_union(stmt.data.span, *tag, base, variants, &stmt.attrs)
+            }
+            PStmtData::UnsafeUnion(base) => {
+                self.declare_unsafe_union(stmt.data.span, base, &stmt.attrs)
+            }
             &PStmtData::Trait {
                 public,
                 name,
@@ -1184,6 +1198,7 @@ impl<'a> TypeChecker<'a> {
                         vec![],
                         &[],
                         &[],
+                        stmt.data.span,
                     );
                     (tr, fns, this_id)
                 });
@@ -1214,6 +1229,7 @@ impl<'a> TypeChecker<'a> {
                         block_data,
                         &blocks,
                         &subscripts,
+                        stmt.data.span,
                     );
                     fns.extend(subscripts);
                     (ext, blocks, fns)
@@ -1224,7 +1240,7 @@ impl<'a> TypeChecker<'a> {
                 self.proj.scopes[scope].kind = ScopeKind::UserType(id);
                 DStmt::Extension { id, impls: impl_blocks, fns }
             }
-            PStmtData::Fn(f) => DStmt::Fn(self.declare_fn(f)),
+            PStmtData::Fn(f) => DStmt::Fn(self.declare_fn(Located::new(stmt.data.span, f))),
             &PStmtData::Binding { public, constant, mut name, mutable, ty, value, is_extern } => {
                 let ty = self.declare_type_hint(ty);
                 let mut unused = true;
@@ -1278,10 +1294,11 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn declare_fn(&mut self, f: &Fn) -> DFn {
-        let span = f.name.span;
+    fn declare_fn(&mut self, f: Located<&Fn>) -> DFn {
+        let full_span = f.span;
+        let f = f.data;
         if f.variadic && (!f.is_extern || f.body.is_some()) {
-            self.error(Error::new("only imported extern functions may be variadic", span))
+            self.error(Error::new("only imported extern functions may be variadic", f.name.span))
         }
 
         let attrs = FunctionAttrs::relevant(f.name.data, &f.attrs, &mut self.proj);
@@ -1302,6 +1319,7 @@ impl<'a> TypeChecker<'a> {
                 body: None,
                 body_scope: ScopeId::ROOT,
                 constructor: None,
+                full_span,
             },
             f.public,
             true,
@@ -1350,7 +1368,7 @@ impl<'a> TypeChecker<'a> {
     ) -> impl Iterator<Item = DFn> + use<'_, 'a, 'b> {
         fns.iter().flat_map(|f| {
             if !self.check_disabled(&f.data.attrs, f.span, false) {
-                Some(self.declare_fn(&f.data))
+                Some(self.declare_fn(f.as_ref()))
             } else {
                 None
             }
@@ -1369,66 +1387,71 @@ impl<'a> TypeChecker<'a> {
             return;
         }
 
+        let full_span = f.span;
         let f = &f.data;
 
         use OperatorFnType as O;
-        let (tr_name, fn_name, ty_args) = match f.name.data {
-            O::Minus if f.params.len() > 1 => {
-                let op = BinaryOp::try_from(f.name.data).unwrap();
-                let (tr_name, fn_name) = self.get_binary_op(op).unwrap();
-                (
-                    tr_name,
-                    fn_name,
-                    vec![
-                        f.params
-                            .get(1)
-                            .map(|p| p.ty)
-                            .unwrap_or(Located::nowhere(PExprArena::HINT_ERROR)),
-                        f.ret.unwrap_or(PExprArena::HINT_VOID),
-                    ],
-                )
-            }
-            O::Minus | O::Bang => {
-                let op = UnaryOp::try_from_postfix_fn(f.name.data).unwrap();
-                let (tr_name, fn_name) = self.get_unary_op(op).unwrap();
-                (tr_name, fn_name, vec![f.ret.unwrap_or(PExprArena::HINT_VOID)])
-            }
-            O::Increment | O::Decrement => {
-                let op = UnaryOp::try_from_postfix_fn(f.name.data).unwrap();
-                let (tr_name, fn_name) = self.get_unary_op(op).unwrap();
-                (tr_name, fn_name, vec![])
-            }
-            O::Subscript | O::SubscriptAssign => {
-                let name = intern!(self, "$sub{}", subscripts.len());
-                subscripts.push(self.declare_fn(&Fn::from_operator_fn(name, f.clone())));
-                return;
-            }
-            _ => {
-                let op = BinaryOp::try_from(f.name.data).unwrap();
-                let (tr_name, fn_name) = self.get_binary_op(op).unwrap();
-                if let Some(p) =
-                    f.params.get(1).filter(|_| matches!(f.name.data, O::Cmp | O::Eq)).cloned()
-                {
-                    if let TypeHintData::Ptr(inner) = self.parsed.hints.get(p.ty.data) {
-                        (tr_name, fn_name, vec![*inner])
-                    } else {
-                        // impl check will take care of issuing an error for this case
-                        (tr_name, fn_name, vec![p.ty])
-                    }
-                } else {
-                    let mut args = vec![
-                        f.params
-                            .get(1)
-                            .map(|p| p.ty)
-                            .unwrap_or(Located::nowhere(PExprArena::HINT_ERROR)),
-                    ];
-                    if !op.is_assignment() {
-                        args.push(f.ret.unwrap_or(PExprArena::HINT_VOID));
-                    }
-                    (tr_name, fn_name, args)
+        let (tr_name, fn_name, ty_args) =
+            match f.name.data {
+                O::Minus if f.params.len() > 1 => {
+                    let op = BinaryOp::try_from(f.name.data).unwrap();
+                    let (tr_name, fn_name) = self.get_binary_op(op).unwrap();
+                    (
+                        tr_name,
+                        fn_name,
+                        vec![
+                            f.params
+                                .get(1)
+                                .map(|p| p.ty)
+                                .unwrap_or(Located::nowhere(PExprArena::HINT_ERROR)),
+                            f.ret.unwrap_or(PExprArena::HINT_VOID),
+                        ],
+                    )
                 }
-            }
-        };
+                O::Minus | O::Bang => {
+                    let op = UnaryOp::try_from_postfix_fn(f.name.data).unwrap();
+                    let (tr_name, fn_name) = self.get_unary_op(op).unwrap();
+                    (tr_name, fn_name, vec![f.ret.unwrap_or(PExprArena::HINT_VOID)])
+                }
+                O::Increment | O::Decrement => {
+                    let op = UnaryOp::try_from_postfix_fn(f.name.data).unwrap();
+                    let (tr_name, fn_name) = self.get_unary_op(op).unwrap();
+                    (tr_name, fn_name, vec![])
+                }
+                O::Subscript | O::SubscriptAssign => {
+                    let name = intern!(self, "$sub{}", subscripts.len());
+                    subscripts.push(self.declare_fn(Located::new(
+                        full_span,
+                        &Fn::from_operator_fn(name, f.clone()),
+                    )));
+                    return;
+                }
+                _ => {
+                    let op = BinaryOp::try_from(f.name.data).unwrap();
+                    let (tr_name, fn_name) = self.get_binary_op(op).unwrap();
+                    if let Some(p) =
+                        f.params.get(1).filter(|_| matches!(f.name.data, O::Cmp | O::Eq)).cloned()
+                    {
+                        if let TypeHintData::Ptr(inner) = self.parsed.hints.get(p.ty.data) {
+                            (tr_name, fn_name, vec![*inner])
+                        } else {
+                            // impl check will take care of issuing an error for this case
+                            (tr_name, fn_name, vec![p.ty])
+                        }
+                    } else {
+                        let mut args = vec![
+                            f.params
+                                .get(1)
+                                .map(|p| p.ty)
+                                .unwrap_or(Located::nowhere(PExprArena::HINT_ERROR)),
+                        ];
+                        if !op.is_assignment() {
+                            args.push(f.ret.unwrap_or(PExprArena::HINT_VOID));
+                        }
+                        (tr_name, fn_name, args)
+                    }
+                }
+            };
 
         let span = f.name.span;
         let mut f = Fn::from_operator_fn(fn_name, f.clone());
@@ -1437,7 +1460,8 @@ impl<'a> TypeChecker<'a> {
                 type_params: this.declare_type_params(&std::mem::take(&mut f.type_params)),
                 assoc_types: Default::default(),
             });
-            DImplBlock { span: f.name.span, scope: this.current, fns: vec![this.declare_fn(&f)] }
+            let lf = Located::new(full_span, &f);
+            DImplBlock { span: f.name.span, scope: this.current, fns: vec![this.declare_fn(lf)] }
         });
         impls.push(TraitImplData::Operator { tr: tr_name, ty_args, span, scope: block.scope });
         blocks.push(block);
@@ -1554,6 +1578,7 @@ impl<'a> TypeChecker<'a> {
         block_data: Vec<ImplBlockData>,
         blocks: &[DImplBlock],
         subscripts: &[DFn],
+        full_span: Span,
     ) -> UserType {
         UserType {
             attrs: UserTypeAttrs::relevant(attrs, &mut self.proj),
@@ -1574,6 +1599,7 @@ impl<'a> TypeChecker<'a> {
             members_resolved: false,
             recursive: false,
             interior_mutable: false,
+            full_span,
         }
     }
 
@@ -2550,6 +2576,7 @@ impl TypeChecker<'_> {
                     members_resolved: true,
                     recursive: false,
                     interior_mutable: true,
+                    full_span: Span::nowhere(),
                 },
                 false,
                 false,
@@ -2586,21 +2613,13 @@ impl TypeChecker<'_> {
                 }
                 let do_invoke_scope = this.enter(ScopeKind::None, |this| this.current);
                 let func = Function {
-                    public: false,
-                    attrs: Default::default(),
                     name: Located::nowhere(Strings::FN_CLOSURE_DO_INVOKE),
-                    is_extern: false,
-                    is_async: false,
-                    is_unsafe: false,
-                    variadic: false,
                     has_body: true,
-                    typ: FunctionType::Normal,
-                    type_params: vec![],
                     params: checked_params,
                     ret,
                     body: Some(body),
                     body_scope: do_invoke_scope,
-                    constructor: None,
+                    ..Default::default()
                 };
                 let do_invoke_id = this.insert::<FunctionId>(func, false, false);
                 this.proj.scopes[do_invoke_scope].kind = ScopeKind::Function(do_invoke_id);
@@ -2688,20 +2707,13 @@ impl TypeChecker<'_> {
 
                 let func = Function {
                     public: true,
-                    attrs: Default::default(),
                     name: Located::nowhere(this.proj.strings.get_or_intern("invoke")),
-                    is_extern: false,
-                    is_async: false,
-                    is_unsafe: false,
-                    variadic: false,
                     has_body: true,
-                    typ: FunctionType::Normal,
-                    type_params: vec![],
                     params,
                     ret,
                     body: Some(invoke_body),
                     body_scope: invoke_scope,
-                    constructor: None,
+                    ..Default::default()
                 };
                 let invoke_id = this.insert::<FunctionId>(func, false, false);
                 this.proj.scopes[invoke_scope].kind = ScopeKind::Function(invoke_id);

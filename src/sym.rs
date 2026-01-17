@@ -272,6 +272,7 @@ pub struct Function {
     pub body: Option<CheckedExpr>,
     pub constructor: Option<UserTypeId>,
     pub body_scope: ScopeId,
+    pub full_span: Span,
 }
 
 impl Function {
@@ -375,6 +376,7 @@ pub struct UserType {
     pub members_resolved: bool,
     pub recursive: bool,
     pub interior_mutable: bool,
+    pub full_span: Span,
 }
 
 impl UserType {
@@ -407,6 +409,7 @@ impl UserType {
             members_resolved: true,
             recursive: false,
             interior_mutable: false,
+            full_span: name.span,
         }
     }
 }
@@ -563,22 +566,7 @@ impl Scopes {
                 .map(|_| {
                     UserTypeId::insert_in(
                         self,
-                        UserType {
-                            public: false,
-                            name: Default::default(),
-                            body_scope: ScopeId::ROOT,
-                            kind: UserTypeKind::Template,
-                            impls: Default::default(),
-                            impl_blocks: Vec::new(),
-                            type_params: Vec::new(),
-                            attrs: Default::default(),
-                            fns: Vec::new(),
-                            members: IndexMap::new(),
-                            subscripts: Vec::new(),
-                            members_resolved: true,
-                            recursive: false,
-                            interior_mutable: false,
-                        },
+                        UserType::template(Default::default(), ScopeId::ROOT, Default::default()),
                         false,
                         ScopeId::ROOT,
                     )
@@ -613,6 +601,7 @@ impl Scopes {
                     members_resolved: true,
                     recursive: false,
                     interior_mutable: false,
+                    full_span: Span::nowhere(),
                 },
                 false,
                 ScopeId::ROOT,
