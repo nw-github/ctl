@@ -831,13 +831,12 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn numeric_suffix(&mut self, strings: &mut Strings) -> Option<StrId> {
-        let suffix = self.advance_while(|s| s.is_ascii_alphanumeric());
-        if !suffix.is_empty() { Some(strings.get_or_intern(suffix)) } else { None }
-    }
-
     fn numeric_literal(&mut self, strings: &mut Strings, ch: char, start: usize) -> Token {
         let mut value = |value: &str| strings.get_or_intern(value);
+        let suffix = |this: &mut Self, strings: &mut Strings| {
+            let suffix = this.advance_while(|s| s.is_ascii_alphanumeric());
+            if !suffix.is_empty() { Some(strings.get_or_intern(suffix)) } else { None }
+        };
 
         if ch == '0' {
             match self.peek() {
@@ -846,7 +845,7 @@ impl<'a> Lexer<'a> {
                     return Token::Int {
                         base: 16,
                         value: value(self.advance_while(|ch| ch.is_ascii_hexdigit() || ch == '_')),
-                        width: self.numeric_suffix(strings),
+                        width: suffix(self, strings),
                     };
                 }
                 Some('o') => {
@@ -854,7 +853,7 @@ impl<'a> Lexer<'a> {
                     return Token::Int {
                         base: 8,
                         value: value(self.advance_while(|ch| ch.is_digit(8) || ch == '_')),
-                        width: self.numeric_suffix(strings),
+                        width: suffix(self, strings),
                     };
                 }
                 Some('b') => {
@@ -862,7 +861,7 @@ impl<'a> Lexer<'a> {
                     return Token::Int {
                         base: 2,
                         value: value(self.advance_while(|ch| ch.is_digit(2) || ch == '_')),
-                        width: self.numeric_suffix(strings),
+                        width: suffix(self, strings),
                     };
                 }
                 _ => {}
@@ -890,10 +889,10 @@ impl<'a> Lexer<'a> {
 
         let value = value(&self.src[start..self.pos]);
         if float {
-            return Token::Float { value, suffix: self.numeric_suffix(strings) };
+            return Token::Float { value, suffix: suffix(self, strings) };
         }
 
-        Token::Int { value, base: 10, width: self.numeric_suffix(strings) }
+        Token::Int { value, base: 10, width: suffix(self, strings) }
     }
 
     fn identifier(&mut self, strings: &mut Strings, start: usize) -> Token {

@@ -71,6 +71,9 @@ impl<'a> Parser<'a> {
         let mut stmts = Vec::new();
         while !this.matches(Token::Eof) {
             stmts.push(this.item());
+            if this.needs_sync {
+                this.synchronize();
+            }
         }
 
         Stmt {
@@ -91,14 +94,14 @@ impl<'a> Parser<'a> {
 
     fn try_item(&mut self) -> Result<Stmt, (Option<Span>, Attributes)> {
         let mut attrs = self.attributes();
-        let is_public = self.next_if(Token::Pub);
-        let is_extern = self.next_if(Token::Extern);
-        let is_unsafe = self.next_if(Token::Unsafe);
+        let tk_public = self.next_if(Token::Pub);
+        let tk_extern = self.next_if(Token::Extern);
+        let tk_unsafe = self.next_if(Token::Unsafe);
         let conf = FnConfig {
-            tk_public: is_public,
-            tk_extern: is_extern,
-            tk_unsafe: is_unsafe,
-            require_body: is_extern.is_none(),
+            tk_public,
+            tk_extern,
+            tk_unsafe,
+            require_body: tk_extern.is_none(),
             forced_pub: false,
         };
         match self.try_function(conf, attrs.clone()) {
@@ -124,9 +127,7 @@ impl<'a> Parser<'a> {
         };
 
         let peek = self.peek();
-        let earliest_span =
-            conf.tk_public.or(conf.tk_extern).or(conf.tk_unsafe).unwrap_or(peek.span);
-
+        let earliest_span = tk_public.or(tk_extern).or(tk_unsafe).unwrap_or(peek.span);
         match peek.data {
             Token::Struct | Token::Packed => {
                 let token = self.next();
@@ -134,28 +135,27 @@ impl<'a> Parser<'a> {
                     self.expect(Token::Struct);
                 }
 
-                self.invalid_here(is_unsafe);
-                self.invalid_here(is_extern);
+                self.invalid_here(tk_unsafe);
+                self.invalid_here(tk_extern);
 
-                // TODO: packed struct Foo: u64 {}
                 Ok(Stmt {
                     attrs,
-                    data: self.structure(is_public.is_some(), earliest_span, false).map(|base| {
+                    data: self.structure(tk_public.is_some(), earliest_span, false).map(|base| {
                         StmtData::Struct { base, packed: matches!(token.data, Token::Packed) }
                     }),
                 })
             }
             Token::Union => {
                 self.next();
-                self.invalid_here(is_extern);
+                self.invalid_here(tk_extern);
 
                 Ok(Stmt {
                     attrs,
-                    data: if is_unsafe.is_some() {
-                        self.structure(is_public.is_some(), earliest_span, true)
+                    data: if tk_unsafe.is_some() {
+                        self.structure(tk_public.is_some(), earliest_span, true)
                             .map(StmtData::UnsafeUnion)
                     } else {
-                        self.union(is_public.is_some(), earliest_span)
+                        self.union(tk_public.is_some(), earliest_span)
                     },
                 })
             }
@@ -165,29 +165,29 @@ impl<'a> Parser<'a> {
                     self.expect(Token::Trait);
                 }
 
-                self.invalid_here(is_extern);
+                self.invalid_here(tk_extern);
 
                 Ok(Stmt {
                     attrs,
                     data: self.r#trait(
-                        is_public.is_some(),
+                        tk_public.is_some(),
                         earliest_span,
-                        is_unsafe.is_some(),
+                        tk_unsafe.is_some(),
                         sealed,
                     ),
                 })
             }
             Token::Extension => {
                 self.next();
-                self.invalid_here(is_unsafe);
-                self.invalid_here(is_extern);
+                self.invalid_here(tk_unsafe);
+                self.invalid_here(tk_extern);
 
-                Ok(Stmt { attrs, data: self.extension(is_public.is_some(), earliest_span) })
+                Ok(Stmt { attrs, data: self.extension(tk_public.is_some(), earliest_span) })
             }
             Token::Mod => {
                 self.next();
-                self.invalid_here(is_unsafe);
-                self.invalid_here(is_extern);
+                self.invalid_here(tk_unsafe);
+                self.invalid_here(tk_extern);
 
                 let name = self.expect_ident("expected name");
                 if self.next_if(Token::LCurly).is_some() {
@@ -198,7 +198,7 @@ impl<'a> Parser<'a> {
                         data: Located::new(
                             earliest_span.extended_to(span),
                             StmtData::Module {
-                                public: is_public.is_some(),
+                                public: tk_public.is_some(),
                                 file: false,
                                 name,
                                 body,
@@ -212,7 +212,7 @@ impl<'a> Parser<'a> {
                         data: Located::new(
                             earliest_span.extended_to(end),
                             StmtData::ModuleOOL {
-                                public: is_public.is_some(),
+                                public: tk_public.is_some(),
                                 name,
                                 resolved: false,
                             },
@@ -223,8 +223,8 @@ impl<'a> Parser<'a> {
             }
             Token::Use => {
                 self.next();
-                self.invalid_here(is_unsafe);
-                self.invalid_here(is_extern);
+                self.invalid_here(tk_unsafe);
+                self.invalid_here(tk_extern);
 
                 let origin = if let Some(token) = self.next_if(Token::ScopeRes) {
                     UsePathOrigin::Root(token)
@@ -234,7 +234,7 @@ impl<'a> Parser<'a> {
                 } else {
                     UsePathOrigin::Here
                 };
-                let public = is_public.is_some();
+                let public = tk_public.is_some();
                 let path = UsePath { public, origin, component: self.use_path_component() };
                 let end = self.expect(Token::Semicolon);
                 Ok(Stmt {
@@ -244,8 +244,8 @@ impl<'a> Parser<'a> {
             }
             Token::Static | Token::Const => {
                 let token = self.next();
-                self.invalid_here(is_unsafe);
-                self.invalid_here(is_extern.filter(|_| token.data.is_const()));
+                self.invalid_here(tk_unsafe);
+                self.invalid_here(tk_extern.filter(|_| token.data.is_const()));
 
                 let mutable = self.next_if(Token::Mut);
                 self.invalid_here(mutable.filter(|_| token.data.is_const()));
@@ -259,9 +259,9 @@ impl<'a> Parser<'a> {
                     data: Located::new(
                         earliest_span.extended_to(end),
                         StmtData::Binding {
-                            public: is_public.is_some(),
+                            public: tk_public.is_some(),
                             constant: matches!(token.data, Token::Const),
-                            is_extern: is_extern.is_some(),
+                            is_extern: tk_extern.is_some(),
                             mutable: mutable.is_some(),
                             name,
                             ty,
@@ -273,9 +273,9 @@ impl<'a> Parser<'a> {
             }
             Token::UnitTest => {
                 self.next();
-                self.invalid_here(is_public);
-                self.invalid_here(is_unsafe);
-                self.invalid_here(is_extern);
+                self.invalid_here(tk_public);
+                self.invalid_here(tk_unsafe);
+                self.invalid_here(tk_extern);
 
                 let name = self.next();
                 let name = if let Token::String(data) = name.data {
@@ -318,8 +318,8 @@ impl<'a> Parser<'a> {
                 })
             }
             _ => {
-                self.invalid_here(is_extern);
-                Err((is_unsafe, attrs))
+                self.invalid_here(tk_extern);
+                Err((tk_unsafe, attrs))
             }
         }
     }
@@ -467,10 +467,9 @@ impl<'a> Parser<'a> {
             }
             Token::Super => {
                 let origin = PathOrigin::Super(span);
-                let mut data = self.path_components(None, &mut span);
-                if data.is_empty() {
-                    data.push((Located::new(self.peek().span, Strings::EMPTY), vec![]));
-                }
+                self.expect(Token::ScopeRes);
+                let ident = self.expect_ident("expected name");
+                let data = self.path_components(Some(ident), &mut span);
                 self.arena.expr(span, ExprData::Path(Path::new(origin, data)))
             }
             Token::Colon => {
@@ -624,13 +623,11 @@ impl<'a> Parser<'a> {
             Token::For => self.for_expr(span, None),
             Token::Match => self.match_expr(span),
             Token::LBrace => 'out: {
-                if let Some(rbrace) = self.next_if(Token::RBrace) {
+                let expr = if let Some(rbrace) = self.next_if(Token::RBrace) {
                     break 'out self
                         .arena
                         .expr(span.extended_to(rbrace), ExprData::Array(Vec::new()));
-                }
-
-                let expr = if let Some(colon) = self.next_if(Token::Colon) {
+                } else if let Some(colon) = self.next_if(Token::Colon) {
                     if let Some(ident) = self.next_if_ident() {
                         let origin = PathOrigin::Infer(colon);
                         self.arena.expr(
@@ -1474,8 +1471,7 @@ impl<'a> Parser<'a> {
                     .csv(Vec::new(), Token::RBrace, span, |this| {
                         if let Some(span) = this.next_if(Token::Ellipses) {
                             let pattern = if this.next_if(Token::Mut).is_some() {
-                                let ident = this.expect_ident("expected name");
-                                Some((true, ident))
+                                Some((true, this.expect_ident("expected name")))
                             } else {
                                 Some(false).zip(this.next_if_ident())
                             };
@@ -2486,16 +2482,12 @@ impl<'a> Parser<'a> {
         self.peek.take().unwrap_or_else(|| self.lexer.next_skip_comments(self.diag, self.strings))
     }
 
-    fn next_if_l(&mut self, f: impl FnOnce(Located<Token>) -> bool) -> Option<Located<Token>> {
-        f(self.peek()).then(|| self.next())
+    fn next_if(&mut self, kind: Token) -> Option<Span> {
+        self.next_if_pred(|t| t == kind).map(|t| t.span)
     }
 
     fn next_if_pred(&mut self, pred: impl FnOnce(Token) -> bool) -> Option<Located<Token>> {
-        self.next_if_l(|tok| pred(tok.data))
-    }
-
-    fn next_if(&mut self, kind: Token) -> Option<Span> {
-        self.next_if_pred(|t| t == kind).map(|t| t.span)
+        pred(self.peek().data).then(|| self.next())
     }
 
     fn next_if_map<T>(
@@ -2539,13 +2531,11 @@ impl<'a> Parser<'a> {
         f: impl FnOnce(&mut Self, Located<Token>) -> Option<T>,
         msg: &str,
     ) -> Option<T> {
-        let token = self.peek();
+        let token = self.next();
         if let Some(res) = f(self, token) {
-            self.next();
             Some(res)
         } else {
-            let span = self.next().span;
-            self.error(Error::new(msg, span));
+            self.error(Error::new(msg, token.span));
             None
         }
     }
