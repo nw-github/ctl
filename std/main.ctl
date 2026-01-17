@@ -13,6 +13,7 @@ pub mod alloc;
 mod deps;
 mod runtime;
 mod ryu;
+mod test;
 
 $[autouse]
 mod prelude {
