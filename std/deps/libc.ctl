@@ -1,3 +1,5 @@
+pub type size_t = uint;
+
 $[layout(C)]
 pub struct JmpBuf {
     pad: [u8; 0xc8],
@@ -60,19 +62,19 @@ pub mod atomic {
     ): bool; // _Bool
 
     $[c_macro("ctl_atomic_fetch_add_explicit")]
-    pub extern fn atomic_fetch_add_explicit<T>(obj: *mut T, arg: T, order: u32): T;
+    pub extern fn atomic_fetch_add_explicit<T, U>(obj: *mut T, arg: U, order: u32): T;
 
     $[c_macro("ctl_atomic_fetch_sub_explicit")]
-    pub extern fn atomic_fetch_sub_explicit<T>(obj: *mut T, arg: T, order: u32): T;
+    pub extern fn atomic_fetch_sub_explicit<T, U>(obj: *mut T, arg: U, order: u32): T;
 
     $[c_macro("ctl_atomic_fetch_and_explicit")]
-    pub extern fn atomic_fetch_and_explicit<T>(obj: *mut T, arg: T, order: u32): T;
+    pub extern fn atomic_fetch_and_explicit<T, U>(obj: *mut T, arg: U, order: u32): T;
 
     $[c_macro("ctl_atomic_fetch_or_explicit")]
-    pub extern fn atomic_fetch_or_explicit<T>(obj: *mut T, arg: T, order: u32): T;
+    pub extern fn atomic_fetch_or_explicit<T, U>(obj: *mut T, arg: U, order: u32): T;
 
     $[c_macro("ctl_atomic_fetch_xor_explicit")]
-    pub extern fn atomic_fetch_xor_explicit<T>(obj: *mut T, arg: T, order: u32): T;
+    pub extern fn atomic_fetch_xor_explicit<T, U>(obj: *mut T, arg: U, order: u32): T;
 
     $[c_macro("ctl_atomic_is_lock_free")]
     pub extern fn atomic_is_lock_free<T>(obj: *T): bool; // _Bool
@@ -99,10 +101,15 @@ pub mod posix {
 
     pub const CLOCK_MONOTONIC: c_int = 1;
 
+    pub type pid_t = c_int;
+    pub type uid_t = c_uint;
+    pub type clock_t = c_long;
+    pub type __SI_BAND_TYPE = c_long;
+
     pub extern fn write(fd: c_int, buf: ^void, count: uint): int;
     pub extern fn clock_gettime(clockid: c_int, tp: *mut Timespec): c_int;
     pub extern fn nanosleep(time: *Timespec, remaining: ?*mut Timespec): c_int;
-    pub extern fn getpid(): c_int /* pid_t */;
+    pub extern fn getpid(): pid_t;
 
     $[layout(C)]
     pub struct sigset_t {
@@ -134,31 +141,31 @@ pub mod posix {
 
     $[layout(C)]
     struct _sifields_kill {
-        pub si_pid: c_int /* pid_t */,
-        pub si_uid: c_uint /* uid_t */,
+        pub si_pid: pid_t,
+        pub si_uid: uid_t,
     }
 
     $[layout(C)]
     struct _sifields_timer {
         pub si_tid: c_int,
         pub si_overrun: c_int,
-        pub si_sigval: __sigval_t,
+        pub si_sigval: sigval,
     }
 
     $[layout(C)]
     struct _sifields_rt {
-        pub si_pid: c_int /* pid_t */,
-        pub si_uid: c_uint /* uid_t */,
-        pub si_sigval: __sigval_t,
+        pub si_pid: pid_t,
+        pub si_uid: uid_t,
+        pub si_sigval: sigval,
     }
 
     $[layout(C)]
     struct _sifields_sigchld {
-        pub si_pid: c_int /* pid_t */,
-        pub si_uid: c_uint /* uid_t */,
+        pub si_pid: pid_t,
+        pub si_uid: uid_t,
         pub si_status: c_int,
-        pub si_utime: c_long /* __clock_t */,
-        pub si_stime: c_long /* __clock_t */,
+        pub si_utime: clock_t,
+        pub si_stime: clock_t,
     }
 
     $[layout(C)]
@@ -179,7 +186,7 @@ pub mod posix {
 
     $[layout(C)]
     struct _sifields_sigpoll {
-        pub si_band: c_long /* __SI_BAND_TYPE */,
+        pub si_band: __SI_BAND_TYPE,
         pub si_fd: c_int,
     }
 
@@ -191,7 +198,7 @@ pub mod posix {
     }
 
     $[layout(C)]
-    pub unsafe union __sigval_t {
+    pub unsafe union sigval {
         __sival_int: c_int,
         __sival_ptr: ?^mut void,
     }
@@ -230,18 +237,22 @@ pub mod posix {
     pub extern fn sigaction_(sig: c_int, set: ?^sigaction, old_act: ?^mut sigaction): c_int;
     pub extern fn perror(msg: ^c_char);
 
-    pub extern fn fork(): c_int /* pid_t */;
-    pub extern fn waitpid(pid: c_int /* pid_t */, wstatus: ?^mut c_int, options: c_int): c_int;
+    pub extern fn fork(): pid_t;
+    pub extern fn waitpid(pid: pid_t, wstatus: ?^mut c_int, options: c_int): pid_t;
 }
 
 pub mod linux {
     use super::*;
 
+    pub type greg_t = c_longlong;
+    pub type gregset_t = [greg_t; 23];
+    pub type fpregset_t = ?^mut _libc_fpstate;
+
     $[layout(C)]
     pub struct stack_t {
         pub ss_sp: ?^mut void,
         pub ss_flags: c_int,
-        pub ss_size: uint, /* size_t */
+        pub ss_size: size_t,
     }
 
     $[layout(C)]
@@ -257,8 +268,8 @@ pub mod linux {
 
     $[layout(C)]
     pub struct mcontext_t {
-        pub gregs: [c_longlong; 23],
-        pub fpregs: ?^mut _libc_fpstate,
+        pub gregs: gregset_t,
+        pub fpregs: fpregset_t,
         pub __reserved1: [c_ulonglong; 8],
     }
 
