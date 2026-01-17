@@ -124,6 +124,12 @@ pub enum StmtData {
         name: Located<StrId>,
         resolved: bool,
     },
+    Alias {
+        public: bool,
+        name: Located<StrId>,
+        type_params: TypeParams,
+        ty: TypeHint,
+    },
     Error,
 }
 

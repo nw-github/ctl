@@ -2,7 +2,7 @@ use crate::{
     ast::parsed::{Expr, Pattern, TypeHint, UsePathComponent},
     intern::StrId,
     lexer::{Located, Span},
-    sym::{ExtensionId, FunctionId, ScopeId, TraitId, UserTypeId, VariableId},
+    sym::{AliasId, ExtensionId, FunctionId, ScopeId, TraitId, UserTypeId, VariableId},
 };
 
 pub struct Fn {
@@ -26,6 +26,7 @@ pub enum Stmt {
     Struct { id: UserTypeId, impls: Vec<ImplBlock>, fns: Vec<Fn>, init: Fn },
     Union { id: UserTypeId, impls: Vec<ImplBlock>, fns: Vec<Fn> },
     Trait { id: TraitId, fns: Vec<Fn> },
+    Alias { id: AliasId },
     Extension { id: ExtensionId, impls: Vec<ImplBlock>, fns: Vec<Fn> },
     Module { id: ScopeId, body: Vec<Stmt> },
     ModuleOOL { name: Located<StrId> },

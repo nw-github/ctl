@@ -4,12 +4,12 @@ use std::path::{Path, PathBuf};
 
 use dashmap::DashMap;
 use tokio::sync::MutexGuard;
-use tower_lsp::jsonrpc::{Error, Result};
-use tower_lsp::lsp_types::*;
-use tower_lsp::{Client, LanguageServer};
+use tower_lsp::{
+    Client, LanguageServer,
+    jsonrpc::{Error, Result},
+    lsp_types::*,
+};
 
-use crate::sym::VariableKind;
-use crate::typeid::BitSizeResult;
 use crate::{
     CachingSourceProvider, Compiler, FileSourceProvider, Located, SourceProvider,
     error::{Diagnostics, FileId, OffsetMode},
@@ -18,9 +18,11 @@ use crate::{
     project::Project,
     sym::{
         Function, FunctionId, ScopeId, Scoped, Scopes, Union, UserTypeId, UserTypeKind, VariableId,
+        VariableKind,
     },
     typecheck::{LspInput, LspItem},
-    typeid::{GenericUserType, Type, TypeId, Types},
+    typeid::{BitSizeResult, GenericUserType, Type, TypeId, Types},
+    write_if,
 };
 
 #[macro_export]
@@ -261,6 +263,7 @@ impl LanguageServer for LspBackend {
                 &LspItem::Type(id) => scopes.get(id).name.span,
                 &LspItem::Module(id, _) => scopes[id].kind.name(scopes).unwrap().span,
                 &LspItem::Fn(id, _) => scopes.get(id).name.span,
+                &LspItem::Alias(id) => scopes.get(id).name.span,
                 LspItem::Property(_, id, member) => {
                     let ut = scopes.get(*id);
                     ut.members.get(member).map(|m| m.span).or_else(|| {
@@ -319,11 +322,20 @@ impl LanguageServer for LspBackend {
         let uri = &params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
         self.find_lsp_item(uri, pos, async |item, proj| {
-            let str = match item {
-                &LspItem::Var(id) | &LspItem::FnParamLabel(id, _) => Some(visualize_var(id, proj)),
-                &LspItem::Fn(id, _) => Some(visualize_func(id, false, proj)),
-                &LspItem::Type(id) => Some(visualize_type(id, proj)),
-                &LspItem::Property(src_ty, id, name) => {
+            let str = match *item {
+                LspItem::Var(id) | LspItem::FnParamLabel(id, _) => Some(visualize_var(id, proj)),
+                LspItem::Fn(id, _) => Some(visualize_func(id, false, proj)),
+                LspItem::Type(id) => Some(visualize_type(id, proj)),
+                LspItem::Alias(id) => {
+                    let alias = proj.scopes.get(id);
+                    let mut str = String::new();
+                    write_if!(alias.public, str, "pub ");
+                    write_de!(str, "type {}", proj.strings.resolve(&alias.name.data));
+                    visualize_type_params(&mut str, &alias.type_params, proj);
+                    write_de!(str, " = {}", proj.fmt_ty(alias.ty));
+                    Some(str)
+                }
+                LspItem::Property(src_ty, id, name) => {
                     let ut = proj.scopes.get(id);
                     let mem = ut.members.get(&name);
                     let public = if ut.kind.is_union() {
@@ -348,7 +360,7 @@ impl LanguageServer for LspBackend {
                         ))
                     }
                 }
-                &LspItem::Module(id, _) => {
+                LspItem::Module(id, _) => {
                     let scope = &proj.scopes[id];
                     let mut res = String::new();
                     if let Some(parent) = scope.parent.filter(|parent| *parent != ScopeId::ROOT) {
@@ -739,15 +751,16 @@ impl LspBackend {
         };
 
         for (item, span) in lsp_items.iter() {
-            match (src, item) {
+            match (*src, *item) {
                 (LspItem::Module(lhs, _), LspItem::Module(rhs, is_super))
                     if lhs == rhs && (!is_super || !rename) => {}
 
                 (LspItem::Type(lhs), LspItem::Type(rhs)) if lhs == rhs => {}
                 (LspItem::Fn(lhs, _), LspItem::Fn(rhs, _)) if lhs == rhs => {}
-                (&LspItem::Type(lhs), &LspItem::Fn(rhs, _)) if is_constructor_for(rhs, lhs) => {}
-                (&LspItem::Fn(lhs, _), &LspItem::Type(rhs)) if is_constructor_for(lhs, rhs) => {}
+                (LspItem::Type(lhs), LspItem::Fn(rhs, _)) if is_constructor_for(rhs, lhs) => {}
+                (LspItem::Fn(lhs, _), LspItem::Type(rhs)) if is_constructor_for(lhs, rhs) => {}
 
+                (LspItem::Alias(lhs), LspItem::Alias(rhs)) if lhs == rhs => {}
                 (LspItem::Var(lhs), LspItem::Var(rhs)) if lhs == rhs => {}
                 (LspItem::Var(lhs), LspItem::FnParamLabel(rhs, _)) if lhs == rhs => {}
                 (LspItem::FnParamLabel(lhs, _), LspItem::Var(rhs)) if lhs == rhs => {}
@@ -886,6 +899,7 @@ fn get_semantic_token(
             }
         }
         LspItem::Type(_) => token::TYPE,
+        LspItem::Alias(_) => token::TYPE,
         LspItem::BuiltinType(_) => token::TYPE,
         &LspItem::Fn(id, _) => {
             if let Some(id) = scopes.get(id).constructor {
@@ -930,6 +944,15 @@ fn get_document_symbols(proj: &Project, src: &str, file: FileId) -> Vec<Document
             && !proj.strings.resolve(&name.data).starts_with('$')
     };
 
+    let get_range = |sel: Span, range: Span| {
+        let r = range.pos..range.pos + range.len;
+        if r.contains(&sel.pos) && r.contains(&(sel.pos + sel.len)) {
+            Diagnostics::get_span_range(src, range, OffsetMode::Utf16)
+        } else {
+            Diagnostics::get_span_range(src, sel, OffsetMode::Utf16)
+        }
+    };
+
     let func_symbol = |func: &Scoped<Function>| {
         let mut kind = SymbolKind::FUNCTION;
         if let Some(ut) = func.constructor
@@ -939,7 +962,7 @@ fn get_document_symbols(proj: &Project, src: &str, file: FileId) -> Vec<Document
         }
 
         let selection_range = Diagnostics::get_span_range(src, func.name.span, OffsetMode::Utf16);
-        let range = Diagnostics::get_span_range(src, func.full_span, OffsetMode::Utf16);
+        let range = get_range(func.name.span, func.full_span);
         DocumentSymbol {
             name: proj.strings.resolve(&func.name.data).into(),
             kind,
@@ -994,7 +1017,7 @@ fn get_document_symbols(proj: &Project, src: &str, file: FileId) -> Vec<Document
             });
         }
 
-        let range = Diagnostics::get_span_range(src, ut.full_span, OffsetMode::Utf16);
+        let range = get_range(ut.name.span, ut.full_span);
         let selection_range = Diagnostics::get_span_range(src, ut.name.span, OffsetMode::Utf16);
         result.push(DocumentSymbol {
             name: proj.strings.resolve(&ut.name.data).into(),
@@ -1130,6 +1153,21 @@ fn get_completion(proj: &Project, item: &LspItem, method: bool) -> Option<Comple
                     UserTypeKind::Template => CompletionItemKind::TYPE_PARAMETER,
                     _ => CompletionItemKind::STRUCT,
                 }),
+                label_details: Some(CompletionItemLabelDetails {
+                    detail: None,
+                    description: Some(name.clone()),
+                }),
+                detail: Some(name),
+                ..Default::default()
+            }
+        }
+        &LspItem::Alias(id) => {
+            let alias = scopes.get(id);
+            let name = strings.resolve(&alias.name.data).to_string();
+            // TODO: pick CompletionItemKind based on alias.ty
+            CompletionItem {
+                label: name.clone(),
+                kind: Some(CompletionItemKind::STRUCT),
                 label_details: Some(CompletionItemLabelDetails {
                     detail: None,
                     description: Some(name.clone()),

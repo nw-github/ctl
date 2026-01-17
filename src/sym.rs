@@ -85,8 +85,9 @@ pub struct InsertionResult<T> {
 }
 
 id!(FunctionId => Function, fns, vns);
-id!(UserTypeId => UserType, types, tns);
 id!(VariableId => Variable, vars, vns);
+id!(UserTypeId => UserType, types, tns);
+id!(AliasId => Alias, aliases, tns);
 
 pub type TraitId = UserTypeId;
 pub type ExtensionId = UserTypeId;
@@ -414,6 +415,14 @@ impl UserType {
     }
 }
 
+pub struct Alias {
+    pub public: bool,
+    pub name: Located<StrId>,
+    pub type_params: Vec<UserTypeId>,
+    pub ty: TypeId,
+    pub body_scope: ScopeId,
+}
+
 pub trait HasTypeParams {
     fn get_type_params(&self) -> &[UserTypeId];
 }
@@ -425,6 +434,12 @@ impl HasTypeParams for UserType {
 }
 
 impl HasTypeParams for Function {
+    fn get_type_params(&self) -> &[UserTypeId] {
+        &self.type_params
+    }
+}
+
+impl HasTypeParams for Alias {
     fn get_type_params(&self) -> &[UserTypeId] {
         &self.type_params
     }
@@ -465,6 +480,7 @@ pub trait ItemId: Sized + Copy + Clone {
 pub enum TypeItem {
     Type(UserTypeId),
     Module(ScopeId),
+    Alias(AliasId),
 }
 
 #[derive(Debug, Clone, Copy, EnumAsInner, From)]
@@ -499,6 +515,7 @@ pub struct Scopes {
     scopes: Vec<Scope>,
     fns: Vec<Scoped<Function>>,
     types: Vec<Scoped<UserType>>,
+    aliases: Vec<Scoped<Alias>>,
     vars: Vec<Scoped<Variable>>,
     tuples: HashMap<Vec<StrId>, UserTypeId>,
     pub lang_types: HashMap<LangType, UserTypeId>,
@@ -511,6 +528,7 @@ impl Scopes {
             fns: vec![Scoped::new(Function::default(), ScopeId::ROOT)],
             types: Vec::new(),
             vars: Vec::new(),
+            aliases: Vec::new(),
             tuples: HashMap::new(),
             lang_types: HashMap::new(),
         }

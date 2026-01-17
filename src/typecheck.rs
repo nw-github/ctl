@@ -158,6 +158,7 @@ pub enum Safety {
 #[derive(Clone, Copy, derive_more::From)]
 pub enum LspItem {
     Type(UserTypeId),
+    Alias(AliasId),
     Module(ScopeId, bool),
     Literal(CExpr),
     Fn(FunctionId, Option<UserTypeId>),
@@ -179,8 +180,9 @@ impl From<ScopeId> for LspItem {
 impl From<TypeItem> for LspItem {
     fn from(value: TypeItem) -> Self {
         match value {
-            TypeItem::Type(item) => Self::Type(item),
-            TypeItem::Module(item) => Self::Module(item, false),
+            TypeItem::Type(id) => Self::Type(id),
+            TypeItem::Module(id) => Self::Module(id, false),
+            TypeItem::Alias(id) => Self::Alias(id),
         }
     }
 }
@@ -1130,7 +1132,10 @@ impl<'a> TypeChecker<'a> {
 
                     DStmt::Module {
                         id: this.current,
-                        body: body.iter().flat_map(|stmt| this.declare_stmt(autouse, stmt)).collect(),
+                        body: body
+                            .iter()
+                            .flat_map(|stmt| this.declare_stmt(autouse, stmt))
+                            .collect(),
                     }
                 })
             }
@@ -1144,7 +1149,7 @@ impl<'a> TypeChecker<'a> {
                         ),
                         name.span,
                     ));
-                    return None
+                    return None;
                 } else {
                     DStmt::ModuleOOL { name }
                 }
@@ -1240,6 +1245,18 @@ impl<'a> TypeChecker<'a> {
                 self.proj.scopes[scope].kind = ScopeKind::UserType(id);
                 DStmt::Extension { id, impls: impl_blocks, fns }
             }
+            &PStmtData::Alias { public, name, ref type_params, ty } => {
+                // TODO: ensure all type params are referenced
+                let value = self.enter(ScopeKind::None, |this| Alias {
+                    public,
+                    name,
+                    type_params: this.declare_type_params(type_params),
+                    ty: this.declare_type_hint(ty),
+                    body_scope: this.current,
+                });
+                let id = self.insert::<AliasId>(value, public, true);
+                DStmt::Alias { id }
+            }
             PStmtData::Fn(f) => DStmt::Fn(self.declare_fn(Located::new(stmt.data.span, f))),
             &PStmtData::Binding { public, constant, mut name, mutable, ty, value, is_extern } => {
                 let ty = self.declare_type_hint(ty);
@@ -1284,7 +1301,7 @@ impl<'a> TypeChecker<'a> {
                 };
 
                 self.resolve_use(path.public, scope, &path.component, false, true);
-                return None
+                return None;
             }
             &PStmtData::Let { ty, value, ref patt } => DStmt::Let { ty, value, patt: patt.clone() },
             &PStmtData::Guard { cond, body } => DStmt::Guard { cond, body },
@@ -1716,6 +1733,11 @@ impl TypeChecker<'_> {
                     for f in fns {
                         this.check_fn(f);
                     }
+                });
+            }
+            DStmt::Alias { id } => {
+                self.enter_id(self.proj.scopes.get(id).body_scope, |this| {
+                    this.resolve_alias(this.proj.scopes.get(id).name.span, id);
                 });
             }
             DStmt::Expr(expr) => return Some(CStmt::Expr(self.check_expr(expr, None))),
@@ -5377,6 +5399,14 @@ impl TypeChecker<'_> {
         self.proj.scopes.get_mut(id).impls = impls;
     }
 
+    fn resolve_alias(&mut self, span: Span, id: AliasId) {
+        self.check_hover(span, id.into());
+        for i in 0..self.proj.scopes.get(id).type_params.len() {
+            self.resolve_impls(self.proj.scopes.get(id).type_params[i]);
+        }
+        resolve_type!(self, self.proj.scopes.get_mut(id).ty);
+    }
+
     fn resolve_proto(&mut self, id: FunctionId) {
         // disable errors to avoid duplicate errors when the struct and the constructor
         // are typechecked
@@ -6961,8 +6991,17 @@ impl TypeChecker<'_> {
                     return ResolvedType::Builtin(self.proj.types.insert(builtin));
                 }
 
-                match self.find_in_tns(name.data).map(|t| t.id) {
-                    Some(TypeItem::Type(id)) => {
+                let Some(item) = self.find_in_tns(name.data) else {
+                    return self.resolve_type_path_in(
+                        &path.components,
+                        Default::default(),
+                        ScopeId::ROOT,
+                        span,
+                    );
+                };
+
+                match item.id {
+                    TypeItem::Type(id) => {
                         self.check_hover(name.span, id.into());
                         let ty_args = self.resolve_type_args(id, ty_args, true, name.span);
                         if rest.is_empty() {
@@ -6991,7 +7030,11 @@ impl TypeChecker<'_> {
                             span,
                         )
                     }
-                    Some(TypeItem::Module(id)) if !rest.is_empty() => {
+                    TypeItem::Module(id) => {
+                        if rest.is_empty() {
+                            return named_error!(self, Error::no_symbol, name.data, name.span);
+                        }
+
                         self.check_hover(name.span, id.into());
                         if !ty_args.is_empty() {
                             return self.error(Error::new(
@@ -7002,12 +7045,22 @@ impl TypeChecker<'_> {
 
                         self.resolve_type_path_in(rest, Default::default(), id, span)
                     }
-                    _ => self.resolve_type_path_in(
-                        &path.components,
-                        Default::default(),
-                        ScopeId::ROOT,
-                        span,
-                    ),
+                    TypeItem::Alias(id) => {
+                        self.resolve_alias(name.span, id);
+                        let ty_args = self.resolve_type_args(id, ty_args, true, name.span);
+                        let ty =
+                            self.proj.scopes.get(id).ty.with_templates(&self.proj.types, &ty_args);
+                        if !rest.is_empty() {
+                            self.error(Error::new(
+                                "this operation is not yet supported with type aliases",
+                                span,
+                            ))
+                        } else if let Some(ut) = self.proj.types[ty].as_user() {
+                            ResolvedType::UserType(ut.clone())
+                        } else {
+                            ResolvedType::Builtin(ty)
+                        }
+                    }
                 }
             }
             PathOrigin::Infer(_) => unreachable!("Infer path in type path"),
@@ -7074,6 +7127,23 @@ impl TypeChecker<'_> {
                     }
 
                     scope = id;
+                }
+                TypeItem::Alias(id) => {
+                    self.resolve_alias(name.span, id);
+                    let args = self.resolve_type_args(id, args, true, name.span);
+                    ty_args.copy_args(&args);
+
+                    let ty = self.proj.scopes.get(id).ty.with_templates(&self.proj.types, &ty_args);
+                    if !done {
+                        self.error(Error::new(
+                            "this operation is not yet supported with type aliases",
+                            name.span,
+                        ))
+                    } else if let Some(ut) = self.proj.types[ty].as_user() {
+                        return ResolvedType::UserType(ut.clone());
+                    } else {
+                        return ResolvedType::Builtin(ty);
+                    }
                 }
             }
         }
@@ -7187,6 +7257,17 @@ impl TypeChecker<'_> {
                             }
 
                             self.resolve_value_path_in(rest, Default::default(), id, span)
+                        }
+                        Some(TypeItem::Alias(id)) => {
+                            self.resolve_alias(name.span, id);
+                            let ty_args = self.resolve_type_args(id, ty_args, false, name.span);
+                            let ty = self
+                                .proj
+                                .scopes
+                                .get(id)
+                                .ty
+                                .with_templates(&self.proj.types, &ty_args);
+                            self.resolve_value_path_from_type(ty, rest, span)
                         }
                         None => self.resolve_value_path_in(
                             &path.components,
@@ -7318,6 +7399,12 @@ impl TypeChecker<'_> {
                     }
 
                     scope = id;
+                }
+                TypeItem::Alias(id) => {
+                    self.resolve_alias(name.span, id);
+                    ty_args.copy_args(&self.resolve_type_args(id, args, false, name.span));
+                    let ty = self.proj.scopes.get(id).ty.with_templates(&self.proj.types, &ty_args);
+                    return self.resolve_value_path_from_type(ty, &data[i + 1..], total_span);
                 }
             }
         }

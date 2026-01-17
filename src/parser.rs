@@ -129,6 +129,24 @@ impl<'a> Parser<'a> {
         let peek = self.peek();
         let earliest_span = tk_public.or(tk_extern).or(tk_unsafe).unwrap_or(peek.span);
         match peek.data {
+            Token::Type => {
+                self.next();
+                self.invalid_here(tk_unsafe);
+                self.invalid_here(tk_extern);
+
+                let name = self.expect_ident("expected name");
+                let type_params = self.type_params();
+                self.expect(Token::Assign);
+                let ty = self.type_hint();
+                self.expect(Token::Semicolon);
+                Ok(Stmt {
+                    data: Located::new(
+                        earliest_span.extended_to(ty.span),
+                        StmtData::Alias { public: tk_public.is_some(), name, type_params, ty },
+                    ),
+                    attrs,
+                })
+            }
             Token::Struct | Token::Packed => {
                 let token = self.next();
                 if token.data == Token::Packed {
