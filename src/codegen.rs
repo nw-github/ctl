@@ -1264,7 +1264,6 @@ impl<'a> Codegen<'a> {
                 hoist_point!(self, self.emit_expr_stmt(body, state));
                 write_de!(self.buffer, "}}");
             }),
-            Stmt::None => {}
         }
     }
 

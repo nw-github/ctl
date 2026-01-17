@@ -95,7 +95,7 @@ impl Default for Pattern {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub enum Stmt {
     Expr(Expr),
     Let(Pattern, Option<Expr>),
@@ -104,8 +104,6 @@ pub enum Stmt {
         cond: Expr,
         body: Expr,
     },
-    #[default]
-    None,
 }
 
 pub type ExprId = arena::Id<ExprData>;

@@ -356,7 +356,7 @@ impl<'a> TypeChecker<'a> {
             this.feature_set = feat;
             last_file_id = Some(module.data.span.file);
 
-            let stmt = this.declare_stmt(&mut autouse, &module);
+            let stmt = this.declare_stmt(&mut autouse, &module).unwrap();
             for scope in autouse.drain(..) {
                 this.enter_id_and_resolve(scope, |_| {});
 
@@ -1081,7 +1081,7 @@ impl<'a> TypeChecker<'a> {
         DStmt::Union { id, impls, fns }
     }
 
-    fn declare_stmt(&mut self, autouse: &mut Vec<ScopeId>, stmt: &PStmt) -> DStmt {
+    fn declare_stmt(&mut self, autouse: &mut Vec<ScopeId>, stmt: &PStmt) -> Option<DStmt> {
         let has_attr_check = matches!(
             stmt.data.data,
             PStmtData::Struct { .. }
@@ -1095,10 +1095,10 @@ impl<'a> TypeChecker<'a> {
         );
 
         if self.check_disabled(&stmt.attrs, stmt.data.span, !has_attr_check) {
-            return DStmt::None;
+            return None;
         }
 
-        match &stmt.data.data {
+        Some(match &stmt.data.data {
             &PStmtData::Module { public, name, ref body, .. } => {
                 let parent = self.current;
                 self.enter(ScopeKind::Module(name), |this| {
@@ -1130,7 +1130,7 @@ impl<'a> TypeChecker<'a> {
 
                     DStmt::Module {
                         id: this.current,
-                        body: body.iter().map(|stmt| this.declare_stmt(autouse, stmt)).collect(),
+                        body: body.iter().flat_map(|stmt| this.declare_stmt(autouse, stmt)).collect(),
                     }
                 })
             }
@@ -1144,7 +1144,7 @@ impl<'a> TypeChecker<'a> {
                         ),
                         name.span,
                     ));
-                    DStmt::None
+                    return None
                 } else {
                     DStmt::ModuleOOL { name }
                 }
@@ -1277,21 +1277,21 @@ impl<'a> TypeChecker<'a> {
                         if let Some(scope) = self.get_super(span) {
                             Some(scope)
                         } else {
-                            return DStmt::None;
+                            return None;
                         }
                     }
                     UsePathOrigin::Here => None,
                 };
 
                 self.resolve_use(path.public, scope, &path.component, false, true);
-                DStmt::None
+                return None
             }
             &PStmtData::Let { ty, value, ref patt } => DStmt::Let { ty, value, patt: patt.clone() },
             &PStmtData::Guard { cond, body } => DStmt::Guard { cond, body },
             &PStmtData::Expr(expr) => DStmt::Expr(expr),
             &PStmtData::Defer(expr) => DStmt::Defer(expr),
-            PStmtData::Error => DStmt::None,
-        }
+            PStmtData::Error => return None,
+        })
     }
 
     fn declare_fn(&mut self, f: Located<&Fn>) -> DFn {
@@ -1637,7 +1637,7 @@ impl TypeChecker<'_> {
         })
     }
 
-    fn check_stmt(&mut self, stmt: DStmt) -> CStmt {
+    fn check_stmt(&mut self, stmt: DStmt) -> Option<CStmt> {
         match stmt {
             DStmt::Module { id, body } => {
                 self.enter_id_and_resolve(id, |this| {
@@ -1718,7 +1718,7 @@ impl TypeChecker<'_> {
                     }
                 });
             }
-            DStmt::Expr(expr) => return CStmt::Expr(self.check_expr(expr, None)),
+            DStmt::Expr(expr) => return Some(CStmt::Expr(self.check_expr(expr, None))),
             DStmt::Let { ty, value, ref patt } => {
                 let span = patt.span;
                 if let Some(ty) = ty {
@@ -1736,7 +1736,7 @@ impl TypeChecker<'_> {
                             return self
                                 .error(Error::must_be_irrefutable("let binding pattern", span));
                         }
-                        return CStmt::Let(patt, Some(value));
+                        return Some(CStmt::Let(patt, Some(value)));
                     } else {
                         let patt = self.check_pattern(PatternParams {
                             scrutinee: ty,
@@ -1755,7 +1755,7 @@ impl TypeChecker<'_> {
                                 span,
                             ));
                         }
-                        return CStmt::Let(patt, None);
+                        return Some(CStmt::Let(patt, None));
                     }
                 } else if let Some(value) = value {
                     let span = patt.span;
@@ -1771,15 +1771,15 @@ impl TypeChecker<'_> {
                         return self.error(Error::must_be_irrefutable("let binding pattern", span));
                     }
 
-                    return CStmt::Let(patt, Some(value));
+                    return Some(CStmt::Let(patt, Some(value)));
                 } else {
                     return self.error(Error::new("cannot infer type", patt.span));
                 }
             }
             DStmt::Defer(expr) => {
-                return CStmt::Defer(
+                return Some(CStmt::Defer(
                     self.enter(ScopeKind::Defer, |this| this.check_expr(expr, None)),
-                );
+                ));
             }
             DStmt::Guard { cond, body } => {
                 let (cond, vars) = self.check_condition(cond);
@@ -1787,7 +1787,7 @@ impl TypeChecker<'_> {
                 let body = self.check_expr_no_never_propagation(body, Some(TypeId::NEVER));
                 let body = self.type_check_checked(body, TypeId::NEVER, span);
                 self.define(&vars);
-                return CStmt::Guard { cond, body };
+                return Some(CStmt::Guard { cond, body });
             }
             DStmt::Fn(f) => self.check_fn(f),
             DStmt::Binding { id, value } => {
@@ -1819,10 +1819,9 @@ impl TypeChecker<'_> {
 
                 var.value = value;
             }
-            DStmt::None => {}
         }
 
-        CStmt::None
+        None
     }
 
     fn check_signature_match(
@@ -4832,12 +4831,11 @@ impl TypeChecker<'_> {
     }
 
     fn check_block(&mut self, body: &[PStmt]) -> Vec<CStmt> {
-        // TODO: do this in forward decl pass
         let declared: Vec<_> =
-            body.iter().map(|stmt| self.declare_stmt(&mut vec![], stmt)).collect();
+            body.iter().flat_map(|stmt| self.declare_stmt(&mut vec![], stmt)).collect();
 
         self.enter_id_and_resolve(self.current, |this| {
-            declared.into_iter().map(|stmt| this.check_stmt(stmt)).collect()
+            declared.into_iter().flat_map(|stmt| this.check_stmt(stmt)).collect()
         })
     }
 

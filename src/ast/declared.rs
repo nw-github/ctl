@@ -29,7 +29,6 @@ pub enum Stmt {
     Extension { id: ExtensionId, impls: Vec<ImplBlock>, fns: Vec<Fn> },
     Module { id: ScopeId, body: Vec<Stmt> },
     ModuleOOL { name: Located<StrId> },
-    None,
 }
 
 pub struct UsePath {
