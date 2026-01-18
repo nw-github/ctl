@@ -379,7 +379,7 @@ repository:
       -
         comment: comparison operators
         name: keyword.operator.comparison.ctl
-        match: (=(=)?(?!>)|!=|<=|(?<!=)>=)
+        match: (=(=)?(?!>)|!=|<=(>)?|(?<!=)>=)
       -
         comment: math operators
         name: keyword.operator.math.ctl
