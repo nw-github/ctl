@@ -113,22 +113,22 @@ pub extension CharImpl for char {
             let len_utf8 = this.len_utf8();
             match len_utf8 {
                 1 => {
-                    *ptr = cp as! u8;
+                    *ptr = cp.cast();
                 }
                 2 => {
-                    *ptr        = ((cp >> 6) | 0xc0) as! u8;
-                    *ptr.add(1) = ((cp & 0x3f) | 0x80) as! u8;
+                    *ptr        = ((cp >> 6) | 0xc0).cast();
+                    *ptr.add(1) = ((cp & 0x3f) | 0x80).cast();
                 }
                 3 => {
-                    *ptr        = ((cp >> 12) | 0xe0) as! u8;
-                    *ptr.add(1) = (((cp >> 6) & 0x3f) | 0x80) as! u8;
-                    *ptr.add(2) = ((cp & 0x3f) | 0x80) as! u8;
+                    *ptr        = ((cp >> 12) | 0xe0).cast();
+                    *ptr.add(1) = (((cp >> 6) & 0x3f) | 0x80).cast();
+                    *ptr.add(2) = ((cp & 0x3f) | 0x80).cast();
                 }
                 4 => {
-                    *ptr        = ((cp >> 18) | 0xf0) as! u8;
-                    *ptr.add(1) = (((cp >> 12) & 0x3f) | 0x80) as! u8;
-                    *ptr.add(2) = (((cp >> 6) & 0x3f) | 0x80) as! u8;
-                    *ptr.add(3) = ((cp & 0x3f) | 0x80) as! u8;
+                    *ptr        = ((cp >> 18) | 0xf0).cast();
+                    *ptr.add(1) = (((cp >> 12) & 0x3f) | 0x80).cast();
+                    *ptr.add(2) = (((cp >> 6) & 0x3f) | 0x80).cast();
+                    *ptr.add(3) = ((cp & 0x3f) | 0x80).cast();
                 }
                 _ => std::hint::unreachable_unchecked(),
             }
@@ -138,10 +138,10 @@ pub extension CharImpl for char {
 
     pub fn encode_utf16(my this): (u16, ?u16) {
         let cp = this as u32;
-        if cp <= 0xffff {
-            (cp as! u16, null)
+        if u16::try_from(cp) is ?cp {
+            (cp, null)
         } else {
-            (((cp >> 10) + LEAD_OFFSET) as! u16, ((cp & 0x3ff) + TRAIL_SURROGATE_MIN) as! u16)
+            (u16::from((cp >> 10) + LEAD_OFFSET), u16::from((cp & 0x3ff) + TRAIL_SURROGATE_MIN))
         }
     }
 }

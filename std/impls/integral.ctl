@@ -218,15 +218,28 @@ pub extension IntegralImpl<T: Integral> for T {
     $[intrinsic]
     pub fn min_value(): T => T::min_value();
 
-    /// C-style cast from `this` to type U with overflow/truncation.
+    /// C-style cast from `this` to type U with wraparound/truncation.
     $[intrinsic(numeric_cast)]
     pub fn cast<U: Integral>(my this): U => this.cast();
+
+    /// C-style cast from `from` to This with wraparound/truncation.
+    $[inline(always)]
+    pub fn from<U: Integral>(from: U): T => from.cast();
 
     /// Cast `this` to type `U` if the value of this is exactly representable in U
     $[inline]
     pub fn try_cast<U: Integral>(my this): ?U {
         let rhs: U = this.cast();
         this == rhs.cast() then rhs
+    }
+
+    $[inline]
+    pub fn try_from<U: Integral>(val: U): ?T => val.try_cast::<T>();
+
+    $[inline]
+    pub fn saturating_cast<U: Integral>(my this): U {
+        // TODO: actually saturate
+        this.cast()
     }
 
     $[inline]
@@ -260,12 +273,11 @@ pub extension IntegralImpl<T: Integral> for T {
     /// `buf`   must have a length of at least size_of::<T> * 8
     ///
     /// Returns the position of the start of the digits within `buf`
-    unsafe fn write_digits(my mut this, buf: [mut u8..], radix: u32, upper: bool): uint {
+    unsafe fn write_digits(my mut this, buf: [mut u8..], radix: int, upper: bool): uint {
         static UPPER_DIGITS: *[u8; 36] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
         static LOWER_DIGITS: *[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
 
         let digits = upper then UPPER_DIGITS else LOWER_DIGITS;
-        let radix = radix as! int;
         mut pos = buf.len();
         loop {
             // TODO: do this at CTL compile time
@@ -355,10 +367,10 @@ pub extension UnsignedImpl<T: Unsigned> for T {
     //       pub fn count_ones(this) => (this as! T::UI).count_ones();
     // In the meantime, an intrinsic might be the way to go
 
-    pub fn count_ones(my this): u32 => unsafe gcc_intrin::__builtin_popcountg(this) as! u32;
-    pub fn count_zeros(my this): u32 => unsafe gcc_intrin::__builtin_popcountg(!this) as! u32;
-    pub fn leading_zeros(my this): u32 => unsafe gcc_intrin::__builtin_clzg(this) as! u32;
-    pub fn trailing_zeros(my this): u32 => unsafe gcc_intrin::__builtin_ctzg(this) as! u32;
+    pub fn count_ones(my this): u32 => unsafe gcc_intrin::__builtin_popcountg(this).cast();
+    pub fn count_zeros(my this): u32 => unsafe gcc_intrin::__builtin_popcountg(!this).cast();
+    pub fn leading_zeros(my this): u32 => unsafe gcc_intrin::__builtin_clzg(this).cast();
+    pub fn trailing_zeros(my this): u32 => unsafe gcc_intrin::__builtin_ctzg(this).cast();
     pub fn is_power_of_two(my this): bool => this.count_ones() == 1;
 }
 

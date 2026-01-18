@@ -66,7 +66,7 @@ pub struct str {
             nlen: rhs.span.len(),
         );
         if cmp is ?val {
-            return this.span.as_raw().cast::<void>().sub_ptr(val) as! uint
+            this.span.as_raw().cast::<void>().sub_ptr(val)
         }
     }
 
@@ -207,7 +207,7 @@ pub struct LossyChars {
 mod utf8 {
     // From the Rust standard library:
     // This is bit magic equivalent to: b < 128 or b >= 192
-    pub fn is_char_boundary(b: u8): bool => b as! i8 >= -0x40;
+    pub fn is_char_boundary(b: u8): bool => i8::from(b) >= -0x40;
 
     pub fn sequence_length(lead: u8): ?uint {
         if lead < 0x80 {

@@ -57,7 +57,7 @@ pub struct Formatter {
         if char_count < width as uint {
             // If we're under the minimum width, then fill up the minimum width
             // with the specified string + some alignment.
-            let post_padding = this.padding(width - char_count as! u16, :Left);
+            let post_padding = this.padding(width - char_count.cast(), :Left);
             this.write.write_str(s);
             post_padding.fmt(this)
         } else {
@@ -104,13 +104,13 @@ pub struct Formatter {
             this.opts.fill = '0';
             this.opts.align = :Right;
             write_prefix(this, sign, prefix);
-            let post_padding = this.padding(min - width as! u16, :Right);
+            let post_padding = this.padding(min - width.cast(), :Right);
             this.write.write_str(digits);
             post_padding.fmt(this);
             this.opts = old_options;
         } else {
             // Otherwise, the sign and prefix goes after the padding
-            let post_padding = this.padding(min - width as! u16, :Right);
+            let post_padding = this.padding(min - width.cast(), :Right);
             write_prefix(this, sign, prefix);
             this.write.write_str(digits);
             post_padding.fmt(this)
@@ -302,18 +302,19 @@ pub mod ext {
     }
 }
 
+$[cfg(test)]
 mod test {
     extern fn sprintf(dst: ^mut c_char, fmt: ^c_char, ...): c_int;
 
     unittest "format pointer to format type" {
         let ptr = &10i32;
         mut buf = [0u8; 1024];
-        let len = unsafe sprintf(
+        let len = uint::from(unsafe sprintf(
             dst: buf.as_raw_mut().cast(),
             fmt: "Cool: %p %d!\0".as_raw().cast(),
             ptr,
             *ptr,
-        ) as! uint;
+        ));
         assert_eq("Cool: {ptr:p} {ptr}!".to_str(), str::from_utf8(buf[..len])!);
     }
 
@@ -322,11 +323,11 @@ mod test {
 
         let ptr = &NoFmt();
         mut buf = [0u8; 1024];
-        let len = unsafe sprintf(
+        let len = uint::from(unsafe sprintf(
             dst: buf.as_raw_mut().cast(),
             fmt: "Cool: %p!\0".as_raw().cast(),
             ptr,
-        ) as! uint;
+        ));
         assert_eq("Cool: {ptr:p}!".to_str(), str::from_utf8(buf[..len])!);
     }
 }

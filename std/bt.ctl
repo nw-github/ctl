@@ -212,8 +212,8 @@ pub struct Call {
 
             SymbolInfo(
                 file: CStr::new(file).as_str(),
-                line: lineno as! u32,
-                col: colno as! u32,
+                line: u32::try_from(lineno) ?? 0,
+                col: u32::try_from(colno) ?? 0,
                 func:,
                 offs:
             )

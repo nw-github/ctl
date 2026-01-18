@@ -8,7 +8,8 @@ pub extension RawImpl<T> for ^T {
     pub fn add(my this, offs: uint): ^T => intrin::ptr_add_unsigned(this, offs);
     pub fn sub_signed(my this, offs: uint): ^T => intrin::ptr_sub_unsigned(this, offs);
     pub fn sub(my this, offs: uint): ^T => intrin::ptr_sub_unsigned(this, offs);
-    pub fn sub_ptr(my this, rhs: ^T): int => intrin::ptr_diff(this, rhs);
+    pub fn sub_ptr(my this, rhs: ^T): uint => uint::from(intrin::ptr_diff(this, rhs));
+    pub fn sub_ptr_signed(my this, rhs: ^T): int => intrin::ptr_diff(this, rhs);
 
     pub unsafe fn read(my this): T => unsafe *this;
     pub unsafe fn read_volatile(my this): T => unsafe std::ptr::read_volatile(this);

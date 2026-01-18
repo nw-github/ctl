@@ -19,10 +19,10 @@ pub struct FloatingDecimal64 {
 pub fn d2d(ieee_mantissa: u64, ieee_exponent: u32): FloatingDecimal64 {
     let (e2, m2) = if ieee_exponent == 0 {
         // We subtract 2 so that the bounds computation has 2 additional bits.
-        (1i32 - DOUBLE_BIAS - DOUBLE_MANTISSA_BITS as! i32 - 2, ieee_mantissa)
+        (1i32 - DOUBLE_BIAS - DOUBLE_MANTISSA_BITS.cast() - 2, ieee_mantissa)
     } else {
         (
-            ieee_exponent as! i32 - DOUBLE_BIAS - DOUBLE_MANTISSA_BITS as! i32 - 2,
+            ieee_exponent.cast() - DOUBLE_BIAS - DOUBLE_MANTISSA_BITS.cast() - 2,
             (1u64 << DOUBLE_MANTISSA_BITS) | ieee_mantissa,
         )
     };
@@ -47,17 +47,17 @@ pub fn d2d(ieee_mantissa: u64, ieee_exponent: u32): FloatingDecimal64 {
         // I tried special-casing q == 0, but there was no effect on performance.
         // This expression is slightly faster than max(0, log10_pow2(e2) - 1).
         let q = log10_pow2(e2) - (e2 > 3) as u32;
-        e10 = q as! i32;
-        let k = DOUBLE_POW5_INV_BITCOUNT + pow5bits(q as! i32) - 1;
-        let i = -e2 + q as! i32 + k;
+        e10 = q.cast();
+        let k = DOUBLE_POW5_INV_BITCOUNT + pow5bits(q.cast()) - 1;
+        let i = -e2 + q.cast() + k;
         vr = unsafe {
-            mul_shift_all_64(m2, &DOUBLE_POW5_INV_SPLIT[q], i as! u32, &mut vp, &mut vm, mm_shift)
+            mul_shift_all_64(m2, &DOUBLE_POW5_INV_SPLIT[q], i.cast(), &mut vp, &mut vm, mm_shift)
         };
         if q <= 21 {
             // This should use q <= 22, but I think 21 is also safe. Smaller values
             // may still be safe, but it's more difficult to reason about them.
             // Only one of mp, mv, and mm can be a multiple of 5, if any.
-            let mv_mod5 = (mv as! u32).wrapping_sub(5u32.wrapping_mul((mv / 5) as! u32));
+            let mv_mod5 = u32::from(mv).wrapping_sub(5u32.wrapping_mul((mv / 5).cast()));
             if mv_mod5 == 0 {
                 vr_is_trailing_zeros = multiple_of_power_of_5(mv, q);
             } else if accept_bounds {
@@ -73,12 +73,12 @@ pub fn d2d(ieee_mantissa: u64, ieee_exponent: u32): FloatingDecimal64 {
     } else {
         // This expression is slightly faster than max(0, log10_pow5(-e2) - 1).
         let q = log10_pow5(-e2) - (-e2 > 1) as u32;
-        e10 = q as! i32 + e2;
-        let i = -e2 - q as! i32;
+        e10 = i32::from(q) + e2;
+        let i = -e2 - i32::from(q);
         let k = pow5bits(i) - DOUBLE_POW5_BITCOUNT;
-        let j = q as! i32 - k;
+        let j = i32::from(q) - k;
         vr = unsafe {
-            mul_shift_all_64(m2, &DOUBLE_POW5_SPLIT[i], j as! u32, &mut vp, &mut vm, mm_shift)
+            mul_shift_all_64(m2, &DOUBLE_POW5_SPLIT[i], j.cast(), &mut vp, &mut vm, mm_shift)
         };
         if q <= 1 {
             // {vr,vp,vm} is trailing zeros if {mv,mp,mm} has at least q trailing 0 bits.
@@ -113,12 +113,12 @@ pub fn d2d(ieee_mantissa: u64, ieee_exponent: u32): FloatingDecimal64 {
             if vp_div10 <= vm_div10 {
                 break;
             }
-            let vm_mod10 = (vm as! u32).wrapping_sub(10u32.wrapping_mul(vm_div10 as! u32));
+            let vm_mod10 = u32::from(vm).wrapping_sub(10u32.wrapping_mul(vm_div10.cast()));
             let vr_div10 = vr / 10;
-            let vr_mod10 = (vr as! u32).wrapping_sub(10u32.wrapping_mul(vr_div10 as! u32));
+            let vr_mod10 = u32::from(vr).wrapping_sub(10u32.wrapping_mul(vr_div10.cast()));
             vm_is_trailing_zeros &= vm_mod10 == 0;
             vr_is_trailing_zeros &= last_removed_digit == 0;
-            last_removed_digit = vr_mod10 as! u8;
+            last_removed_digit = vr_mod10.cast();
             vr = vr_div10;
             vp = vp_div10;
             vm = vm_div10;
@@ -127,15 +127,15 @@ pub fn d2d(ieee_mantissa: u64, ieee_exponent: u32): FloatingDecimal64 {
         if vm_is_trailing_zeros {
             loop {
                 let vm_div10 = vm / 10;
-                let vm_mod10 = (vm as! u32).wrapping_sub(10u32.wrapping_mul(vm_div10 as! u32));
+                let vm_mod10 = u32::from(vm).wrapping_sub(10u32.wrapping_mul(vm_div10.cast()));
                 if vm_mod10 != 0 {
                     break;
                 }
                 let vp_div10 = vp / 10;
                 let vr_div10 = vr / 10;
-                let vr_mod10 = (vr as! u32).wrapping_sub(10u32.wrapping_mul(vr_div10 as! u32));
+                let vr_mod10 = u32::from(vr).wrapping_sub(10u32.wrapping_mul(vr_div10.cast()));
                 vr_is_trailing_zeros &= last_removed_digit == 0;
-                last_removed_digit = vr_mod10 as! u8;
+                last_removed_digit = vr_mod10.cast();
                 vr = vr_div10;
                 vp = vp_div10;
                 vm = vm_div10;
@@ -157,7 +157,7 @@ pub fn d2d(ieee_mantissa: u64, ieee_exponent: u32): FloatingDecimal64 {
         // Optimization: remove two digits at a time (~86.2%).
         if vp_div100 > vm_div100 {
             let vr_div100 = vr / 100;
-            let vr_mod100 = (vr as! u32).wrapping_sub(100u32.wrapping_mul(vr_div100 as! u32));
+            let vr_mod100 = u32::from(vr).wrapping_sub(100u32.wrapping_mul(vr_div100.cast()));
             round_up = vr_mod100 >= 50;
             vr = vr_div100;
             vp = vp_div100;
@@ -175,7 +175,7 @@ pub fn d2d(ieee_mantissa: u64, ieee_exponent: u32): FloatingDecimal64 {
                 break;
             }
             let vr_div10 = vr / 10;
-            let vr_mod10 = (vr as! u32).wrapping_sub(10u32.wrapping_mul(vr_div10 as! u32));
+            let vr_mod10 = u32::from(vr).wrapping_sub(10u32.wrapping_mul(vr_div10.cast()));
             round_up = vr_mod10 >= 5;
             vr = vr_div10;
             vp = vp_div10;

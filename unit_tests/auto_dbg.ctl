@@ -48,7 +48,7 @@ unittest "automatic debug impl" {
     let [self1, vtable1] = addrs(ptrs.dynmutptr);
 
     mut buffer = [0u8; 2048];
-    let len = unsafe sprintf(
+    let len = uint::from(unsafe sprintf(
         dst: buffer.as_raw_mut().cast(),
         fmt: b"Pointers(dynptr: *dyn Any {self: %p, vtable: %p}, dynmutptr: *dyn mut Any {self: %p, vtable: %p}, fnptr: %p, fnobj: %p)\0".as_raw().cast(),
         self0,
@@ -57,7 +57,7 @@ unittest "automatic debug impl" {
         vtable1,
         ptrs.fnptr,
         ptrs.fnobj,
-    ) as! uint;
+    ));
 
     assert_eq(data, str::from_utf8(buffer[..len])!);
 }

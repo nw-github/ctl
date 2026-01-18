@@ -95,7 +95,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
         mut idx = {
             mut h = Fnv1a();
             k.hash(&mut h);
-            h.finish() as! uint
+            h.finish().cast::<uint>()
         } % this.capacity();
 
         mut tombstone: ?uint = null;
