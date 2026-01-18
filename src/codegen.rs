@@ -1758,7 +1758,7 @@ impl<'a> Codegen<'a> {
                     writeln_de!(self.buffer, "else{{CTL_UNREACHABLE();}}");
                 })
             }
-            &ExprData::As(mut inner, _) => {
+            &ExprData::As(mut inner) => {
                 inner.ty = inner.ty.with_templates(&self.proj.types, &state.func.ty_args);
                 // enum tag cast
                 self.emit_cast(expr.ty);

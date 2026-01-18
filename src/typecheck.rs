@@ -238,7 +238,6 @@ enum Listen {
 enum Cast {
     None,
     Unsafe,
-    Fallible,
     Infallible,
 }
 
@@ -248,8 +247,6 @@ impl Cast {
         match src {
             T::Usize | T::Isize => match dst {
                 T::Ptr(_) | T::MutPtr(_) | T::FnPtr(_) => Cast::Unsafe,
-                T::Uint(_) | T::Int(_) => Cast::Fallible,
-                T::Usize | T::Isize => Cast::Fallible,
                 T::RawPtr(_) | T::RawMutPtr(_) | T::F32 | T::F64 => Cast::Infallible,
                 _ => Cast::None,
             },
@@ -258,7 +255,13 @@ impl Cast {
                 // from can only be Uint(n) | Int(n) | Char | Bool now
                 match dst {
                     // we definitely don't support any targets with < 16 bit pointers
-                    T::Usize | T::Isize if !src.is_bool() && a.bits > 16 => Cast::Fallible,
+                    T::Usize | T::Isize => {
+                        if a.bits <= 16 && (!a.signed || dst == &T::Isize) {
+                            Cast::Infallible
+                        } else {
+                            Cast::None
+                        }
+                    },
                     T::F32 | T::F64 => Cast::Infallible,
                     // d800-e000 is invalid for a char, u15::MAX is 0x7fff
                     T::Char if matches!(src, T::Uint(n) if *n <= 15) => Cast::Infallible,
@@ -269,7 +272,7 @@ impl Cast {
                             {
                                 Cast::Infallible
                             } else {
-                                Cast::Fallible
+                                Cast::None
                             }
                         } else {
                             Cast::None
@@ -279,7 +282,6 @@ impl Cast {
             }
             T::F32 | T::F64 => match dst {
                 T::Int(_) | T::Isize | T::F32 | T::F64 => Cast::Infallible,
-                T::Uint(_) | T::Usize => Cast::Fallible,
                 _ => Cast::None,
             },
             T::Ptr(_) | T::MutPtr(_) | T::FnPtr(_) | T::RawPtr(_) | T::RawMutPtr(_) => {
@@ -2663,7 +2665,7 @@ impl TypeChecker<'_> {
                             this.arena.typed(this_ptr_ty, CExprData::Var(this_ptr_var));
                         call_args.insert(
                             Strings::THIS_PARAM,
-                            this.arena.typed(this_ptr_mut_ty, CExprData::As(this_ptr_expr, false)),
+                            this.arena.typed(this_ptr_mut_ty, CExprData::As(this_ptr_expr)),
                         );
                     }
 
@@ -3713,7 +3715,7 @@ impl TypeChecker<'_> {
                     },
                 )
             }
-            &PExprData::As { expr, ty, throwing } => {
+            &PExprData::As { expr, ty } => {
                 let to_id = self.resolve_typehint(ty);
                 let expr = self.check_expr(expr, Some(to_id));
                 let expr = match self.coerce(expr, to_id) {
@@ -3736,7 +3738,7 @@ impl TypeChecker<'_> {
                     {
                         from_id = tag;
                         if from_id == to_id {
-                            return self.arena.typed(to_id, CExprData::As(expr, throwing));
+                            return self.arena.typed(to_id, CExprData::As(expr));
                         }
                     }
                 }
@@ -3750,27 +3752,10 @@ impl TypeChecker<'_> {
                         ),
                         span,
                     )),
-                    Cast::Unsafe => {
-                        check_unsafe!(self, Error::is_unsafe(span));
-                    }
-                    Cast::Fallible if !throwing => self.proj.diag.report(Error::new(
-                        format!(
-                            "cast of expression of type '{}' to '{}' requires fallible cast",
-                            self.proj.fmt_ty(from_id),
-                            self.proj.fmt_ty(to_id),
-                        ),
-                        span,
-                    )),
-                    Cast::Infallible if throwing => {
-                        self.proj.diag.report(Warning::unnecessary_fallible_cast(
-                            self.proj.fmt_ty(from_id),
-                            self.proj.fmt_ty(to_id),
-                            span,
-                        ))
-                    }
-                    _ => {}
+                    Cast::Unsafe => check_unsafe!(self, Error::is_unsafe(span)),
+                    Cast::Infallible => {}
                 }
-                self.arena.typed(to_id, CExprData::As(expr, throwing))
+                self.arena.typed(to_id, CExprData::As(expr))
             }
             PExprData::Error => CExpr::default(),
             &PExprData::Lambda { policy, ref captures, ref params, ret, body } => {

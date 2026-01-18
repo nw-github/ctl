@@ -434,8 +434,8 @@ impl Pretty<'_> {
                 eprintln!("{tabs}{}: {}", "Pattern".yellow(), self.patt(&pattern.data));
                 self.print_expr(expr, indent + 1);
             }
-            ExprData::As { expr, ty, throwing } => {
-                self.print_header(&tabs, "Expr::As", &[bool!(throwing)]);
+            ExprData::As { expr, ty } => {
+                self.print_header(&tabs, "Expr::As", &[]);
                 let tabs = INDENT.repeat(indent + 1);
                 eprintln!("{tabs}{}: {}", "Type".yellow(), self.typ(*ty));
                 self.print_expr(expr, indent + 1);

@@ -182,7 +182,7 @@ pub enum ExprData {
         source: Expr,
         member: StrId,
     },
-    As(Expr, bool),
+    As(Expr),
     Is(Expr, Pattern),
     Return(Expr),
     Yield(Expr, ScopeId),

@@ -845,10 +845,12 @@ impl<'a> Parser<'a> {
             }
             Token::As => {
                 let bang = self.next_if(Token::Exclamation);
+                self.invalid_here(bang);
+
                 let ty = self.type_hint();
                 self.arena.expr(
                     left.span.extended_to(ty.span),
-                    ExprData::As { expr: left, ty, throwing: bang.is_some() },
+                    ExprData::As { expr: left, ty },
                 )
             }
             Token::Dot => {

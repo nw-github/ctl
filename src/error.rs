@@ -328,13 +328,6 @@ impl Warning {
         Self::new(format!("unused variable: '{name}'"), span)
     }
 
-    pub fn unnecessary_fallible_cast(src: impl Display, dst: impl Display, span: Span) -> Error {
-        Self::new(
-            format!("cast from type '{src}' to '{dst}' is infallible and may use an `as` cast"),
-            span,
-        )
-    }
-
     pub fn mut_ptr_to_const(span: Span) -> Error {
         Self::new("taking a mutable pointer to a constant operates on a copy", span)
     }

@@ -198,7 +198,7 @@ pub enum Precedence {
     Shift,        // << >>
     Term,         // + -
     Factor,       // * / %
-    Cast,         // as as!
+    Cast,         // as
     Prefix,       // !x ++x --x +x -x
     Postfix,      // x++ x-- ! ?
     Call,         // x() x[] x.

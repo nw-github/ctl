@@ -147,7 +147,6 @@ pub enum ExprData {
     As {
         expr: Expr,
         ty: TypeHint,
-        throwing: bool,
     },
     Unary {
         op: UnaryOp,
