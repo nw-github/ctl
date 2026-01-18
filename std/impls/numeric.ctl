@@ -31,4 +31,8 @@ pub extension NumericImpl<T: std::reflect::Numeric> for T {
         $[intrinsic(binary_op)]
         fn ne(this, rhs: *T): bool => this != rhs;
     }
+
+    /// C-style cast from `this` to type U with wraparound/truncation.
+    $[intrinsic(numeric_cast)]
+    pub fn cast<U: std::reflect::Numeric>(my this): U => this.cast();
 }

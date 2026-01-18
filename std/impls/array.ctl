@@ -43,10 +43,10 @@ pub extension ArrayImpl<A: Array<T>, T> for A {
     }
 
     $[inline(always)]
-    pub fn as_raw(this): ^T => this as ^T;
+    pub fn as_raw(this): ^T => this as ^A as ^T;
 
     $[inline(always)]
-    pub fn as_raw_mut(mut this): ^mut T => this as ^mut T;
+    pub fn as_raw_mut(mut this): ^mut T => this as ^mut A as ^mut T;
 
     $[inline(always)]
     pub fn []<I: Integral>(this, idx: I): *T => &this.as_span()[idx];

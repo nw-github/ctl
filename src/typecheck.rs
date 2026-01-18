@@ -245,15 +245,17 @@ impl Cast {
     fn get(src: &Type, dst: &Type) -> Cast {
         use Type as T;
         match src {
-            T::Usize | T::Isize => match dst {
-                T::Ptr(_) | T::MutPtr(_) | T::FnPtr(_) => Cast::Unsafe,
-                T::RawPtr(_) | T::RawMutPtr(_) | T::F32 | T::F64 => Cast::Infallible,
-                _ => Cast::None,
-            },
+            T::Usize | T::Isize => {
+                return match dst {
+                    T::FnPtr(_) => Cast::Unsafe,
+                    T::F32 | T::F64 => Cast::Infallible,
+                    _ => Cast::None,
+                };
+            }
             src if src.as_integral(true).is_some() => {
                 let a = src.as_integral(true).unwrap();
                 // from can only be Uint(n) | Int(n) | Char | Bool now
-                match dst {
+                return match dst {
                     // we definitely don't support any targets with < 16 bit pointers
                     T::Usize | T::Isize => {
                         if a.bits <= 16 && (!a.signed || dst == &T::Isize) {
@@ -261,7 +263,7 @@ impl Cast {
                         } else {
                             Cast::None
                         }
-                    },
+                    }
                     T::F32 | T::F64 => Cast::Infallible,
                     // d800-e000 is invalid for a char, u15::MAX is 0x7fff
                     T::Char if matches!(src, T::Uint(n) if *n <= 15) => Cast::Infallible,
@@ -278,19 +280,21 @@ impl Cast {
                             Cast::None
                         }
                     }
-                }
+                };
             }
-            T::F32 | T::F64 => match dst {
-                T::Int(_) | T::Isize | T::F32 | T::F64 => Cast::Infallible,
-                _ => Cast::None,
-            },
-            T::Ptr(_) | T::MutPtr(_) | T::FnPtr(_) | T::RawPtr(_) | T::RawMutPtr(_) => {
-                match dst {
-                    T::Ptr(_) | T::MutPtr(_) | T::FnPtr(_) => Cast::Unsafe,
-                    T::Usize | T::Isize | T::RawPtr(_) | T::RawMutPtr(_) => Cast::Infallible, // maybe only *T to ^mut T should be infallible
-                    _ => Cast::None,
-                }
+            _ => {}
+        }
+
+        match (src, dst) {
+            (T::F32 | T::F64, T::Int(_) | T::Isize | T::F32 | T::F64) => Cast::Infallible,
+            (T::Ptr(from) | T::MutPtr(from), T::RawPtr(to) | T::RawMutPtr(to)) if from == to => {
+                Cast::Infallible
             }
+            (T::FnPtr(_), T::Usize | T::Isize) => Cast::Infallible,
+            (T::RawPtr(from) | T::RawMutPtr(from), T::Ptr(to) | T::MutPtr(to)) if from == to => {
+                Cast::Unsafe
+            }
+            (T::RawPtr(_) | T::RawMutPtr(_), T::RawPtr(_) | T::RawMutPtr(_)) => Cast::Infallible,
             _ => Cast::None,
         }
     }

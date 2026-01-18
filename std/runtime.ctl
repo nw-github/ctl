@@ -91,7 +91,7 @@ fn install_fault_handler() {
             }
 
             if ctx is ?ctx {
-                let regs = &(ctx as *linux::ucontext_t).uc_mcontext.gregs;
+                let regs = &(*ctx.cast::<linux::ucontext_t>()).uc_mcontext.gregs;
                 let pc: uint = std::mem::bit_cast(regs[linux::REG_RIP as c_int]);
                 let bp: uint = std::mem::bit_cast(regs[linux::REG_RBP as c_int]);
                 let sp: uint = std::mem::bit_cast(regs[linux::REG_RSP as c_int]);
