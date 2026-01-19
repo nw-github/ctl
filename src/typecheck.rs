@@ -291,9 +291,7 @@ impl Cast {
                 Cast::Infallible
             }
             (T::FnPtr(_), T::Usize | T::Isize) => Cast::Infallible,
-            (T::RawPtr(from) | T::RawMutPtr(from), T::Ptr(to) | T::MutPtr(to)) if from == to => {
-                Cast::Unsafe
-            }
+            (T::RawPtr(_) | T::RawMutPtr(_), T::Ptr(_) | T::MutPtr(_)) => Cast::Unsafe,
             (T::RawPtr(_) | T::RawMutPtr(_), T::RawPtr(_) | T::RawMutPtr(_)) => Cast::Infallible,
             _ => Cast::None,
         }
