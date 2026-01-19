@@ -1,4 +1,4 @@
-use std::{fmt::Display, ops::Index};
+use std::ops::Index;
 
 use crate::{
     ast::{BinaryOp, UnaryOp, parsed::TypeHint},
@@ -326,41 +326,6 @@ pub type GenericTrait = WithTypeArgs<TraitId>;
 
 pub type GenericExtension = WithTypeArgs<ExtensionId>;
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
-pub enum CInt {
-    Char,
-    Short,
-    Int,
-    Long,
-    LongLong,
-}
-
-impl CInt {
-    pub const fn size(&self) -> usize {
-        use std::ffi::*;
-        match self {
-            CInt::Char => std::mem::size_of::<c_char>(),
-            CInt::Short => std::mem::size_of::<c_short>(),
-            CInt::Int => std::mem::size_of::<c_int>(),
-            CInt::Long => std::mem::size_of::<c_long>(),
-            CInt::LongLong => std::mem::size_of::<c_longlong>(),
-        }
-    }
-}
-
-impl Display for CInt {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CInt::Char => write!(f, "char"),
-            CInt::Short => write!(f, "short"),
-            CInt::Int => write!(f, "int"),
-            CInt::Long => write!(f, "long"),
-            CInt::LongLong if f.alternate() => write!(f, "longlong"),
-            CInt::LongLong => write!(f, "long long"),
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct Integer {
     pub bits: u32,
@@ -385,10 +350,6 @@ impl Integer {
         } else {
             (ComptimeInt::new(1) << (self.bits - self.signed as u32)) - 1
         }
-    }
-
-    pub const fn from_cint(cint: CInt, signed: bool) -> Self {
-        Self { bits: cint.size() as u32 * 8, signed, char: false }
     }
 }
 
@@ -419,8 +380,6 @@ pub enum Type {
     Never,
     Int(u32),
     Uint(u32),
-    CInt(CInt),
-    CUint(CInt),
     Isize,
     Usize,
     F32,
@@ -447,14 +406,7 @@ impl Type {
     pub fn is_numeric(&self) -> bool {
         matches!(
             self,
-            Type::Int(_)
-                | Type::Uint(_)
-                | Type::F32
-                | Type::F64
-                | Type::Isize
-                | Type::Usize
-                | Type::CInt(_)
-                | Type::CUint(_)
+            Type::Int(_) | Type::Uint(_) | Type::F32 | Type::F64 | Type::Isize | Type::Usize
         )
     }
 
@@ -467,23 +419,13 @@ impl Type {
     }
 
     pub fn is_integral(&self) -> bool {
-        matches!(
-            self,
-            Type::Int(_)
-                | Type::Uint(_)
-                | Type::CInt(_)
-                | Type::CUint(_)
-                | Type::Isize
-                | Type::Usize
-        )
+        matches!(self, Type::Int(_) | Type::Uint(_) | Type::Isize | Type::Usize)
     }
 
     pub fn as_integral(&self, extra: bool) -> Option<Integer> {
         let (bits, signed, char) = match self {
             &Type::Int(bits) => (bits, true, false),
             &Type::Uint(bits) => (bits, false, false),
-            &Type::CInt(cint) => return Some(Integer::from_cint(cint, true)),
-            &Type::CUint(cint) => return Some(Integer::from_cint(cint, false)),
             Type::Isize => (std::mem::size_of::<isize>() as u32 * 8, true, false),
             Type::Usize => (std::mem::size_of::<usize>() as u32 * 8, false, false),
             Type::Char if extra => (32 - (char::MAX as u32).leading_zeros(), false, true),
@@ -513,16 +455,6 @@ impl Type {
             match name {
                 "u" => Some(Type::Usize),
                 "i" => Some(Type::Isize),
-                "icc" => Some(Type::CInt(CInt::Char)),
-                "ics" => Some(Type::CInt(CInt::Short)),
-                "ic" => Some(Type::CInt(CInt::Int)),
-                "icl" => Some(Type::CInt(CInt::Long)),
-                "icll" => Some(Type::CInt(CInt::LongLong)),
-                "ucc" => Some(Type::CUint(CInt::Char)),
-                "ucs" => Some(Type::CUint(CInt::Short)),
-                "uci" => Some(Type::CUint(CInt::Int)),
-                "ucl" => Some(Type::CUint(CInt::Long)),
-                "ucll" => Some(Type::CUint(CInt::LongLong)),
                 _ => None,
             }
         }
@@ -657,8 +589,6 @@ impl TypeId {
                         | Type::Usize
                         | Type::F32
                         | Type::F64
-                        | Type::CInt(_)
-                        | Type::CUint(_)
                         | Type::Char
                         | Type::RawPtr(_)
                         | Type::RawMutPtr(_)
@@ -705,7 +635,6 @@ impl TypeId {
             Type::Int(0) | Type::Uint(0) => 0,
             Type::Int(128) | Type::Uint(128) => return (16, core::mem::align_of::<u128>()),
             Type::Int(bits) | Type::Uint(bits) => nearest_pow_of_two(*bits) / 8,
-            Type::CInt(inner) | Type::CUint(inner) => inner.size(),
             Type::Ptr(_) | Type::MutPtr(_) | Type::RawPtr(_) | Type::RawMutPtr(_) => {
                 std::mem::size_of::<*const ()>()
             }

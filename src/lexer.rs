@@ -3,12 +3,15 @@ use std::borrow::Cow;
 use enum_as_inner::EnumAsInner;
 use unicode_xid::UnicodeXID;
 
-use crate::error::{Diagnostics, Error, FileId};
+use crate::{
+    error::{Diagnostics, Error, FileId},
+    intern::{ByteStrId, StrId, Strings},
+};
 
-#[derive(Debug, Clone, PartialEq, Eq, EnumAsInner)]
-pub enum Token<'a> {
-    LineComment(&'a str),
-    BlockComment(&'a str),
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumAsInner)]
+pub enum Token {
+    LineComment(StrId),
+    BlockComment(StrId),
 
     LCurly,
     RCurly,
@@ -122,19 +125,19 @@ pub enum Token<'a> {
     And,
     Or,
 
-    Ident(&'a str),
-    Int { base: u8, value: &'a str, width: Option<&'a str> },
-    Float { value: &'a str, suffix: Option<&'a str> },
-    String(Cow<'a, str>),
-    StringPart(Cow<'a, str>),
+    Ident(StrId),
+    Int { base: u8, value: StrId, width: Option<StrId> },
+    Float { value: StrId, suffix: Option<StrId> },
+    String(StrId),
+    StringPart(StrId),
 
-    ByteString(Vec<u8>),
+    ByteString(ByteStrId),
     Char(char),
     ByteChar(u8),
     Eof,
 }
 
-impl std::fmt::Display for Token<'_> {
+impl std::fmt::Display for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Token::LCurly => write!(f, "{{"),
@@ -195,13 +198,13 @@ pub enum Precedence {
     Shift,        // << >>
     Term,         // + -
     Factor,       // * / %
-    Cast,         // as as!
+    Cast,         // as
     Prefix,       // !x ++x --x +x -x
     Postfix,      // x++ x-- ! ?
     Call,         // x() x[] x.
 }
 
-impl Token<'_> {
+impl Token {
     pub fn precedence(&self) -> Precedence {
         use Token::*;
 
@@ -258,6 +261,10 @@ impl Span {
         // when selecting
         pos >= self.pos && pos <= self.pos + self.len
     }
+
+    pub fn text<'a>(&self, src: &'a str) -> &'a str {
+        &src[self.pos as usize..][..self.len as usize]
+    }
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Hash, derive_more::Constructor)]
@@ -273,6 +280,10 @@ impl<T> Located<T> {
 
     pub fn nowhere(data: T) -> Self {
         Self { span: Span::default(), data }
+    }
+
+    pub fn as_ref(&self) -> Located<&T> {
+        Located::new(self.span, &self.data)
     }
 }
 
@@ -308,8 +319,8 @@ impl<'a> Lexer<'a> {
         ch == '_' || ch.is_xid_start()
     }
 
-    pub fn make_ident(s: &str) -> Token<'_> {
-        match s {
+    pub fn make_reserved_ident(s: &str) -> Option<Token> {
+        Some(match s {
             "and" => Token::And,
             "as" => Token::As,
             "async" => Token::Async,
@@ -364,11 +375,11 @@ impl<'a> Lexer<'a> {
             "yield" => Token::Yield,
             crate::intern::THIS_PARAM => Token::This,
             crate::intern::THIS_TYPE => Token::ThisType,
-            id => Token::Ident(id),
-        }
+            _ => return None,
+        })
     }
 
-    pub fn next(&mut self, diag: &mut Diagnostics) -> Located<Token<'a>> {
+    pub fn next(&mut self, diag: &mut Diagnostics, strings: &mut Strings) -> Located<Token> {
         self.advance_while(char::is_whitespace);
 
         let start = self.pos;
@@ -379,7 +390,7 @@ impl<'a> Lexer<'a> {
             '{' => Token::LCurly,
             '}' => {
                 if self.interpolating > 0 {
-                    self.string_literal(diag, start, true)
+                    self.string_literal(diag, strings, start, true)
                 } else {
                     Token::RCurly
                 }
@@ -392,7 +403,7 @@ impl<'a> Lexer<'a> {
             ';' => Token::Semicolon,
             '#' => {
                 if self.advance_if('"') {
-                    Token::String(Cow::Borrowed(self.raw_string_literal(diag, start + 1)))
+                    Token::String(strings.get_or_intern(self.raw_string_literal(diag, start + 1)))
                 } else {
                     Token::Hash
                 }
@@ -455,7 +466,7 @@ impl<'a> Lexer<'a> {
             '/' => match self.peek() {
                 Some('/') => {
                     self.advance();
-                    Token::LineComment(self.advance_while(|ch| ch != '\n'))
+                    Token::LineComment(strings.get_or_intern(self.advance_while(|ch| ch != '\n')))
                 }
                 Some('*') => {
                     self.advance();
@@ -480,7 +491,7 @@ impl<'a> Lexer<'a> {
                             _ => {}
                         }
                     }
-                    Token::BlockComment(&self.src[start..self.pos])
+                    Token::BlockComment(strings.get_or_intern(&self.src[start..self.pos]))
                 }
                 Some('=') => {
                     self.advance();
@@ -561,14 +572,14 @@ impl<'a> Lexer<'a> {
                     Token::Assign
                 }
             }
-            '"' => self.string_literal(diag, start, false),
+            '"' => self.string_literal(diag, strings, start, false),
             '\'' => Token::Char(self.char_literal(diag, false)),
-            ch @ '0'..='9' => self.numeric_literal(ch, start),
-            'b' => self.maybe_byte_string(diag, start),
-            ch if Self::is_identifier_first_char(ch) => self.identifier(start),
+            ch @ '0'..='9' => self.numeric_literal(strings, ch, start),
+            'b' => self.maybe_byte_string(diag, strings, start),
+            ch if Self::is_identifier_first_char(ch) => self.identifier(strings, start),
             ch => {
                 diag.report(Error::new(format!("unexpected character '{ch}'"), self.here(0)));
-                return self.next(diag);
+                return self.next(diag, strings);
             }
         };
 
@@ -578,9 +589,13 @@ impl<'a> Lexer<'a> {
         )
     }
 
-    pub fn next_skip_comments(&mut self, diag: &mut Diagnostics) -> Located<Token<'a>> {
+    pub fn next_skip_comments(
+        &mut self,
+        diag: &mut Diagnostics,
+        strings: &mut Strings,
+    ) -> Located<Token> {
         loop {
-            let t = self.next(diag);
+            let t = self.next(diag, strings);
             if !matches!(t.data, Token::LineComment(_) | Token::BlockComment(_)) {
                 break t;
             }
@@ -593,6 +608,10 @@ impl<'a> Lexer<'a> {
 
     pub fn advance_to(&mut self, pos: Option<u32>) {
         self.pos = pos.map(|p| p as usize).unwrap_or(self.src.len());
+    }
+
+    pub fn source(&self) -> &'a str {
+        self.src
     }
 
     fn peek(&self) -> Option<char> {
@@ -733,7 +752,13 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn string_literal(&mut self, diag: &mut Diagnostics, start: usize, interp: bool) -> Token<'a> {
+    fn string_literal(
+        &mut self,
+        diag: &mut Diagnostics,
+        strings: &mut Strings,
+        start: usize,
+        interp: bool,
+    ) -> Token {
         let mut result = Cow::from("");
         loop {
             match self.advance() {
@@ -741,7 +766,7 @@ impl<'a> Lexer<'a> {
                     if interp {
                         self.interpolating -= 1;
                     }
-                    break Token::String(result);
+                    break Token::String(strings.get_or_intern(result));
                 }
                 Some('\\') => {
                     result.to_mut().push(self.escape_char(diag, false));
@@ -750,7 +775,7 @@ impl<'a> Lexer<'a> {
                     if !interp {
                         self.interpolating += 1;
                     }
-                    break Token::StringPart(result);
+                    break Token::StringPart(strings.get_or_intern(result));
                 }
                 Some(ch) => match &mut result {
                     Cow::Borrowed(str) => *str = &self.src[start + 1..self.pos],
@@ -758,7 +783,7 @@ impl<'a> Lexer<'a> {
                 },
                 None => {
                     diag.report(Error::new("unterminated string literal", self.here(1)));
-                    break Token::String(result);
+                    break Token::String(strings.get_or_intern(result));
                 }
             }
         }
@@ -810,36 +835,37 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn numeric_suffix(&mut self) -> Option<&'a str> {
-        let suffix = self.advance_while(|s| s.is_ascii_alphanumeric());
-        if !suffix.is_empty() { Some(suffix) } else { None }
-    }
+    fn numeric_literal(&mut self, strings: &mut Strings, ch: char, start: usize) -> Token {
+        let mut value = |value: &str| strings.get_or_intern(value);
+        let suffix = |this: &mut Self, strings: &mut Strings| {
+            let suffix = this.advance_while(|s| s.is_ascii_alphanumeric());
+            if !suffix.is_empty() { Some(strings.get_or_intern(suffix)) } else { None }
+        };
 
-    fn numeric_literal(&mut self, ch: char, start: usize) -> Token<'a> {
         if ch == '0' {
             match self.peek() {
                 Some('x') => {
                     self.advance();
                     return Token::Int {
                         base: 16,
-                        value: self.advance_while(|ch| ch.is_ascii_hexdigit() || ch == '_'),
-                        width: self.numeric_suffix(),
+                        value: value(self.advance_while(|ch| ch.is_ascii_hexdigit() || ch == '_')),
+                        width: suffix(self, strings),
                     };
                 }
                 Some('o') => {
                     self.advance();
                     return Token::Int {
                         base: 8,
-                        value: self.advance_while(|ch| ch.is_digit(8) || ch == '_'),
-                        width: self.numeric_suffix(),
+                        value: value(self.advance_while(|ch| ch.is_digit(8) || ch == '_')),
+                        width: suffix(self, strings),
                     };
                 }
                 Some('b') => {
                     self.advance();
                     return Token::Int {
                         base: 2,
-                        value: self.advance_while(|ch| ch.is_digit(2) || ch == '_'),
-                        width: self.numeric_suffix(),
+                        value: value(self.advance_while(|ch| ch.is_digit(2) || ch == '_')),
+                        width: suffix(self, strings),
                     };
                 }
                 _ => {}
@@ -865,20 +891,30 @@ impl<'a> Lexer<'a> {
             float = true;
         }
 
-        let value = &self.src[start..self.pos];
+        let value = value(&self.src[start..self.pos]);
         if float {
-            return Token::Float { value, suffix: self.numeric_suffix() };
+            return Token::Float { value, suffix: suffix(self, strings) };
         }
 
-        Token::Int { value, base: 10, width: self.numeric_suffix() }
+        Token::Int { value, base: 10, width: suffix(self, strings) }
     }
 
-    fn identifier(&mut self, start: usize) -> Token<'a> {
+    fn identifier(&mut self, strings: &mut Strings, start: usize) -> Token {
         self.advance_while(Self::is_identifier_char);
-        Lexer::make_ident(&self.src[start..self.pos])
+        let data = &self.src[start..self.pos];
+        if let Some(tok) = Lexer::make_reserved_ident(data) {
+            tok
+        } else {
+            Token::Ident(strings.get_or_intern(data))
+        }
     }
 
-    fn maybe_byte_string(&mut self, diag: &mut Diagnostics, start: usize) -> Token<'a> {
+    fn maybe_byte_string(
+        &mut self,
+        diag: &mut Diagnostics,
+        strings: &mut Strings,
+        start: usize,
+    ) -> Token {
         fn bchar(diag: &mut Diagnostics, c: char, name: &str, span: Span) -> u8 {
             match c.try_into() {
                 Ok(c) => c,
@@ -896,7 +932,7 @@ impl<'a> Lexer<'a> {
             Some('#') => {
                 self.advance();
                 self.expect(diag, '"');
-                Token::ByteString(self.raw_string_literal(diag, start).as_bytes().to_vec())
+                Token::ByteString(strings.intern_byte_str(self.raw_string_literal(diag, start)))
             }
             Some('\'') => {
                 self.advance();
@@ -910,7 +946,7 @@ impl<'a> Lexer<'a> {
                 loop {
                     let prev = self.here(0);
                     match self.advance() {
-                        Some('"') => break Token::ByteString(result),
+                        Some('"') => break Token::ByteString(strings.intern_byte_str(result)),
                         Some('\\') => {
                             let ch = self.escape_char(diag, true);
                             result.push(bchar(diag, ch, "string", prev.extended_to(self.here(0))))
@@ -920,12 +956,12 @@ impl<'a> Lexer<'a> {
                         }
                         None => {
                             diag.report(Error::unterminated_str(self.here(1)));
-                            break Token::ByteString(result);
+                            break Token::ByteString(strings.intern_byte_str(result));
                         }
                     }
                 }
             }
-            _ => self.identifier(start),
+            _ => self.identifier(strings, start),
         }
     }
 }

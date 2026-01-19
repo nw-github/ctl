@@ -7,7 +7,7 @@ use crate::{
         ComptimeInt, IndexMap,
         arena::{self, Arena},
     },
-    intern::{StrId, Strings},
+    intern::{ByteStrId, StrId, Strings},
     project::Project,
     sym::{ScopeId, ScopeKind, Scopes, VariableId},
     typecheck::MemberFn,
@@ -95,7 +95,7 @@ impl Default for Pattern {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub enum Stmt {
     Expr(Expr),
     Let(Pattern, Option<Expr>),
@@ -104,8 +104,6 @@ pub enum Stmt {
         cond: Expr,
         body: Expr,
     },
-    #[default]
-    None,
 }
 
 pub type ExprId = arena::Id<ExprData>;
@@ -150,7 +148,7 @@ pub enum ExprData {
         args: Vec<(Expr, FormatOpts)>,
         scope: ScopeId,
     },
-    ByteString(Vec<u8>),
+    ByteString(ByteStrId),
     Void,
     Fn(GenericFn, ScopeId),
     MemFn(MemberFn, ScopeId),
@@ -184,7 +182,7 @@ pub enum ExprData {
         source: Expr,
         member: StrId,
     },
-    As(Expr, bool),
+    As(Expr),
     Is(Expr, Pattern),
     Return(Expr),
     Yield(Expr, ScopeId),

@@ -9,7 +9,7 @@ pub extension DynAnyImpl for *dyn std::any::Any {
 
     pub unsafe fn downcast_unchecked<T>(my this): *T {
         // TODO: maybe there should be a safer way to do this
-        unsafe *(&this as **T)
+        unsafe *(&raw this as ^*T)
     }
 }
 
@@ -27,10 +27,10 @@ pub extension DynMutAnyImpl for *dyn mut std::any::Any {
     }
 
     pub unsafe fn downcast_unchecked<T>(my this): *T {
-        unsafe *(&this as **T)
+        unsafe *(&raw this as ^*T)
     }
 
     pub unsafe fn downcast_unchecked_mut<T>(my this): *mut T {
-        unsafe *(&this as **mut T)
+        unsafe *(&raw this as ^*mut T)
     }
 }

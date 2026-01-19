@@ -1,5 +1,5 @@
 use anyhow::Context;
-use ctl::{Compiler, Configuration, Diagnostics, FileId, Lexer, Token, intern::Strings};
+use ctl::{Compiler, Diagnostics, FileId, Lexer, Strings, Token};
 use std::{
     io::{Read, Write},
     path::Path,
@@ -9,7 +9,7 @@ use std::{
 use tempfile::NamedTempFile;
 use wait_timeout::ChildExt;
 
-fn test_diagnostics(diag: Diagnostics, expected: &[&str]) -> datatest_stable::Result<()> {
+fn test_diagnostics(diag: Diagnostics, expected: &[String]) -> datatest_stable::Result<()> {
     let mut errors: Vec<_> = diag
         .diagnostics()
         .iter()
@@ -35,18 +35,20 @@ fn compile_test(path: &Path) -> datatest_stable::Result<()> {
     let file = std::fs::read_to_string(path)?;
     let mut diag = Diagnostics::default();
     let mut lexer = Lexer::new(&file, FileId::default());
+    let mut strings = Strings::new();
     let mut errors = vec![];
     let mut expected = vec![];
-    while let Token::LineComment(data) = lexer.next(&mut diag).data {
+    while let Token::LineComment(data) = lexer.next(&mut diag, &mut strings).data {
+        let data = strings.resolve(&data);
         let data = data.trim();
         let output = data.trim_start_matches("Output:");
         if output != data {
-            expected.push(output.trim());
+            expected.push(output.trim().to_string());
         }
 
         let output = data.trim_start_matches("Error:");
         if output != data {
-            errors.push(output.trim());
+            errors.push(output.trim().to_string());
         }
     }
 
@@ -54,10 +56,13 @@ fn compile_test(path: &Path) -> datatest_stable::Result<()> {
         return Err("no requirements specified!".into());
     }
 
-    let mut conf = Configuration::default();
-    conf.remove_feature(Strings::FEAT_BACKTRACE);
+    let input = ctl::package::Input {
+        features: ["hosted".to_string(), "alloc".into(), "io".into()].into(),
+        no_default_features: true,
+        args: Default::default(),
+    };
 
-    let (code, _, diag) = Compiler::new().parse(path, conf)?.typecheck(None).build();
+    let (code, _, diag) = Compiler::new().parse(path, input)?.typecheck(None).build();
     test_diagnostics(diag, &errors)?;
     let Some(code) = code else {
         if !expected.is_empty() {

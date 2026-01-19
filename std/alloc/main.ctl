@@ -9,7 +9,7 @@ pub unsafe trait Allocator {
     unsafe fn free(this, ptr: ^mut u8, layout: Layout);
 }
 
-$[feature(boehm)]
+$[cfg("!ctl:no-gc")]
 pub struct DefaultAllocator {
     impl Allocator {
         fn alloc(this, layout: Layout): ?^mut u8 {
@@ -25,7 +25,7 @@ pub struct DefaultAllocator {
     }
 }
 
-$[feature(hosted, not(boehm))]
+$[feature(hosted), cfg("ctl:no-gc")]
 pub struct DefaultAllocator {
     impl Allocator {
         fn alloc(this, layout: Layout): ?^mut u8 {

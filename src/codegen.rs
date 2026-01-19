@@ -1,7 +1,7 @@
 use std::fmt::{Display, Write};
 
 use crate::{
-    CachingSourceProvider, CodegenFlags, Diagnostics, OffsetMode, SourceProvider, Span,
+    CachingSourceProvider, Diagnostics, OffsetMode, SourceProvider, Span,
     ast::{Alignment, BinaryOp, Sign, UnaryOp, checked::*, parsed::RangePattern},
     ds::{ComptimeInt, Dependencies, DependencyGraph, HashMap, HashSet, IndexMap},
     intern::{StrId, Strings},
@@ -10,7 +10,7 @@ use crate::{
     sym::*,
     typecheck::{ExtensionCache, MemberFn, MemberFnType, SharedStuff},
     typeid::{
-        BitSizeResult, CInt, FnPtr, GenericFn, GenericTrait, GenericUserType, Integer,
+        BitSizeResult, FnPtr, GenericFn, GenericTrait, GenericUserType, Integer,
         LayoutItemKind, Type, TypeArgs, TypeId, Types,
     },
     write_de, writeln_de,
@@ -28,9 +28,7 @@ macro_rules! write_if {
 #[macro_export]
 macro_rules! write_nm {
     ($self: expr, $($arg:tt)*) => {
-        if !$self.flags.minify {
-            _ = write!($self.buffer, $($arg)*)
-        }
+        write_if!(!$self.proj.conf.build.minify, $self.buffer, $($arg)*)
     };
 }
 
@@ -50,15 +48,15 @@ struct TypeGen {
 }
 
 impl TypeGen {
-    fn gen_fnptr(buffer: &mut Buffer, flags: &CodegenFlags, f: &FnPtr) {
+    fn gen_fnptr(buffer: &mut Buffer, f: &FnPtr) {
         write_de!(buffer, "typedef ");
         if f.ret.is_void_like() {
             write_de!(buffer, "void");
         } else {
-            buffer.emit_type(f.ret, flags.minify);
+            buffer.emit_type(f.ret);
         }
         write_de!(buffer, "(*");
-        buffer.emit_fnptr_name(f, flags.minify);
+        buffer.emit_fnptr_name(f);
         write_de!(buffer, ")(");
 
         let types = &buffer.1.types;
@@ -74,13 +72,13 @@ impl TypeGen {
                     buffer.emit("void*");
                 }
             } else {
-                buffer.emit_type(param, flags.minify);
+                buffer.emit_type(param);
             }
         }
         writeln_de!(buffer, ");");
     }
 
-    fn gen_fn(buffer: &mut Buffer, flags: &CodegenFlags, func: &GenericFn) {
+    fn gen_fn(buffer: &mut Buffer, func: &GenericFn) {
         let f = buffer.1.scopes.get(func.id);
         let types = &buffer.1.types;
         let ret = f.ret.with_templates(types, &func.ty_args);
@@ -89,10 +87,10 @@ impl TypeGen {
         if ret.is_void_like() {
             write_de!(buffer, "void");
         } else {
-            buffer.emit_type(ret, flags.minify);
+            buffer.emit_type(ret);
         }
         write_de!(buffer, "(*");
-        buffer.emit_fn_type_name(func, flags.minify);
+        buffer.emit_fn_type_name(func);
         write_de!(buffer, ")(");
 
         for (i, param) in f.params.iter().enumerate() {
@@ -108,13 +106,13 @@ impl TypeGen {
                     buffer.emit("void*");
                 }
             } else {
-                buffer.emit_type(param, flags.minify);
+                buffer.emit_type(param);
             }
         }
         writeln_de!(buffer, ");");
     }
 
-    fn gen_vtable_info(flags: &CodegenFlags, buf: &mut Buffer, tr: UserTypeId) {
+    fn gen_vtable_info(buf: &mut Buffer, tr: UserTypeId) {
         let Some(Dependencies::Resolved(deps)) = buf.1.trait_deps.get(&tr) else {
             panic!(
                 "ICE: Dyn pointer for trait '{}' has invalid dependencies",
@@ -126,41 +124,36 @@ impl TypeGen {
 
         let mut offset = 0;
         for id in std::iter::once(tr).chain(deps.iter().cloned()) {
-            buf.emit_vtable_prefix(tr, flags.minify);
-            buf.emit_vtable_prefix(id, flags.minify);
+            buf.emit_vtable_prefix(tr);
+            buf.emit_vtable_prefix(id);
             write_de!(buf, "{VTABLE_TRAIT_START}={offset},");
 
             for f in vtable_methods(&buf.1.scopes, &buf.1.types, id) {
-                buf.emit_vtable_prefix(tr, flags.minify);
-                buf.emit_vtable_fn_name(f.id, flags.minify);
+                buf.emit_vtable_prefix(tr);
+                buf.emit_vtable_fn_name(f.id);
                 write_de!(buf, "={offset},");
                 offset += 1;
             }
         }
 
-        buf.emit_vtable_prefix(tr, flags.minify);
+        buf.emit_vtable_prefix(tr);
         writeln_de!(buf, "{VTABLE_TRAIT_LEN}={offset}}};");
     }
 
-    fn gen_usertype(
-        flags: &CodegenFlags,
-        decls: &mut Buffer,
-        defs: &mut Buffer,
-        ut: &GenericUserType,
-    ) {
+    fn gen_usertype(decls: &mut Buffer, defs: &mut Buffer, ut: &GenericUserType) {
         let emit_member = |name: StrId, ty: TypeId, size: usize, buffer: &mut Buffer| {
             if size == 0 {
                 write_de!(buffer, "CTL_ZST ");
             }
 
-            buffer.emit_type(ty, flags.minify);
+            buffer.emit_type(ty);
             writeln_de!(buffer, " {};", member_name(buffer.1, name));
         };
 
-        let type_name = Buffer::format(defs.1, |buf| buf.emit_type_name(ut, flags.minify));
+        let type_name = Buffer::format(defs.1, |buf| buf.emit_type_name(ut));
         if let Some(inner) = ut.can_omit_tag(&defs.1.scopes, &defs.1.types) {
             write_de!(defs, "typedef ");
-            defs.emit_type(inner, flags.minify);
+            defs.emit_type(inner);
             writeln_de!(defs, " {type_name};");
             return;
         }
@@ -186,7 +179,7 @@ impl TypeGen {
         for item in layout.items {
             match item.kind {
                 LayoutItemKind::Tag(ty) => {
-                    defs.emit_type(ty, flags.minify);
+                    defs.emit_type(ty);
                     writeln_de!(defs, " {UNION_TAG_NAME};");
                 }
                 LayoutItemKind::Member(ty, name) => emit_member(name, ty, item.size, defs),
@@ -224,21 +217,21 @@ impl TypeGen {
         );
     }
 
-    fn emit(&self, decls: &mut Buffer, flags: &CodegenFlags) {
+    fn emit(&self, decls: &mut Buffer) {
         let mut traits = HashSet::new();
         let mut defs = Buffer::new(decls.1);
         self.types.visit_all(|&id| match &decls.1.types[id] {
-            Type::Fn(f) => Self::gen_fn(&mut defs, flags, f),
-            Type::FnPtr(f) => Self::gen_fnptr(&mut defs, flags, f),
-            Type::User(ut) => Self::gen_usertype(flags, decls, &mut defs, ut),
+            Type::Fn(f) => Self::gen_fn(&mut defs, f),
+            Type::FnPtr(f) => Self::gen_fnptr(&mut defs, f),
+            Type::User(ut) => Self::gen_usertype(decls, &mut defs, ut),
             Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
                 if traits.insert(tr.id) {
-                    Self::gen_vtable_info(flags, &mut defs, tr.id);
+                    Self::gen_vtable_info(&mut defs, tr.id);
                 }
             }
             &Type::Int(bits) if bits != 0 => {
                 let nearest = nearest_pow_of_two(bits);
-                if flags.no_bit_int || nearest == bits as usize {
+                if decls.1.conf.build.no_bit_int || nearest == bits as usize {
                     writeln_de!(decls, "typedef int{nearest}_t s{bits};");
                 } else {
                     writeln_de!(decls, "typedef _BitInt({bits}) s{bits};");
@@ -246,7 +239,7 @@ impl TypeGen {
             }
             &Type::Uint(bits) if bits != 0 => {
                 let nearest = nearest_pow_of_two(bits);
-                if flags.no_bit_int || nearest == bits as usize {
+                if decls.1.conf.build.no_bit_int || nearest == bits as usize {
                     writeln_de!(decls, "typedef uint{nearest}_t u{bits};");
                 } else {
                     writeln_de!(decls, "typedef unsigned _BitInt({bits}) u{bits};");
@@ -254,15 +247,15 @@ impl TypeGen {
             }
             &Type::Array(ty, len) => {
                 write_de!(decls, "typedef struct ");
-                decls.emit_array_struct_name(ty, len, flags.minify);
+                decls.emit_array_struct_name(ty, len);
                 write_de!(decls, " ");
-                decls.emit_array_struct_name(ty, len, flags.minify);
+                decls.emit_array_struct_name(ty, len);
                 writeln_de!(decls, ";");
 
                 write_de!(defs, "struct ");
-                defs.emit_array_struct_name(ty, len, flags.minify);
+                defs.emit_array_struct_name(ty, len);
                 write_de!(defs, "{{");
-                defs.emit_type(ty, flags.minify);
+                defs.emit_type(ty);
 
                 let nonstr = if ty == TypeId::U8 { "CTL_NONSTR" } else { "" };
                 writeln_de!(defs, " {ARRAY_DATA_NAME}[{len}]{nonstr};\n}};");
@@ -277,7 +270,7 @@ impl TypeGen {
             return;
         }
 
-        let mut deps = Vec::new();
+        let mut deps = HashSet::new();
         macro_rules! dependency {
             ($ty: expr) => {{
                 let dep = $ty;
@@ -288,7 +281,7 @@ impl TypeGen {
                 if matches!(types[inner], Type::Fn(_) | Type::FnPtr(_))
                     || inner.can_omit_tag(scopes, types).is_some()
                 {
-                    deps.push(inner);
+                    deps.insert(inner);
                 } else if matches!(
                     types[dep],
                     Type::User(_)
@@ -298,7 +291,7 @@ impl TypeGen {
                         | Type::DynMutPtr(_)
                         | Type::DynPtr(_)
                 ) {
-                    deps.push(dep);
+                    deps.insert(dep);
                 }
 
                 self.add_type(scopes, types, dep);
@@ -315,7 +308,7 @@ impl TypeGen {
                 if matches!(types[inner], Type::Fn(_) | Type::FnPtr(_))
                     || inner.can_omit_tag(scopes, types).is_some()
                 {
-                    deps.push(inner);
+                    deps.insert(inner);
                 }
 
                 self.add_type(scopes, types, dep);
@@ -436,14 +429,12 @@ impl<'a> Buffer<'a> {
         _ = self.write_str(self.1.str(source));
     }
 
-    fn emit_mangled_name(&mut self, id: TypeId, min: bool) {
+    fn emit_mangled_name(&mut self, id: TypeId) {
         match &self.1.types[id] {
             Type::Void => write_de!(self, "v"),
             Type::Never => write_de!(self, "V"),
             Type::Int(bits) => write_de!(self, "i{bits}"),
             Type::Uint(bits) => write_de!(self, "u{bits}"),
-            Type::CInt(inner) => write_de!(self, "c{inner:#}"),
-            Type::CUint(inner) => write_de!(self, "C{inner:#}"),
             Type::Isize => write_de!(self, "I"),
             Type::Usize => write_de!(self, "U"),
             Type::F32 => write_de!(self, "f"),
@@ -452,32 +443,32 @@ impl<'a> Buffer<'a> {
             Type::Char => write_de!(self, "X"),
             &Type::Ptr(inner) => {
                 self.emit("p");
-                self.emit_mangled_name(inner, min);
+                self.emit_mangled_name(inner);
             }
             &Type::MutPtr(inner) => {
                 self.emit("P");
-                self.emit_mangled_name(inner, min);
+                self.emit_mangled_name(inner);
             }
             &Type::RawPtr(inner) => {
                 self.emit("r");
-                self.emit_mangled_name(inner, min);
+                self.emit_mangled_name(inner);
             }
             &Type::RawMutPtr(inner) => {
                 self.emit("R");
-                self.emit_mangled_name(inner, min);
+                self.emit_mangled_name(inner);
             }
             Type::DynPtr(tr) => {
                 self.emit("d");
-                self.emit_type_name(tr, min);
+                self.emit_type_name(tr);
             }
             Type::DynMutPtr(tr) => {
                 self.emit("D");
-                self.emit_type_name(tr, min);
+                self.emit_type_name(tr);
             }
-            Type::FnPtr(f) => self.emit_fnptr_name(f, min),
-            Type::Fn(f) => self.emit_fn_type_name(f, min),
-            Type::User(ut) => self.emit_type_name(ut, min),
-            &Type::Array(ty, len) => self.emit_array_struct_name(ty, len, min),
+            Type::FnPtr(f) => self.emit_fnptr_name(f),
+            Type::Fn(f) => self.emit_fn_type_name(f),
+            Type::User(ut) => self.emit_type_name(ut),
+            &Type::Array(ty, len) => self.emit_array_struct_name(ty, len),
             Type::Unknown => {
                 write_de!(self, "__Unknown");
                 eprintln!("ICE: TypeId::Unknown in emit_generic_mangled_name")
@@ -488,27 +479,25 @@ impl<'a> Buffer<'a> {
         }
     }
 
-    fn emit_fn_type_name(&mut self, f: &GenericFn, min: bool) {
+    fn emit_fn_type_name(&mut self, f: &GenericFn) {
         self.emit("n");
-        self.write_len_prefixed(&Buffer::format(self.1, |buf| buf.emit_fn_name(f, min)));
+        self.write_len_prefixed(&Buffer::format(self.1, |buf| buf.emit_fn_name(f)));
     }
 
-    fn emit_fnptr_name(&mut self, f: &FnPtr, min: bool) {
+    fn emit_fnptr_name(&mut self, f: &FnPtr) {
         write_de!(self, "N");
         for &param in f.params.iter() {
-            self.write_len_prefixed(&Buffer::format(self.1, |b| b.emit_mangled_name(param, min)));
+            self.write_len_prefixed(&Buffer::format(self.1, |b| b.emit_mangled_name(param)));
         }
         write_de!(self, "n");
-        self.emit_mangled_name(f.ret, min);
+        self.emit_mangled_name(f.ret);
     }
 
-    fn emit_type(&mut self, id: TypeId, min: bool) {
+    fn emit_type(&mut self, id: TypeId) {
         match &self.1.types[id] {
             Type::Void | Type::Never => write_de!(self, "$void"),
             Type::Int(bits) => write_de!(self, "s{bits}"),
             Type::Uint(bits) => write_de!(self, "u{bits}"),
-            Type::CInt(inner) => write_de!(self, "{inner}"),
-            Type::CUint(inner) => write_de!(self, "unsigned {inner}"),
             Type::Isize => write_de!(self, "isize"),
             Type::Usize => write_de!(self, "usize"),
             Type::F32 => write_de!(self, "f32"),
@@ -520,15 +509,15 @@ impl<'a> Buffer<'a> {
                 if i.is_void_like() {
                     write_de!(self, "void");
                 } else {
-                    self.emit_type(i, min);
+                    self.emit_type(i);
                 }
                 write_if!(is_const, self, " const");
                 write_de!(self, "*");
             }
-            Type::FnPtr(_) => self.emit_mangled_name(id, min),
-            Type::Fn(_) => self.emit_mangled_name(id, min),
-            Type::User(ut) => self.emit_type_name(ut, min),
-            &Type::Array(_, _) => self.emit_mangled_name(id, min),
+            Type::FnPtr(_) => self.emit_mangled_name(id),
+            Type::Fn(_) => self.emit_mangled_name(id),
+            Type::User(ut) => self.emit_type_name(ut),
+            &Type::Array(_, _) => self.emit_mangled_name(id),
             Type::DynPtr(_) => write_de!(self, "DynPtr"),
             Type::DynMutPtr(_) => write_de!(self, "DynMutPtr"),
             Type::Unknown => panic!("ICE: TypeId::Unknown in emit_type"),
@@ -536,7 +525,7 @@ impl<'a> Buffer<'a> {
         }
     }
 
-    fn emit_type_name(&mut self, ut: &GenericUserType, min: bool) {
+    fn emit_type_name(&mut self, ut: &GenericUserType) {
         let ty = self.1.scopes.get(ut.id);
         if ty.kind.is_template() {
             eprintln!("ICE: Template type in emit_type_name_ex");
@@ -545,10 +534,10 @@ impl<'a> Buffer<'a> {
             eprintln!("ty is empty");
         }
 
-        if min {
+        if self.1.conf.build.minify {
             write_de!(self, "t{}", ut.id);
             for &ty in ut.ty_args.values() {
-                self.emit_mangled_name(ty, min);
+                self.emit_mangled_name(ty);
             }
         } else if ty.kind.is_tuple() {
             write_de!(self, "L");
@@ -559,10 +548,7 @@ impl<'a> Buffer<'a> {
                 }));
 
                 self.write_len_prefixed(&Buffer::format(self.1, |data| {
-                    data.emit_mangled_name(
-                        member.ty.with_templates(&self.1.types, &ut.ty_args),
-                        false,
-                    );
+                    data.emit_mangled_name(member.ty.with_templates(&self.1.types, &ut.ty_args));
                 }));
             }
         } else {
@@ -571,12 +557,12 @@ impl<'a> Buffer<'a> {
         }
     }
 
-    fn emit_array_struct_name(&mut self, ty: TypeId, size: usize, min: bool) {
+    fn emit_array_struct_name(&mut self, ty: TypeId, size: usize) {
         write_de!(self, "A{size}");
-        self.emit_mangled_name(ty, min);
+        self.emit_mangled_name(ty);
     }
 
-    fn emit_fn_name(&mut self, func: &GenericFn, min: bool) {
+    fn emit_fn_name(&mut self, func: &GenericFn) {
         let f = &self.1.scopes.get(func.id);
         if let Some(name) = f.attrs.macro_name.or(f.attrs.link_name) {
             return self.emit_str(name);
@@ -584,10 +570,10 @@ impl<'a> Buffer<'a> {
             return self.emit_str(f.name.data);
         }
 
-        if min {
+        if self.1.conf.build.minify {
             write_de!(self, "p{}", func.id);
             for &ty in func.ty_args.values() {
-                self.emit_mangled_name(ty, min);
+                self.emit_mangled_name(ty);
             }
         } else {
             write_de!(self, "CTL$");
@@ -595,9 +581,9 @@ impl<'a> Buffer<'a> {
         }
     }
 
-    fn emit_vtable_prefix(&mut self, tr: UserTypeId, min: bool) {
-        self.emit(if min { "v" } else { "$vtable_" });
-        if min {
+    fn emit_vtable_prefix(&mut self, tr: UserTypeId) {
+        self.emit(if self.1.conf.build.minify { "v" } else { "$vtable_" });
+        if self.1.conf.build.minify {
             write_de!(self, "t{tr}");
         } else {
             let ty = self.1.scopes.get(tr);
@@ -606,8 +592,8 @@ impl<'a> Buffer<'a> {
         write_de!(self, "_");
     }
 
-    fn emit_vtable_fn_name(&mut self, id: FunctionId, min: bool) {
-        if min {
+    fn emit_vtable_fn_name(&mut self, id: FunctionId) {
+        if self.1.conf.build.minify {
             write_de!(self, "p{id}");
         } else {
             let f = self.1.scopes.get(id);
@@ -615,21 +601,21 @@ impl<'a> Buffer<'a> {
         }
     }
 
-    fn emit_dyn_fn_type(&mut self, func: &GenericFn, min: bool) {
+    fn emit_dyn_fn_type(&mut self, func: &GenericFn) {
         let func_data = self.1.scopes.get(func.id);
         let types = &self.1.types;
         let ret = func_data.ret.with_templates(types, &func.ty_args);
         if ret.is_void_like() {
             write_de!(self, "void");
         } else {
-            self.emit_type(ret, min);
+            self.emit_type(ret);
         }
         write_de!(self, "(*)(");
         for (i, param) in func_data.params.iter().enumerate() {
             let param_ty = param.ty.with_templates(types, &func.ty_args);
             if i > 0 {
                 write_de!(self, ",");
-                self.emit_type(param_ty, min);
+                self.emit_type(param_ty);
             } else if types[param_ty].is_ptr() {
                 write_de!(self, "void const*");
             } else {
@@ -649,7 +635,7 @@ impl<'a> Buffer<'a> {
                     let ut = self.1.scopes.get(id);
                     if let Some(imp) = imp.take().and_then(|i| ut.impls.get_checked(i)) {
                         let name = Buffer::format(self.1, |name| {
-                            name.emit_type_name(&imp.with_templates(&self.1.types, ty_args), false);
+                            name.emit_type_name(&imp.with_templates(&self.1.types, ty_args));
                         });
                         parts.push(Buffer::format(self.1, |data| {
                             write_de!(data, "I");
@@ -658,7 +644,7 @@ impl<'a> Buffer<'a> {
                     } else if let Some(this) =
                         ut.kind.as_trait().and_then(|(this, _, _)| ty_args.get(this))
                     {
-                        let name = Buffer::format(self.1, |b| b.emit_mangled_name(*this, false));
+                        let name = Buffer::format(self.1, |b| b.emit_mangled_name(*this));
                         parts.push(Buffer::format(self.1, |data| {
                             write_de!(data, "S");
                             data.write_len_prefixed(&name);
@@ -711,7 +697,7 @@ impl<'a> Buffer<'a> {
                 write_de!(buffer, "G");
             }
 
-            buffer.write_len_prefixed(&Buffer::format(self.1, |d| d.emit_mangled_name(ty, false)));
+            buffer.write_len_prefixed(&Buffer::format(self.1, |d| d.emit_mangled_name(ty)));
             wrote = true;
         }
 
@@ -874,7 +860,7 @@ macro_rules! emit_type {
     ($self: expr, $id: expr, $buf: expr) => {{
         let id = $id;
         $self.tg.add_type(&$self.proj.scopes, &$self.proj.types, id);
-        $buf.emit_type(id, $self.flags.minify);
+        $buf.emit_type(id);
     }};
 }
 
@@ -894,7 +880,6 @@ pub struct Codegen<'a> {
     emitted_never_in_this_block: bool,
     cur_block: ScopeId,
     cur_loop: ScopeId,
-    flags: CodegenFlags,
     vtables: Buffer<'a>,
     arrays: Buffer<'a>,
     emitted_vtables: HashSet<Vtable>,
@@ -911,7 +896,6 @@ impl<'a> Codegen<'a> {
         let mut this = Codegen {
             arena,
             str_interp: StrInterp::new(proj),
-            flags: proj.conf.flags,
             proj,
             funcs: proj
                 .scopes
@@ -986,11 +970,8 @@ impl<'a> Codegen<'a> {
         }
 
         let functions = this.buffer.take();
-        if this.flags.no_bit_int {
+        if this.proj.conf.build.no_bit_int {
             this.buffer.emit("#define CTL_NOBITINT 1\n");
-        }
-        if this.proj.conf.has_feature(Strings::FEAT_HOSTED) {
-            this.buffer.emit("#define CTL_HOSTED 1\n");
         }
 
         this.buffer.emit("#ifdef __clang__\n");
@@ -1007,11 +988,11 @@ impl<'a> Codegen<'a> {
                 this.str_interp.string_ty.unwrap(),
             );
             this.buffer.emit("#define STRLIT(data,n)(");
-            this.buffer.emit_type_name(ut, this.flags.minify);
+            this.buffer.emit_type_name(ut);
             this.buffer.emit("){.span={.ptr=(u8*)data,.len=(usize)n}}\n");
         }
 
-        this.tg.emit(&mut this.buffer, &this.flags);
+        this.tg.emit(&mut this.buffer);
         this.buffer.emit(prototypes.finish());
         this.buffer.emit(this.vtables.finish());
         this.buffer.emit(this.arrays.finish());
@@ -1037,13 +1018,13 @@ impl<'a> Codegen<'a> {
             write_de!(self.buffer, "static const VirtualFn ");
             self.emit_vtable_name(&vtable);
             write_de!(self.buffer, "[");
-            self.buffer.emit_vtable_prefix(vtable.tr.id, self.flags.minify);
+            self.buffer.emit_vtable_prefix(vtable.tr.id);
             write_de!(self.buffer, "{VTABLE_TRAIT_LEN}]={{");
             for tr in self.proj.scopes.walk_super_traits_ex(&self.proj.types, vtable.tr.clone()) {
                 for f in vtable_methods(&self.proj.scopes, &self.proj.types, tr.id) {
                     write_de!(self.buffer, "[");
-                    self.buffer.emit_vtable_prefix(vtable.tr.id, self.flags.minify);
-                    self.buffer.emit_vtable_fn_name(f.id, self.flags.minify);
+                    self.buffer.emit_vtable_prefix(vtable.tr.id);
+                    self.buffer.emit_vtable_fn_name(f.id);
                     write_de!(self.buffer, "]=(VirtualFn)");
                     let func = self.find_implementation(
                         vtable.ty,
@@ -1052,7 +1033,7 @@ impl<'a> Codegen<'a> {
                         vtable.scope,
                         |_, _| Default::default(),
                     );
-                    self.buffer.emit_fn_name(&func, self.flags.minify);
+                    self.buffer.emit_fn_name(&func);
                     write_de!(self.buffer, ",");
                     self.funcs.insert(State::new(func, vtable.scope));
                 }
@@ -1065,23 +1046,26 @@ impl<'a> Codegen<'a> {
     }
 
     fn gen_c_main(&mut self) -> Option<String> {
-        self.buffer.emit("int main(int argc, char **argv){CTL_ARGV=argv;CTL_ARGC=argc;");
-        if self.proj.conf.has_feature(Strings::FEAT_TEST) {
+        const MAIN: &str = "int main(int argc, char **argv){$ctl_stdlib_init(argc, argv);";
+
+        if self.proj.conf.in_test_mode() {
+            self.buffer.emit(MAIN);
             self.gen_test_main();
             return Some(self.buffer.take().finish());
         }
 
         let main = State::from_non_generic(self.proj.main?, &self.proj.scopes);
-
         let returns = self.proj.types[self.proj.scopes.get(main.func.id).ret].is_integral();
+
+        self.buffer.emit(MAIN);
         if returns {
             self.buffer.emit("return ");
         }
-        self.buffer.emit_fn_name(&main.func, self.flags.minify);
+        self.buffer.emit_fn_name(&main.func);
         if returns {
-            self.buffer.emit("();}\n");
+            self.buffer.emit("();$ctl_stdlib_deinit();}\n");
         } else {
-            self.buffer.emit("();return 0;}\n");
+            self.buffer.emit("();$ctl_stdlib_deinit();return 0;}\n");
         }
         self.funcs.insert(main);
         Some(self.buffer.take().finish())
@@ -1100,10 +1084,7 @@ impl<'a> Codegen<'a> {
 
         hoist_point!(self, {
             let test_info_ty = self.proj.scopes.lang_types[&LangType::TestInfo];
-            self.buffer.emit_type_name(
-                &GenericUserType::new(test_info_ty, TypeArgs::default()),
-                self.flags.minify,
-            );
+            self.buffer.emit_type_name(&GenericUserType::new(test_info_ty, TypeArgs::default()));
             self.buffer.emit(" tests[]={");
 
             let mut runner =
@@ -1142,7 +1123,7 @@ impl<'a> Codegen<'a> {
                     StringLiteral(self.proj.str(func.name.data)),
                     StringLiteral(&full_name_pretty(self.proj, func.scope, true))
                 );
-                self.buffer.emit_fn_name(&state.func, self.flags.minify);
+                self.buffer.emit_fn_name(&state.func);
 
                 write_de!(self.buffer, ",.skip_reason=");
                 let skip_reason_ty = self
@@ -1167,10 +1148,13 @@ impl<'a> Codegen<'a> {
                 test_count += 1;
             }
             self.buffer.emit("};\n");
-            self.buffer.emit_fn_name(&runner.func, self.flags.minify);
+            self.buffer.emit_fn_name(&runner.func);
             write_de!(self.buffer, "(");
             self.emit_cast(self.proj.scopes.get(runner.func.id).params[0].ty);
-            writeln_de!(self.buffer, "{{.ptr=tests,.len={test_count}}});return 0;}}");
+            writeln_de!(
+                self.buffer,
+                "{{.ptr=tests,.len={test_count}}});$ctl_stdlib_deinit();return 0;}}"
+            );
             self.funcs.insert(runner);
         });
     }
@@ -1276,7 +1260,6 @@ impl<'a> Codegen<'a> {
                 hoist_point!(self, self.emit_expr_stmt(body, state));
                 write_de!(self.buffer, "}}");
             }),
-            Stmt::None => {}
         }
     }
 
@@ -1340,8 +1323,8 @@ impl<'a> Codegen<'a> {
                     let recv = hoist!(self, self.emit_tmpvar(inner, state));
                     if from_tr_id != to_tr.id {
                         write_de!(self.buffer, "{{.self={recv}.self,.vtable=&{recv}.vtable[");
-                        self.buffer.emit_vtable_prefix(from_tr_id, self.flags.minify);
-                        self.buffer.emit_vtable_prefix(to_tr.id, self.flags.minify);
+                        self.buffer.emit_vtable_prefix(from_tr_id);
+                        self.buffer.emit_vtable_prefix(to_tr.id);
                         write_de!(self.buffer, "{VTABLE_TRAIT_START}]}}");
                     } else {
                         write_de!(self.buffer, "{{.self={recv}.self,.vtable={recv}.vtable}}");
@@ -1401,12 +1384,12 @@ impl<'a> Codegen<'a> {
                 let func = &func.with_templates(&self.proj.types, &state.func.ty_args);
 
                 write_de!(self.buffer, "((");
-                self.buffer.emit_dyn_fn_type(func, self.flags.minify);
+                self.buffer.emit_dyn_fn_type(func);
                 let id = func.id;
                 let recv = hoist!(self, self.emit_tmpvar(recv, state));
                 write_de!(self.buffer, "){recv}.vtable[");
-                self.buffer.emit_vtable_prefix(tr, self.flags.minify);
-                self.buffer.emit_vtable_fn_name(id, self.flags.minify);
+                self.buffer.emit_vtable_prefix(tr);
+                self.buffer.emit_vtable_fn_name(id);
                 write_de!(self.buffer, "])({recv}.self");
                 if args.is_empty() {
                     write_de!(self.buffer, ")");
@@ -1529,7 +1512,7 @@ impl<'a> Codegen<'a> {
                     );
 
                     for val in args {
-                        self.buffer.emit_fn_name(&insert.func, self.flags.minify);
+                        self.buffer.emit_fn_name(&insert.func);
                         write_de!(self.buffer, "(&{tmp},");
                         self.emit_expr_inline(val, state);
                         writeln_de!(self.buffer, ");");
@@ -1561,7 +1544,7 @@ impl<'a> Codegen<'a> {
 
                     self.emit_with_capacity(expr.ty, &tmp, ut, args.len());
                     for (key, val) in args {
-                        self.buffer.emit_fn_name(&insert.func, self.flags.minify);
+                        self.buffer.emit_fn_name(&insert.func);
                         write_de!(self.buffer, "(&{tmp},");
                         self.emit_expr(key, state);
                         write_de!(self.buffer, ",");
@@ -1588,7 +1571,7 @@ impl<'a> Codegen<'a> {
                 write_de!(self.arrays, "static const ");
                 emit_type!(self, expr.ty.as_pointee(&self.proj.types).unwrap(), self.arrays);
                 write_de!(self.arrays, " $BSTR{}={{.{ARRAY_DATA_NAME}=\"", expr.data.as_raw());
-                for byte in value {
+                for byte in self.proj.strings.resolve_byte_str(*value) {
                     write_de!(self.arrays, "\\x{byte:x}");
                 }
                 write_de!(self.arrays, "\"}};");
@@ -1598,7 +1581,7 @@ impl<'a> Codegen<'a> {
             ExprData::Void => self.buffer.emit(VOID_INSTANCE),
             &ExprData::Fn(ref func, scope) => {
                 let func = func.with_templates(&self.proj.types, &state.func.ty_args);
-                self.buffer.emit_fn_name(&func, self.flags.minify);
+                self.buffer.emit_fn_name(&func);
                 self.funcs.insert(State::new(func, scope));
             }
             ExprData::MemFn(mfn, scope) => self.emit_member_fn(state, mfn.clone(), *scope),
@@ -1775,7 +1758,7 @@ impl<'a> Codegen<'a> {
                     writeln_de!(self.buffer, "else{{CTL_UNREACHABLE();}}");
                 })
             }
-            &ExprData::As(mut inner, _) => {
+            &ExprData::As(mut inner) => {
                 inner.ty = inner.ty.with_templates(&self.proj.types, &state.func.ty_args);
                 // enum tag cast
                 self.emit_cast(expr.ty);
@@ -1892,7 +1875,7 @@ impl<'a> Codegen<'a> {
 
                 let mut func = GenericFn::new(f.id, TypeArgs::default());
                 func.fill_templates(&self.proj.types, &closure.ty_args);
-                self.buffer.emit_fn_name(&func, self.flags.minify);
+                self.buffer.emit_fn_name(&func);
                 self.funcs.insert(State::new(func, scope));
             }
             ExprData::Error => panic!("ICE: ExprData::Error in gen_expr"),
@@ -1920,7 +1903,7 @@ impl<'a> Codegen<'a> {
         }
 
         mfn.func.fill_templates(&self.proj.types, &state.func.ty_args);
-        self.buffer.emit_fn_name(&mfn.func, self.flags.minify);
+        self.buffer.emit_fn_name(&mfn.func);
         self.funcs.insert(State::new(mfn.func, scope));
     }
 
@@ -2348,7 +2331,7 @@ impl<'a> Codegen<'a> {
             &self.proj.scopes,
         );
 
-        self.buffer.emit_fn_name(&new_state.func, self.flags.minify);
+        self.buffer.emit_fn_name(&new_state.func);
         write_de!(self.buffer, "()");
         self.funcs.insert(new_state);
     }
@@ -2377,7 +2360,7 @@ impl<'a> Codegen<'a> {
             &self.proj.scopes,
         );
 
-        self.buffer.emit_fn_name(&state.func, self.flags.minify);
+        self.buffer.emit_fn_name(&state.func);
         writeln_de!(self.buffer, "({len});");
         self.funcs.insert(state);
     }
@@ -2429,7 +2412,7 @@ impl<'a> Codegen<'a> {
                 );
 
                 write_de!(self.buffer, "{VOID}(");
-                self.buffer.emit_fn_name(&panic.func, self.flags.minify);
+                self.buffer.emit_fn_name(&panic.func);
                 write_de!(self.buffer, "(");
                 for (i, (_, expr)) in args.into_iter().enumerate() {
                     if i > 0 {
@@ -2709,7 +2692,7 @@ impl<'a> Codegen<'a> {
                 let ty = self.proj.types.insert(Type::RawPtr(TypeId::VOID));
                 let ptr = Buffer::format(self.proj, |buf| {
                     write_de!(buf, "(void const*){{");
-                    buf.emit_fn_name(func, self.flags.minify);
+                    buf.emit_fn_name(func);
                     write_de!(buf, "}}");
                 });
                 self.emit_builtin_dbg(args, ty, &ptr, fmt, state, scope, span, 0);
@@ -2837,12 +2820,12 @@ impl<'a> Codegen<'a> {
     }
 
     fn emit_vtable_name(&mut self, vtable: &Vtable) {
-        self.buffer.emit_mangled_name(vtable.ty, self.flags.minify);
-        if !self.flags.minify {
+        self.buffer.emit_mangled_name(vtable.ty);
+        if !self.proj.conf.build.minify {
             write_de!(self.buffer, "_");
         }
-        self.buffer.emit_type_name(&vtable.tr, self.flags.minify);
-        self.buffer.emit(if self.flags.minify { "v" } else { "_$vtable" });
+        self.buffer.emit_type_name(&vtable.tr);
+        self.buffer.emit(if self.proj.conf.build.minify { "v" } else { "_$vtable" });
         write_de!(self.buffer, "{}", vtable.scope);
     }
 
@@ -3164,7 +3147,7 @@ impl<'a> Codegen<'a> {
 
     fn emit_type(&mut self, id: TypeId) {
         self.tg.add_type(&self.proj.scopes, &self.proj.types, id);
-        self.buffer.emit_type(id, self.flags.minify);
+        self.buffer.emit_type(id);
     }
 
     fn emit_cast(&mut self, id: TypeId) {
@@ -3183,7 +3166,10 @@ impl<'a> Codegen<'a> {
         if f.is_extern {
             write_de!(self.buffer, "extern ");
         } else {
-            write_de!(self.buffer, "static ");
+            if !f.attrs.export {
+                write_de!(self.buffer, "static ");
+            }
+
             // TODO: inline manually
             match f.attrs.inline {
                 Some(FunctionInline::Always) => write_de!(self.buffer, "CTL_FORCEINLINE "),
@@ -3209,7 +3195,7 @@ impl<'a> Codegen<'a> {
             self.emit_type(ret);
             write_de!(self.buffer, " ");
         }
-        self.buffer.emit_fn_name(&state.func, self.flags.minify);
+        self.buffer.emit_fn_name(&state.func);
         write_de!(self.buffer, "(");
 
         let mut unused = vec![];
@@ -3283,7 +3269,7 @@ impl<'a> Codegen<'a> {
     fn emit_var_name(&mut self, id: VariableId, state: &mut State) {
         use std::collections::hash_map::*;
 
-        if self.flags.minify {
+        if self.proj.conf.build.minify {
             return write_de!(self.buffer, "v{id}");
         }
 
@@ -3531,7 +3517,8 @@ impl<'a> Codegen<'a> {
     }
 
     fn emit_literal(&mut self, literal: ComptimeInt, ty: TypeId) {
-        let largest_type = Integer::from_cint(CInt::LongLong, false);
+        // TODO: size of largest c type
+        let largest_type = Integer { bits: 64, signed: false, char: false };
         let base = ty.as_integral(&self.proj.types, true).unwrap();
         if base.bits <= largest_type.bits {
             self.emit_cast(ty);
@@ -3591,7 +3578,7 @@ impl<'a> Codegen<'a> {
                 panic!("ICE: StringInterp: Cannot find language type 'string'");
             };
 
-            self.buffer.emit_type_name(string_ut, self.flags.minify);
+            self.buffer.emit_type_name(string_ut);
             write_de!(self.buffer, " {tmp}[{}]={{", strings.len());
             for &part in strings.iter() {
                 write_de!(self.buffer, "{},", StringLiteral(self.proj.str(part)));
@@ -3610,7 +3597,7 @@ impl<'a> Codegen<'a> {
             let typeid_align = opts_ut.members.get(&self.str_interp.align).unwrap().ty;
             let typeid_sign = opts_ut.members.get(&self.str_interp.sign).unwrap().ty;
 
-            self.buffer.emit_type_name(fmt_arg_ut, self.flags.minify);
+            self.buffer.emit_type_name(fmt_arg_ut);
             write_de!(self.buffer, " {tmp}[{}]={{", args.len());
             for (mut expr, opts) in args {
                 expr.ty = expr.ty.with_templates(&self.proj.types, &state.func.ty_args);
@@ -3786,7 +3773,7 @@ impl<'a> Codegen<'a> {
 
         formatter_write_str.fill_templates(&self.proj.types, &state.func.ty_args);
         let fn_name = Buffer::format(self.proj, |buf| {
-            buf.emit_fn_name(&formatter_write_str, self.flags.minify);
+            buf.emit_fn_name(&formatter_write_str);
         });
         self.funcs.insert(State::new(formatter_write_str, scope));
 

@@ -17,12 +17,12 @@ pub fn f2d(ieee_mantissa: u32, ieee_exponent: u32): FloatingDecimal32 {
     let (e2, m2) = if ieee_exponent == 0 {
         (
             // We subtract 2 so that the bounds computation has 2 additional bits.
-            1i32 - FLOAT_BIAS - FLOAT_MANTISSA_BITS as! i32 - 2,
+            1i32 - FLOAT_BIAS - FLOAT_MANTISSA_BITS.cast() - 2,
             ieee_mantissa,
         )
     } else {
         (
-            ieee_exponent as! i32 - FLOAT_BIAS - FLOAT_MANTISSA_BITS as! i32 - 2,
+            ieee_exponent.cast() - FLOAT_BIAS - FLOAT_MANTISSA_BITS.cast() - 2,
             (1u32 << FLOAT_MANTISSA_BITS) | ieee_mantissa,
         )
     };
@@ -45,9 +45,9 @@ pub fn f2d(ieee_mantissa: u32, ieee_exponent: u32): FloatingDecimal32 {
     mut last_removed_digit = 0u8;
     if e2 >= 0 {
         let q = log10_pow2(e2);
-        e10 = q as! i32;
-        let k = FLOAT_POW5_INV_BITCOUNT + pow5bits(q as! i32) - 1;
-        let i = -e2 + q as! i32 + k;
+        e10 = q.cast();
+        let k = FLOAT_POW5_INV_BITCOUNT + pow5bits(q.cast()) - 1;
+        let i = -e2 + q.cast() + k;
         vr = mul_pow5_inv_div_pow2(mv, q, i);
         vp = mul_pow5_inv_div_pow2(mp, q, i);
         vm = mul_pow5_inv_div_pow2(mm, q, i);
@@ -55,9 +55,9 @@ pub fn f2d(ieee_mantissa: u32, ieee_exponent: u32): FloatingDecimal32 {
             // We need to know one removed digit even if we are not going to loop below. We could use
             // q = X - 1 above, except that would require 33 bits for the result, and we've found that
             // 32-bit arithmetic is faster even on 64-bit machines.
-            let l = FLOAT_POW5_INV_BITCOUNT + pow5bits(q as! i32 - 1) - 1;
+            let l = FLOAT_POW5_INV_BITCOUNT + pow5bits(q.cast() - 1) - 1;
             last_removed_digit =
-                (mul_pow5_inv_div_pow2(mv, q - 1, -e2 + q as! i32 - 1 + l) % 10) as! u8;
+                (mul_pow5_inv_div_pow2(mv, q - 1, -e2 + q.cast() - 1 + l) % 10).cast();
         }
         if q <= 9 {
             // The largest power of 5 that fits in 24 bits is 5^10, but q <= 9 seems to be safe as well.
@@ -72,16 +72,16 @@ pub fn f2d(ieee_mantissa: u32, ieee_exponent: u32): FloatingDecimal32 {
         }
     } else {
         let q = log10_pow5(-e2);
-        e10 = q as! i32 + e2;
-        let i = -e2 - q as! i32;
+        e10 = i32::from(q) + e2;
+        let i = -e2 - i32::from(q);
         let k = pow5bits(i) - FLOAT_POW5_BITCOUNT;
-        mut j = q as! i32 - k;
-        vr = mul_pow5_div_pow2(mv, i as! u32, j);
-        vp = mul_pow5_div_pow2(mp, i as! u32, j);
-        vm = mul_pow5_div_pow2(mm, i as! u32, j);
+        mut j = i32::from(q) - k;
+        vr = mul_pow5_div_pow2(mv, i.cast(), j);
+        vp = mul_pow5_div_pow2(mp, i.cast(), j);
+        vm = mul_pow5_div_pow2(mm, i.cast(), j);
         if q != 0 and (vp - 1) / 10 <= vm / 10 {
-            j = q as! i32 - 1 - (pow5bits(i + 1) - FLOAT_POW5_BITCOUNT);
-            last_removed_digit = (mul_pow5_div_pow2(mv, (i + 1) as! u32, j) % 10) as! u8;
+            j = q.cast() - 1 - (pow5bits(i + 1) - FLOAT_POW5_BITCOUNT);
+            last_removed_digit = (mul_pow5_div_pow2(mv, (i + 1).cast(), j) % 10).cast();
         }
         if q <= 1 {
             // {vr,vp,vm} is trailing zeros if {mv,mp,mm} has at least q trailing 0 bits.
@@ -107,7 +107,7 @@ pub fn f2d(ieee_mantissa: u32, ieee_exponent: u32): FloatingDecimal32 {
         while vp / 10 > vm / 10 {
             vm_is_trailing_zeros &= vm - (vm / 10) * 10 == 0;
             vr_is_trailing_zeros &= last_removed_digit == 0;
-            last_removed_digit = (vr % 10) as! u8;
+            last_removed_digit = (vr % 10).cast();
             vr /= 10;
             vp /= 10;
             vm /= 10;
@@ -116,7 +116,7 @@ pub fn f2d(ieee_mantissa: u32, ieee_exponent: u32): FloatingDecimal32 {
         if vm_is_trailing_zeros {
             while vm % 10 == 0 {
                 vr_is_trailing_zeros &= last_removed_digit == 0;
-                last_removed_digit = (vr % 10) as! u8;
+                last_removed_digit = (vr % 10).cast();
                 vr /= 10;
                 vp /= 10;
                 vm /= 10;
@@ -135,7 +135,7 @@ pub fn f2d(ieee_mantissa: u32, ieee_exponent: u32): FloatingDecimal32 {
         // Loop iterations below (approximately):
         // 0: 13.6%, 1: 70.7%, 2: 14.1%, 3: 1.39%, 4: 0.14%, 5+: 0.01%
         while vp / 10 > vm / 10 {
-            last_removed_digit = (vr % 10) as! u8;
+            last_removed_digit = (vr % 10).cast();
             vr /= 10;
             vp /= 10;
             vm /= 10;

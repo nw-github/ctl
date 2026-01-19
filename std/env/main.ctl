@@ -1,5 +1,4 @@
-extern static CTL_ARGV: ?^mut ^mut c_char;
-extern static CTL_ARGC: c_int;
+use std::runtime::{CTL_ARGC, CTL_ARGV};
 
 pub struct RawArgsIter {
     argc: c_int,

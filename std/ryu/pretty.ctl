@@ -19,8 +19,8 @@ pub unsafe fn format32(f: f32, res: ^mut u8): uint {
         }
 
         let {exponent, mantissa} = f2d(ieee_mantissa, ieee_exponent);
-        let length = decimal_length9(mantissa) as! int;
-        let k = exponent as! int;
+        let length = int::from(decimal_length9(mantissa));
+        let k = int::from(exponent);
         let kk = length + k; // 10^(kk-1) <= v < 10^kk
         debug_assert(k >= -45);
 
@@ -32,17 +32,17 @@ pub unsafe fn format32(f: f32, res: ^mut u8): uint {
             }
             *res.add_signed(index + kk) = b'.';
             *res.add_signed(index + kk + 1) = b'0';
-            index as! uint + kk as! uint + 2
+            uint::from(index) + uint::from(kk) + 2
         } else if 0 < kk and kk <= 13 {
             // 1234e-2 -> 12.34
             write_mantissa(mantissa, res.add_signed(index + length + 1));
             std::mem::copy_overlapping(
                 dst: res.add_signed(index),
                 src: res.add_signed(index + 1),
-                num: kk as! uint,
+                num: uint::from(kk),
             );
             *res.add_signed(index + kk) = b'.';
-            index as! uint + length as! uint + 1
+            uint::from(index) + uint::from(length) + 1
         } else if -6 < kk and kk <= 0 {
             // 1234e-6 -> 0.001234
             *res.add_signed(index) = b'0';
@@ -52,20 +52,20 @@ pub unsafe fn format32(f: f32, res: ^mut u8): uint {
                 *res.add_signed(index + i) = b'0';
             }
             write_mantissa(mantissa, res.add_signed(index + length + offset));
-            index as! uint + length as! uint + offset as! uint
+            uint::from(index) + uint::from(length) + uint::from(offset)
         } else if length == 1 {
             // 1e30
-            *res.add_signed(index) = b'0' + mantissa as! u8;
+            *res.add_signed(index) = b'0' + u8::from(mantissa);
             *res.add_signed(index + 1) = b'e';
-            index as! uint + 2 + write_exponent2(kk - 1, res.add_signed(index + 2))
+            uint::from(index) + 2 + write_exponent2(kk - 1, res.add_signed(index + 2))
         } else {
             // 1234e30 -> 1.234e33
             write_mantissa(mantissa, res.add_signed(index + length + 1));
             *res.add_signed(index) = *res.add_signed(index + 1);
             *res.add_signed(index + 1) = b'.';
             *res.add_signed(index + length + 1) = b'e';
-            index as! uint
-                + length as! uint
+            uint::from(index)
+                + uint::from(length)
                 + 2
                 + write_exponent2(kk - 1, res.add_signed(index + length + 2))
         }
@@ -76,9 +76,9 @@ pub unsafe fn format64(f: f64, res: ^mut u8): uint {
     unsafe {
         let bits = f.to_bits();
         let sign = ((bits >> (DOUBLE_MANTISSA_BITS + DOUBLE_EXPONENT_BITS)) & 1) != 0;
-        let ieee_mantissa = bits & ((1u64 << DOUBLE_MANTISSA_BITS) - 1);
+        let ieee_mantissa = bits & ((1 << DOUBLE_MANTISSA_BITS) - 1);
         let ieee_exponent =
-            (bits >> DOUBLE_MANTISSA_BITS) as! u32 & ((1u32 << DOUBLE_EXPONENT_BITS) - 1);
+            u32::from(bits >> DOUBLE_MANTISSA_BITS) & ((1 << DOUBLE_EXPONENT_BITS) - 1);
 
         mut index = 0i;
         if sign {
@@ -92,8 +92,8 @@ pub unsafe fn format64(f: f64, res: ^mut u8): uint {
         }
 
         let {exponent, mantissa} = d2d(ieee_mantissa, ieee_exponent);
-        let length = decimal_length17(mantissa) as! int;
-        let k = exponent as! int;
+        let length = int::from(decimal_length17(mantissa));
+        let k = int::from(exponent);
         let kk = length + k; // 10^(kk-1) <= v < 10^kk
         debug_assert(k >= -324);
 
@@ -105,17 +105,17 @@ pub unsafe fn format64(f: f64, res: ^mut u8): uint {
             }
             *res.add_signed(index + kk) = b'.';
             *res.add_signed(index + kk + 1) = b'0';
-            index as! uint + kk as! uint + 2
+            uint::from(index) + uint::from(kk) + 2
         } else if 0 < kk and kk <= 16 {
             // 1234e-2 -> 12.34
             write_mantissa_long(mantissa, res.add_signed(index + length + 1));
             std::mem::copy_overlapping(
                 dst: res.add_signed(index),
                 src: res.add_signed(index + 1),
-                num: kk as! uint,
+                num: uint::from(kk),
             );
             *res.add_signed(index + kk) = b'.';
-            index as! uint + length as! uint + 1
+            uint::from(index) + uint::from(length) + 1
         } else if -5 < kk and kk <= 0 {
             // 1234e-6 -> 0.001234
             *res.add_signed(index) = b'0';
@@ -125,20 +125,20 @@ pub unsafe fn format64(f: f64, res: ^mut u8): uint {
                 *res.add_signed(index + i) = b'0';
             }
             write_mantissa_long(mantissa, res.add_signed(index + length + offset));
-            index as! uint + length as! uint + offset as! uint
+            uint::from(index) + uint::from(length) + uint::from(offset)
         } else if length == 1 {
             // 1e30
-            *res.add_signed(index) = b'0' + mantissa as! u8;
+            *res.add_signed(index) = b'0' + u8::from(mantissa);
             *res.add_signed(index + 1) = b'e';
-            index as! uint + 2 + write_exponent3(kk - 1, res.add_signed(index + 2))
+            uint::from(index) + 2 + write_exponent3(kk - 1, res.add_signed(index + 2))
         } else {
             // 1234e30 -> 1.234e33
             write_mantissa_long(mantissa, res.add_signed(index + length + 1));
             *res.add_signed(index) = *res.add_signed(index + 1);
             *res.add_signed(index + 1) = b'.';
             *res.add_signed(index + length + 1) = b'e';
-            index as! uint
-                + length as! uint
+            uint::from(index)
+                + uint::from(length)
                 + 2
                 + write_exponent3(kk - 1, res.add_signed(index + length + 2))
         }
@@ -229,7 +229,7 @@ unsafe fn write_exponent3(mut k: int, mut res: ^mut u8): uint {
 
         debug_assert(k < 1000);
         if k >= 100 {
-            res.write(b'0' + (k / 100) as! u8);
+            res.write(b'0' + u8::from(k / 100));
             k %= 100;
             std::mem::copy(dst: res.add_signed(1), src: &raw DIGIT_TABLE[k * 2], num: 2);
             sign as uint + 3
@@ -237,7 +237,7 @@ unsafe fn write_exponent3(mut k: int, mut res: ^mut u8): uint {
             std::mem::copy(dst: res, src: &raw DIGIT_TABLE[k * 2], num: 2);
             sign as uint + 2
         } else {
-            res.write(b'0' + k as! u8);
+            res.write(b'0' + u8::from(k));
             sign as uint + 1
         }
     }
@@ -256,7 +256,7 @@ unsafe fn write_exponent2(mut k: int, mut res: ^mut u8): uint {
             std::mem::copy(dst: res, src: &raw DIGIT_TABLE[k * 2], num: 2);
             sign as uint + 2
         } else {
-            *res = b'0' + k as! u8;
+            *res = b'0' + u8::from(k);
             sign as uint + 1
         }
     }
@@ -266,7 +266,7 @@ unsafe fn write_mantissa_long(mut output: u64, mut res: ^mut u8) {
     unsafe {
         if output >> 32 != 0 {
             // One expensive 64-bit division.
-            mut output2 = (output - (output / 100000000) * 100000000) as! u32;
+            mut output2 = u32::from(output - (output / 100000000) * 100000000);
             output /= 100000000;
 
             let c = output2 % 10000;
@@ -278,7 +278,7 @@ unsafe fn write_mantissa_long(mut output: u64, mut res: ^mut u8) {
             std::mem::copy(dst: res.sub(8), src: &raw DIGIT_TABLE[(d / 100) << 1], num: 2);
             res = res.sub(8);
         }
-        write_mantissa(output as! u32, res);
+        write_mantissa(u32::from(output), res);
     }
 }
 
@@ -302,7 +302,7 @@ unsafe fn write_mantissa(mut output: u32, mut res: ^mut u8) {
         if output >= 10 {
             std::mem::copy(dst: res.sub(2), src: &raw DIGIT_TABLE[output << 1], num: 2);
         } else {
-            res.sub(1).write(b'0' + output as! u8);
+            res.sub(1).write(b'0' + u8::from(output));
         }
     }
 }

@@ -3,9 +3,10 @@ mod codegen;
 mod ds;
 mod error;
 mod format;
-pub mod intern;
+mod intern;
 mod lexer;
 mod lsp;
+pub mod package;
 mod parser;
 mod pretty;
 mod project;
@@ -14,22 +15,22 @@ mod sym;
 mod typecheck;
 mod typeid;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-pub use project::Configuration;
-pub use project::TestArgs;
+pub use intern::Strings;
+pub use project::{Configuration, TestArgs};
 
+use crate::package::Input;
 use crate::{
     ast::checked::ExprArena as CExprArena,
     ast::parsed::{ExprArena as PExprArena, Stmt, StmtData},
     codegen::Codegen,
-    intern::Strings,
     parser::{ModuleAttributes, Parser},
     project::Project,
     typecheck::{LspInput, TypeChecker},
 };
 use anyhow::{Context, Result};
-use indexmap::IndexMap;
 
 pub use error::*;
 pub use lexer::*;
@@ -41,6 +42,7 @@ pub trait CompileState {}
 pub struct Source<T>(T);
 pub struct Parsed {
     modules: Vec<Stmt>,
+    feature_sets: Vec<FeatureSet>,
     diag: Diagnostics,
     conf: Configuration,
     strings: Strings,
@@ -52,25 +54,12 @@ impl<T> CompileState for Source<T> {}
 impl CompileState for Parsed {}
 impl CompileState for Checked {}
 
-#[derive(serde::Deserialize)]
-pub struct ProjectConfig {
-    pub root: Option<String>,
-    pub name: Option<String>,
-    pub build: Option<PathBuf>,
-    pub libs: Option<Vec<String>>,
-
-    #[serde(default)]
-    pub no_std: bool,
-    #[serde(default)]
-    pub lib: bool,
-}
-
 pub struct Compiler<S: CompileState> {
     state: S,
 }
 
 impl Compiler<Source<FileSourceProvider>> {
-    pub fn new() -> Compiler<Source<FileSourceProvider>> {
+    pub fn new() -> Self {
         Self::with_provider(FileSourceProvider)
     }
 }
@@ -80,31 +69,38 @@ impl<T: SourceProvider> Compiler<Source<T>> {
         Self { state: Source(provider) }
     }
 
-    pub fn parse(mut self, project: &Path, conf: Configuration) -> Result<Compiler<Parsed>> {
-        let project = UnloadedProject::new(project, conf)?;
+    pub fn parse_project(mut self, proj: package::Project) -> Result<Compiler<Parsed>> {
+        let (packages, conf) = load_packages(proj)?;
         let mut diag = Diagnostics::default();
         let mut strings = Strings::new();
         let mut arena = PExprArena::new();
-        let mut mods = Vec::with_capacity(project.mods.len());
-        for (path, module) in project.mods {
-            mods.push(self.load_module(&mut diag, &mut strings, &mut arena, path, module, None)?);
+        let mut modules = Vec::with_capacity(packages.len());
+        let mut feature_sets = Vec::with_capacity(packages.len());
+        for package in packages {
+            let ast =
+                self.parse_module(&mut diag, &mut strings, &mut arena, package.module, None)?;
+            modules.push(ast);
+            feature_sets.push(package.feature_set);
         }
 
-        Ok(Compiler { state: Parsed { modules: mods, diag, conf: project.conf, strings, arena } })
+        Ok(Compiler { state: Parsed { modules, diag, feature_sets, conf, strings, arena } })
     }
 
-    fn load_module(
+    pub fn parse(self, path: &Path, input: Input) -> Result<Compiler<Parsed>> {
+        self.parse_project(package::Project::load(path, input)?)
+    }
+
+    fn parse_module(
         &mut self,
         diag: &mut Diagnostics,
         strings: &mut Strings,
         arena: &mut PExprArena,
-        path: PathBuf,
         module: Module,
         attrs: Option<ModuleAttributes>,
     ) -> Result<Stmt> {
         let name = strings.get_or_intern(module.name);
-        let mut parsed = self.state.0.get_source(&path, |src| {
-            let file_id = diag.add_file(path.clone());
+        let mut parsed = self.state.0.get_source(&module.path, |src| {
+            let file_id = diag.add_file(module.path.clone());
             Parser::parse(src, name, diag, strings, arena, file_id, attrs.unwrap_or_default())
         })?;
 
@@ -112,7 +108,7 @@ impl<T: SourceProvider> Compiler<Source<T>> {
             unreachable!();
         };
 
-        for (path, module) in module.mods {
+        for module in module.mods {
             let mod_name = strings.get_or_intern(&module.name);
             let attrs = body.iter_mut().find_map(|stmt| {
                 if let StmtData::ModuleOOL { public, name, resolved } = &mut stmt.data.data
@@ -125,7 +121,7 @@ impl<T: SourceProvider> Compiler<Source<T>> {
                 }
             });
 
-            body.push(self.load_module(diag, strings, arena, path, module, attrs)?);
+            body.push(self.parse_module(diag, strings, arena, module, attrs)?);
         }
 
         Ok(parsed)
@@ -139,6 +135,11 @@ impl Default for Compiler<Source<FileSourceProvider>> {
 }
 
 impl Compiler<Parsed> {
+    pub fn modify_conf(mut self, f: impl FnOnce(&mut Configuration)) -> Self {
+        f(&mut self.state.conf);
+        self
+    }
+
     pub fn dump(&self, mods: &[String]) {
         if mods.is_empty()
             && let Some(ast) = self.state.modules.last()
@@ -183,11 +184,10 @@ impl Compiler<Parsed> {
     pub fn typecheck(self, lsp: Option<LspInput>) -> Compiler<Checked> {
         let (proj, arena) = TypeChecker::check(
             self.state.modules,
-            self.state.diag,
+            self.state.feature_sets,
+            Project::new(self.state.conf, self.state.diag, self.state.strings, lsp.is_some()),
             lsp,
-            self.state.conf,
             self.state.arena,
-            self.state.strings,
         );
         Compiler { state: Checked(proj, arena) }
     }
@@ -209,156 +209,102 @@ impl Compiler<Checked> {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy)]
-pub struct CodegenFlags {
-    pub no_bit_int: bool,
-    pub lib: bool,
-    pub minify: bool,
-}
+pub type FeatureSet = HashMap<String, bool>;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 struct Module {
     name: String,
-    mods: IndexMap<PathBuf, Module>,
+    path: PathBuf,
+    mods: Vec<Module>,
 }
 
 #[derive(Debug, Clone)]
-struct UnloadedProject {
-    mods: IndexMap<PathBuf, Module>,
-    conf: Configuration,
+struct Package {
+    module: Module,
+    feature_set: FeatureSet,
 }
 
-impl UnloadedProject {
-    fn new(path: &Path, mut conf: Configuration) -> Result<Self> {
-        let mut mods = IndexMap::new();
-        let path = path.canonicalize()?;
-
-        let mut modpaths = vec![path];
-        let mut main = true;
-        while let Some(path) = modpaths.pop() {
-            if mods.contains_key(&path) {
-                continue;
-            }
-
-            match Self::load_module(path.clone(), Some(&mut modpaths), main.then_some(&mut conf))
-                .with_context(|| format!("Loading module '{}' failed", path.display()))?
-            {
-                Some((path, module)) => _ = mods.insert(path, module),
-                None => anyhow::bail!("Couldn't find module: '{}'", path.display()),
-            }
-            main = false;
+fn load_packages(proj: package::Project) -> Result<(Vec<Package>, Configuration)> {
+    let mut packages = Vec::new();
+    let main_module = proj.mods.last().unwrap();
+    let is_library = main_module.lib;
+    let name = safe_name(&main_module.name);
+    for package in proj.mods {
+        match load_module(&package.name, &package.path).with_context(|| {
+            format!("Loading module '{}' failed (root '{}')", package.name, package.path.display())
+        })? {
+            Some(module) => packages.push(Package {
+                module,
+                feature_set: package
+                    .features
+                    .into_iter()
+                    .map(|(name, feat)| (name, feat.enabled))
+                    .collect(),
+            }),
+            None => anyhow::bail!("Couldn't load package: '{}'", package.path.display()),
         }
-
-        // TODO: actual dependency ordering
-        mods.reverse();
-        Ok(Self { mods, conf })
     }
 
-    fn load_module(
-        mut path: PathBuf,
-        mods: Option<&mut Vec<PathBuf>>,
-        conf: Option<&mut Configuration>,
-    ) -> Result<Option<(PathBuf, Module)>> {
-        let mut name = Self::derive_module_name(&path);
-        if let Some(mods) = mods {
-            Self::handle_config(&mut path, &mut name, mods, conf)?;
-        }
+    Ok((
+        packages,
+        Configuration {
+            build: proj.build,
+            libs: proj.libs,
+            args: proj.args,
+            name,
+            is_library,
+            test_args: None,
+        },
+    ))
+}
 
-        if path.is_file() && path.extension().is_some_and(|ext| ext == "ctl") {
-            return Ok(Some((path, Module { name, mods: IndexMap::new() })));
-        } else if !path.is_dir() {
-            return Ok(None);
-        }
-
-        let main = path.join("main.ctl");
-        if !main.exists() {
-            return Ok(None);
-        }
-
-        let mut mods = IndexMap::new();
-        for entry in path.read_dir().with_context(|| format!("loading path {}", path.display()))? {
-            let entry = entry?;
-            if entry.file_name() == "main.ctl" {
-                continue;
-            }
-
-            if let Some((path, module)) = Self::load_module(entry.path(), None, None)
-                .with_context(|| format!("loading path {}", path.display()))?
-            {
-                mods.insert(path, module);
-            }
-        }
-
-        Ok(Some((main, Module { name, mods })))
+fn load_module(name: &str, path: &Path) -> Result<Option<Module>> {
+    let name = safe_name(name);
+    if path.is_file() && path.extension().is_some_and(|ext| ext == "ctl") {
+        return Ok(Some(Module { path: path.to_path_buf(), name, mods: Vec::new() }));
+    } else if !path.is_dir() {
+        return Ok(None);
     }
 
-    fn handle_config(
-        path: &mut PathBuf,
-        name: &mut String,
-        mods: &mut Vec<PathBuf>,
-        conf: Option<&mut Configuration>,
-    ) -> Result<()> {
-        let mut needs_stdlib = !conf.as_ref().is_some_and(|conf| conf.no_std);
-        if path.is_dir() {
-            match std::fs::read_to_string(path.join("ctl.toml")) {
-                Ok(val) => {
-                    let mut config = toml::from_str::<ProjectConfig>(&val)?;
-                    if let Some(root) = config.root.take() {
-                        let root = Path::new(&root);
-                        *path = if root.is_absolute() { root.into() } else { path.join(root) };
-                    }
-
-                    if let Some(rename) = config.name {
-                        // TODO: prevent duplicate names, naming module std, etc.
-                        *name = Self::safe_name(&rename);
-                    }
-
-                    if config.no_std {
-                        needs_stdlib = false;
-                    }
-
-                    if let Some(conf) = conf {
-                        conf.libs = config.libs;
-                        conf.build = config.build;
-                        conf.name = Some(name.clone());
-                        if config.lib {
-                            conf.flags.lib = true;
-                        }
-                    }
-                }
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(err) => return Err(err.into()),
-            }
-        }
-
-        if needs_stdlib {
-            mods.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("std").canonicalize()?);
-        }
-        Ok(())
+    let main = path.join("main.ctl");
+    if !main.exists() {
+        return Ok(None);
     }
 
-    fn derive_module_name(path: &Path) -> String {
-        let base = if path.is_file() { path.file_stem() } else { path.file_name() };
-
-        Self::safe_name(base.unwrap().to_string_lossy().as_ref())
-    }
-
-    fn safe_name(s: &str) -> String {
-        let mut r = String::new();
-        for (i, ch) in s.chars().enumerate() {
-            if i == 0 && !Lexer::is_identifier_first_char(ch) {
-                r.push('_');
-            }
-
-            r.push(if Lexer::is_identifier_char(ch) { ch } else { '_' });
+    let mut mods = Vec::new();
+    for entry in path.read_dir().with_context(|| format!("loading path {}", path.display()))? {
+        let entry = entry?;
+        if entry.file_name() == "main.ctl" {
+            continue;
         }
 
-        if !Lexer::make_ident(&r).is_ident() {
-            r.insert(0, '_');
+        let path = entry.path();
+        let mod_name = package::Project::default_package_name(&path)?;
+        if let Some(module) = load_module(&safe_name(&mod_name), &path)
+            .with_context(|| format!("loading path {}", path.display()))?
+        {
+            mods.push(module);
+        }
+    }
+
+    Ok(Some(Module { path: main, name, mods }))
+}
+
+fn safe_name(s: &str) -> String {
+    let mut r = String::new();
+    for (i, ch) in s.chars().enumerate() {
+        if i == 0 && !Lexer::is_identifier_first_char(ch) {
+            r.push('_');
         }
 
-        r
+        r.push(if Lexer::is_identifier_char(ch) { ch } else { '_' });
     }
+
+    if Lexer::make_reserved_ident(&r).is_some() {
+        r.insert(0, '_');
+    }
+
+    r
 }
 
 fn nearest_pow_of_two(bits: u32) -> usize {

@@ -40,7 +40,7 @@ impl Default for ModuleAttributes {
 
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
-    peek: Option<Located<Token<'a>>>,
+    peek: Option<Located<Token>>,
     needs_sync: bool,
     diag: &'a mut Diagnostics,
     strings: &'a mut Strings,
@@ -71,6 +71,9 @@ impl<'a> Parser<'a> {
         let mut stmts = Vec::new();
         while !this.matches(Token::Eof) {
             stmts.push(this.item());
+            if this.needs_sync {
+                this.synchronize();
+            }
         }
 
         Stmt {
@@ -89,16 +92,16 @@ impl<'a> Parser<'a> {
 
     //
 
-    fn try_item(&mut self) -> Result<Stmt, (Option<Located<Token<'a>>>, Attributes)> {
+    fn try_item(&mut self) -> Result<Stmt, (Option<Span>, Attributes)> {
         let mut attrs = self.attributes();
-        let is_public = self.next_if(Token::Pub);
-        let is_extern = self.next_if(Token::Extern);
-        let is_unsafe = self.next_if(Token::Unsafe);
+        let tk_public = self.next_if(Token::Pub);
+        let tk_extern = self.next_if(Token::Extern);
+        let tk_unsafe = self.next_if(Token::Unsafe);
         let conf = FnConfig {
-            tk_public: is_public.as_ref().map(|t| t.span),
-            tk_extern: is_extern.as_ref().map(|t| t.span),
-            tk_unsafe: is_unsafe.as_ref().map(|t| t.span),
-            require_body: is_extern.is_none(),
+            tk_public,
+            tk_extern,
+            tk_unsafe,
+            require_body: tk_extern.is_none(),
             forced_pub: false,
         };
         match self.try_function(conf, attrs.clone()) {
@@ -124,45 +127,53 @@ impl<'a> Parser<'a> {
         };
 
         let peek = self.peek();
-        let earliest_span =
-            conf.tk_public.or(conf.tk_extern).or(conf.tk_unsafe).unwrap_or(peek.span);
-
+        let earliest_span = tk_public.or(tk_extern).or(tk_unsafe).unwrap_or(peek.span);
         match peek.data {
+            Token::Type => {
+                self.next();
+                self.invalid_here(tk_unsafe);
+                self.invalid_here(tk_extern);
+
+                let name = self.expect_ident("expected name");
+                let type_params = self.type_params();
+                self.expect(Token::Assign);
+                let ty = self.type_hint();
+                self.expect(Token::Semicolon);
+                Ok(Stmt {
+                    data: Located::new(
+                        earliest_span.extended_to(ty.span),
+                        StmtData::Alias { public: tk_public.is_some(), name, type_params, ty },
+                    ),
+                    attrs,
+                })
+            }
             Token::Struct | Token::Packed => {
                 let token = self.next();
                 if token.data == Token::Packed {
                     self.expect(Token::Struct);
                 }
 
-                if let Some(token) = is_unsafe {
-                    self.error_no_sync(Error::not_valid_here(&token));
-                }
+                self.invalid_here(tk_unsafe);
+                self.invalid_here(tk_extern);
 
-                if let Some(token) = is_extern {
-                    self.error_no_sync(Error::not_valid_here(&token));
-                }
-
-                // TODO: packed struct Foo: u64 {}
                 Ok(Stmt {
                     attrs,
-                    data: self.structure(is_public.is_some(), earliest_span, false).map(|base| {
+                    data: self.structure(tk_public.is_some(), earliest_span, false).map(|base| {
                         StmtData::Struct { base, packed: matches!(token.data, Token::Packed) }
                     }),
                 })
             }
             Token::Union => {
                 self.next();
-                if let Some(token) = is_extern {
-                    self.error_no_sync(Error::not_valid_here(&token));
-                }
+                self.invalid_here(tk_extern);
 
                 Ok(Stmt {
                     attrs,
-                    data: if is_unsafe.is_some() {
-                        self.structure(is_public.is_some(), earliest_span, true)
+                    data: if tk_unsafe.is_some() {
+                        self.structure(tk_public.is_some(), earliest_span, true)
                             .map(StmtData::UnsafeUnion)
                     } else {
-                        self.union(is_public.is_some(), earliest_span)
+                        self.union(tk_public.is_some(), earliest_span)
                     },
                 })
             }
@@ -172,41 +183,29 @@ impl<'a> Parser<'a> {
                     self.expect(Token::Trait);
                 }
 
-                if let Some(token) = is_extern {
-                    self.error_no_sync(Error::not_valid_here(&token));
-                }
+                self.invalid_here(tk_extern);
 
                 Ok(Stmt {
                     attrs,
                     data: self.r#trait(
-                        is_public.is_some(),
+                        tk_public.is_some(),
                         earliest_span,
-                        is_unsafe.is_some(),
+                        tk_unsafe.is_some(),
                         sealed,
                     ),
                 })
             }
             Token::Extension => {
                 self.next();
-                if let Some(token) = is_unsafe {
-                    self.error_no_sync(Error::not_valid_here(&token));
-                }
+                self.invalid_here(tk_unsafe);
+                self.invalid_here(tk_extern);
 
-                if let Some(token) = is_extern {
-                    self.error_no_sync(Error::not_valid_here(&token));
-                }
-
-                Ok(Stmt { attrs, data: self.extension(is_public.is_some(), earliest_span) })
+                Ok(Stmt { attrs, data: self.extension(tk_public.is_some(), earliest_span) })
             }
             Token::Mod => {
                 self.next();
-                if let Some(token) = is_unsafe {
-                    self.error_no_sync(Error::not_valid_here(&token));
-                }
-
-                if let Some(token) = is_extern {
-                    self.error_no_sync(Error::not_valid_here(&token));
-                }
+                self.invalid_here(tk_unsafe);
+                self.invalid_here(tk_extern);
 
                 let name = self.expect_ident("expected name");
                 if self.next_if(Token::LCurly).is_some() {
@@ -217,7 +216,7 @@ impl<'a> Parser<'a> {
                         data: Located::new(
                             earliest_span.extended_to(span),
                             StmtData::Module {
-                                public: is_public.is_some(),
+                                public: tk_public.is_some(),
                                 file: false,
                                 name,
                                 body,
@@ -229,9 +228,9 @@ impl<'a> Parser<'a> {
                     let end = self.expect(Token::Semicolon);
                     Ok(Stmt {
                         data: Located::new(
-                            earliest_span.extended_to(end.span),
+                            earliest_span.extended_to(end),
                             StmtData::ModuleOOL {
-                                public: is_public.is_some(),
+                                public: tk_public.is_some(),
                                 name,
                                 resolved: false,
                             },
@@ -242,48 +241,32 @@ impl<'a> Parser<'a> {
             }
             Token::Use => {
                 self.next();
-                if let Some(token) = is_unsafe {
-                    self.error_no_sync(Error::not_valid_here(&token));
-                }
-
-                if let Some(token) = is_extern {
-                    self.error_no_sync(Error::not_valid_here(&token));
-                }
+                self.invalid_here(tk_unsafe);
+                self.invalid_here(tk_extern);
 
                 let origin = if let Some(token) = self.next_if(Token::ScopeRes) {
-                    UsePathOrigin::Root(token.span)
+                    UsePathOrigin::Root(token)
                 } else if let Some(token) = self.next_if(Token::Super) {
                     self.expect(Token::ScopeRes);
-                    UsePathOrigin::Super(token.span)
+                    UsePathOrigin::Super(token)
                 } else {
                     UsePathOrigin::Here
                 };
-                let public = is_public.is_some();
+                let public = tk_public.is_some();
                 let path = UsePath { public, origin, component: self.use_path_component() };
                 let end = self.expect(Token::Semicolon);
                 Ok(Stmt {
-                    data: Located::new(earliest_span.extended_to(end.span), StmtData::Use(path)),
+                    data: Located::new(earliest_span.extended_to(end), StmtData::Use(path)),
                     attrs,
                 })
             }
             Token::Static | Token::Const => {
                 let token = self.next();
-                if let Some(token) = is_unsafe {
-                    self.error_no_sync(Error::not_valid_here(&token));
-                }
-
-                if let Some(ext) = &is_extern
-                    && token.data.is_const()
-                {
-                    self.error_no_sync(Error::not_valid_here(ext));
-                }
+                self.invalid_here(tk_unsafe);
+                self.invalid_here(tk_extern.filter(|_| token.data.is_const()));
 
                 let mutable = self.next_if(Token::Mut);
-                if let Some(mutable) = &mutable
-                    && token.data == Token::Const
-                {
-                    self.error_no_sync(Error::not_valid_here(mutable));
-                }
+                self.invalid_here(mutable.filter(|_| token.data.is_const()));
 
                 let name = self.expect_ident("expected name");
                 self.expect(Token::Colon);
@@ -292,11 +275,11 @@ impl<'a> Parser<'a> {
                 let end = self.expect(Token::Semicolon);
                 Ok(Stmt {
                     data: Located::new(
-                        earliest_span.extended_to(end.span),
+                        earliest_span.extended_to(end),
                         StmtData::Binding {
-                            public: is_public.is_some(),
+                            public: tk_public.is_some(),
                             constant: matches!(token.data, Token::Const),
-                            is_extern: is_extern.is_some(),
+                            is_extern: tk_extern.is_some(),
                             mutable: mutable.is_some(),
                             name,
                             ty,
@@ -308,24 +291,16 @@ impl<'a> Parser<'a> {
             }
             Token::UnitTest => {
                 self.next();
-                if let Some(token) = is_public {
-                    self.error_no_sync(Error::not_valid_here(&token));
-                }
-
-                if let Some(token) = is_unsafe {
-                    self.error_no_sync(Error::not_valid_here(&token));
-                }
-
-                if let Some(token) = is_extern {
-                    self.error_no_sync(Error::not_valid_here(&token));
-                }
+                self.invalid_here(tk_public);
+                self.invalid_here(tk_unsafe);
+                self.invalid_here(tk_extern);
 
                 let name = self.next();
-                let name = if let Some(data) = name.data.as_string() {
-                    let name = Located::new(name.span, self.strings.get_or_intern(data));
+                let name = if let Token::String(data) = name.data {
+                    let name = Located::new(name.span, data);
                     let test = self.strings.get_or_intern_static("test");
                     attrs.push(Attribute {
-                        name: Located::nowhere(AttrName::Str(Strings::ATTR_FEATURE)),
+                        name: Located::nowhere(AttrName::Str(Strings::ATTR_CFG)),
                         props: vec![Attribute {
                             name: Located::nowhere(AttrName::Str(test)),
                             props: vec![],
@@ -338,12 +313,12 @@ impl<'a> Parser<'a> {
                 };
 
                 let lcurly = self.expect(Token::LCurly);
-                let body = self.block_expr(lcurly.span, None);
+                let body = self.block_expr(lcurly, None);
                 Ok(Stmt {
                     data: Located::new(
                         earliest_span.extended_to(body.span),
                         StmtData::Fn(Fn {
-                            attrs,
+                            attrs: Default::default(),
                             public: false,
                             name,
                             is_extern: false,
@@ -357,15 +332,12 @@ impl<'a> Parser<'a> {
                             body: Some(body),
                         }),
                     ),
-                    attrs: Default::default(),
+                    attrs,
                 })
             }
             _ => {
-                if let Some(token) = is_extern {
-                    self.error_no_sync(Error::not_valid_here(&token));
-                }
-
-                Err((is_unsafe, attrs))
+                self.invalid_here(tk_extern);
+                Err((tk_unsafe, attrs))
             }
         }
     }
@@ -384,9 +356,7 @@ impl<'a> Parser<'a> {
             Err((is_unsafe, attrs)) => match self.peek().data {
                 Token::Let | Token::Mut => {
                     let token = self.next();
-                    if let Some(is_unsafe) = is_unsafe {
-                        self.error_no_sync(Error::not_valid_here(&is_unsafe));
-                    }
+                    self.invalid_here(is_unsafe);
 
                     let patt = self.pattern(matches!(token.data, Token::Mut));
                     let ty = self.next_if(Token::Colon).map(|_| self.type_hint());
@@ -394,7 +364,7 @@ impl<'a> Parser<'a> {
                     let end = self.expect(Token::Semicolon);
                     Stmt {
                         data: Located::new(
-                            token.span.extended_to(end.span),
+                            token.span.extended_to(end),
                             StmtData::Let { ty, value, patt },
                         ),
                         attrs,
@@ -405,7 +375,7 @@ impl<'a> Parser<'a> {
 
                     let (needs_semicolon, expr) = self.block_or_normal_expr(None);
                     if needs_semicolon {
-                        span.extend_to(self.expect(Token::Semicolon).span);
+                        span.extend_to(self.expect(Token::Semicolon));
                     } else {
                         span.extend_to(expr.span);
                     }
@@ -416,7 +386,7 @@ impl<'a> Parser<'a> {
                     let cond = self.expression();
                     self.expect(Token::Else);
                     let lcurly = self.expect(Token::LCurly);
-                    let body = self.block_expr(lcurly.span, None);
+                    let body = self.block_expr(lcurly, None);
                     Stmt {
                         data: Located::new(
                             span.extended_to(body.span),
@@ -429,14 +399,14 @@ impl<'a> Parser<'a> {
                     let (needs_semicolon, mut expr) = self.block_or_normal_expr(None);
                     let mut span = expr.span;
                     if let Some(is_unsafe) = is_unsafe {
-                        span = is_unsafe.span.extended_to(span);
+                        span = is_unsafe.extended_to(span);
                         expr = self.arena.expr(span, ExprData::Unsafe(expr));
                     }
 
                     if self.matches(Token::RCurly) {
                         expr = self.arena.expr(expr.span, ExprData::Tail(expr));
                     } else if needs_semicolon {
-                        span.extend_to(self.expect(Token::Semicolon).span);
+                        span.extend_to(self.expect(Token::Semicolon));
                     }
 
                     Stmt { attrs, data: Located::new(span, StmtData::Expr(expr)) }
@@ -475,17 +445,11 @@ impl<'a> Parser<'a> {
             Token::True => self.arena.expr(span, ExprData::Bool(true)),
             Token::Int { base, value, width } => {
                 let value = self.parse_int(base, value, span);
-                self.arena.expr(
-                    span,
-                    ExprData::Integer(IntPattern {
-                        value,
-                        width: width.map(|w| self.strings.get_or_intern(w)),
-                        negative: false,
-                    }),
-                )
+                self.arena
+                    .expr(span, ExprData::Integer(IntPattern { value, width, negative: false }))
             }
             Token::Float { value, suffix } => {
-                let mut value = value.to_string();
+                let mut value = self.strings.resolve(&value).to_string();
                 value.retain(|c| c != '_');
                 let value = value.parse::<f64>().unwrap_or_else(|_| {
                     self.error_no_sync(Error::new(
@@ -494,18 +458,10 @@ impl<'a> Parser<'a> {
                     ));
                     0.0
                 });
-                self.arena.expr(
-                    span,
-                    ExprData::Float(FloatPattern {
-                        negative: false,
-                        value,
-                        suffix: suffix.map(|suffix| self.strings.get_or_intern(suffix)),
-                    }),
-                )
+                self.arena
+                    .expr(span, ExprData::Float(FloatPattern { negative: false, value, suffix }))
             }
-            Token::String(v) => {
-                self.arena.expr(span, ExprData::String(self.strings.get_or_intern(v)))
-            }
+            Token::String(v) => self.arena.expr(span, ExprData::String(v)),
             Token::Char(v) => self.arena.expr(span, ExprData::Char(v)),
             Token::ByteString(v) => self.arena.expr(span, ExprData::ByteString(v)),
             Token::ByteChar(v) => self.arena.expr(span, ExprData::ByteChar(v)),
@@ -518,7 +474,6 @@ impl<'a> Parser<'a> {
                 self.arena.expr(span, ExprData::Path(Path::new(origin, data)))
             }
             Token::Ident(ident) => {
-                let ident = self.strings.get_or_intern(ident);
                 let data = self.path_components(Some(Located::new(span, ident)), &mut span);
                 self.arena.expr(span, ExprData::Path(Path::new(PathOrigin::Normal, data)))
             }
@@ -530,10 +485,9 @@ impl<'a> Parser<'a> {
             }
             Token::Super => {
                 let origin = PathOrigin::Super(span);
-                let mut data = self.path_components(None, &mut span);
-                if data.is_empty() {
-                    data.push((Located::new(self.peek().span, Strings::EMPTY), vec![]));
-                }
+                self.expect(Token::ScopeRes);
+                let ident = self.expect_ident("expected name");
+                let data = self.path_components(Some(ident), &mut span);
                 self.arena.expr(span, ExprData::Path(Path::new(origin, data)))
             }
             Token::Colon => {
@@ -545,7 +499,7 @@ impl<'a> Parser<'a> {
                 )
             }
             Token::StringPart(value) => {
-                let mut strings = vec![self.strings.get_or_intern(value)];
+                let mut strings = vec![value];
                 let mut args = vec![];
                 'outer: loop {
                     let expr = self.expression();
@@ -554,8 +508,8 @@ impl<'a> Parser<'a> {
 
                     let mut begin = None::<Span>;
                     loop {
-                        let peek = self.peek().clone();
-                        match &peek.data {
+                        let peek = self.peek();
+                        match peek.data {
                             Token::String(s) | Token::StringPart(s) => {
                                 span.extend_to(peek.span);
                                 self.next();
@@ -563,7 +517,7 @@ impl<'a> Parser<'a> {
                                     self.error(Error::new("expected format specifiers", begin));
                                 }
 
-                                strings.push(self.strings.get_or_intern(s));
+                                strings.push(s);
                                 if peek.data.is_string() {
                                     break 'outer;
                                 } else {
@@ -635,7 +589,7 @@ impl<'a> Parser<'a> {
             // complex expressions
             Token::LParen => {
                 if let Some(end) = self.next_if(Token::RParen) {
-                    return self.arena.expr(span.extended_to(end.span), ExprData::Tuple(vec![]));
+                    return self.arena.expr(span.extended_to(end), ExprData::Tuple(vec![]));
                 }
 
                 let (label, expr) = self.maybe_labeled_expr();
@@ -654,8 +608,8 @@ impl<'a> Parser<'a> {
                     )
                 } else {
                     let end = self.expect(Token::RParen);
-                    if self.matches_pred(|t| matches!(t, Token::LParen | Token::LBrace)) {
-                        self.arena.expr(span.extended_to(end.span), ExprData::Grouping(expr))
+                    if matches!(self.peek().data, Token::LParen | Token::LBrace) {
+                        self.arena.expr(span.extended_to(end), ExprData::Grouping(expr))
                     } else {
                         expr
                     }
@@ -686,57 +640,70 @@ impl<'a> Parser<'a> {
             Token::Loop => self.loop_expr(span, None),
             Token::For => self.for_expr(span, None),
             Token::Match => self.match_expr(span),
-            Token::LBrace => {
-                if let Some(rbrace) = self.next_if(Token::RBrace) {
-                    self.arena.expr(span.extended_to(rbrace.span), ExprData::Array(Vec::new()))
-                } else if self.next_if(Token::Colon).is_some() {
-                    let span = self.expect(Token::RBrace).span;
-                    self.arena.expr(span.extended_to(span), ExprData::Map(Vec::new()))
-                } else {
-                    let expr = self.expression();
-                    if self.next_if(Token::Colon).is_some() {
-                        let value = self.expression();
-                        self.csv_expr(
-                            vec![(expr, value)],
-                            Token::RBrace,
-                            span,
-                            |this| {
-                                let key = this.expression();
-                                this.expect(Token::Colon);
-                                (key, this.expression())
-                            },
-                            ExprData::Map,
-                        )
-                    } else if self.next_if(Token::Semicolon).is_some() {
-                        let count = self.expression();
-                        let rbrace = self.expect(Token::RBrace);
+            Token::LBrace => 'out: {
+                let expr = if let Some(rbrace) = self.next_if(Token::RBrace) {
+                    break 'out self
+                        .arena
+                        .expr(span.extended_to(rbrace), ExprData::Array(Vec::new()));
+                } else if let Some(colon) = self.next_if(Token::Colon) {
+                    if let Some(ident) = self.next_if_ident() {
+                        let origin = PathOrigin::Infer(colon);
                         self.arena.expr(
-                            span.extended_to(rbrace.span),
-                            ExprData::ArrayWithInit { init: expr, count },
+                            colon.extended_to(ident.span),
+                            ExprData::Path(Path::new(origin, vec![(ident, Default::default())])),
                         )
-                    } else if let Some(rbrace) = self.next_if(Token::RBrace) {
-                        self.arena.expr(span.extended_to(rbrace.span), ExprData::Array(vec![expr]))
                     } else {
-                        self.csv_expr(
-                            vec![expr],
-                            Token::RBrace,
-                            span,
-                            Self::expression,
-                            ExprData::Array,
-                        )
+                        let end = self.expect(Token::RBrace);
+                        break 'out self
+                            .arena
+                            .expr(span.extended_to(end), ExprData::Map(Vec::new()));
                     }
+                } else {
+                    self.expression()
+                };
+
+                if self.next_if(Token::Colon).is_some() {
+                    let value = self.expression();
+                    self.csv_expr(
+                        vec![(expr, value)],
+                        Token::RBrace,
+                        span,
+                        |this| {
+                            let key = this.expression();
+                            this.expect(Token::Colon);
+                            (key, this.expression())
+                        },
+                        ExprData::Map,
+                    )
+                } else if self.next_if(Token::Semicolon).is_some() {
+                    let count = self.expression();
+                    let rbrace = self.expect(Token::RBrace);
+                    self.arena.expr(
+                        span.extended_to(rbrace),
+                        ExprData::ArrayWithInit { init: expr, count },
+                    )
+                } else if let Some(rbrace) = self.next_if(Token::RBrace) {
+                    self.arena.expr(span.extended_to(rbrace), ExprData::Array(vec![expr]))
+                } else {
+                    self.csv_expr(
+                        vec![expr],
+                        Token::RBrace,
+                        span,
+                        Self::expression,
+                        ExprData::Array,
+                    )
                 }
             }
             Token::AtLBrace => {
                 if let Some(rbrace) = self.next_if(Token::RBrace) {
-                    self.arena.expr(span.extended_to(rbrace.span), ExprData::Vec(Vec::new()))
+                    self.arena.expr(span.extended_to(rbrace), ExprData::Vec(Vec::new()))
                 } else {
                     let expr = self.expression();
                     if self.next_if(Token::Semicolon).is_some() {
                         let count = self.expression();
                         let rbrace = self.expect(Token::RBrace);
                         self.arena.expr(
-                            span.extended_to(rbrace.span),
+                            span.extended_to(rbrace),
                             ExprData::VecWithInit { init: expr, count },
                         )
                     } else {
@@ -878,18 +845,20 @@ impl<'a> Parser<'a> {
             }
             Token::As => {
                 let bang = self.next_if(Token::Exclamation);
+                self.invalid_here(bang);
+
                 let ty = self.type_hint();
                 self.arena.expr(
                     left.span.extended_to(ty.span),
-                    ExprData::As { expr: left, ty, throwing: bang.is_some() },
+                    ExprData::As { expr: left, ty },
                 )
             }
             Token::Dot => {
                 let token = self.peek();
                 if let Token::Int { base, value, width } = token.data {
                     let tspan = token.span;
-                    if base != 10 || width.is_some() || (value.starts_with('0') && value.len() > 1)
-                    {
+                    let data = self.strings.resolve(&value);
+                    if base != 10 || width.is_some() || (data.starts_with('0') && data.len() > 1) {
                         self.error(Error::new(
                             "tuple member access must be an integer with no prefix or suffix",
                             tspan,
@@ -900,7 +869,7 @@ impl<'a> Parser<'a> {
                         left.span.extended_to(span),
                         ExprData::Member {
                             source: left,
-                            member: Located::new(tspan, self.strings.get_or_intern(value)),
+                            member: Located::new(tspan, value),
                             generics: Vec::new(),
                         },
                     );
@@ -932,7 +901,7 @@ impl<'a> Parser<'a> {
                 let else_branch =
                     self.next_if(Token::Else).map(|_| self.precedence(Precedence::Min, ctx)); /* EvalContext::IfWhile? */
                 self.arena.expr(
-                    left.span.extended_to(else_branch.as_ref().map_or(if_branch.span, |e| e.span)),
+                    left.span.extended_to(else_branch.map_or(if_branch.span, |e| e.span)),
                     ExprData::If { cond: left, if_branch, else_branch },
                 )
             }
@@ -974,7 +943,7 @@ impl<'a> Parser<'a> {
             && self.next_if(Token::Colon).is_some()
         {
             name = Some(ident);
-            if !self.matches_pred(|t| matches!(t, Token::Comma | Token::RParen)) {
+            if !matches!(self.peek().data, Token::Comma | Token::RParen) {
                 expr = self.expression();
             }
         }
@@ -1045,17 +1014,17 @@ impl<'a> Parser<'a> {
     fn if_expr(&mut self, token: Span) -> Expr {
         let cond = self.precedence(Precedence::Min, EvalContext::IfWhile);
         let lcurly = self.expect(Token::LCurly);
-        let if_branch = self.block_expr(lcurly.span, None);
+        let if_branch = self.block_expr(lcurly, None);
         let else_branch = self.next_if(Token::Else).map(|_| {
             if !self.matches(Token::If) {
                 let lcurly = self.expect(Token::LCurly);
-                self.block_expr(lcurly.span, None)
+                self.block_expr(lcurly, None)
             } else {
                 self.precedence(Precedence::Min, EvalContext::IfWhile)
             }
         });
         self.arena.expr(
-            token.extended_to(else_branch.as_ref().map_or(if_branch.span, |e| e.span)),
+            token.extended_to(else_branch.map_or(if_branch.span, |e| e.span)),
             ExprData::If { cond, if_branch, else_branch },
         )
     }
@@ -1134,17 +1103,13 @@ impl<'a> Parser<'a> {
             Token::Ampersand => {
                 let start = this.next();
                 let mutable = this.next_if(Token::Mut);
-                let ident = this.next_if_map(|this, next| match next.data {
-                    Token::Ident(i) => Some(Located::new(next.span, this.strings.get_or_intern(i))),
+                let ident = this.next_if_map(|_, next| match next.data {
+                    Token::Ident(i) => Some(Located::new(next.span, i)),
                     Token::This => Some(Located::new(next.span, Strings::THIS_PARAM)),
                     _ => None,
                 });
-                let span = start.span.extended_to(
-                    ident
-                        .map(|m| m.span)
-                        .or(mutable.as_ref().map(|m| m.span))
-                        .unwrap_or(start.span),
-                );
+                let span =
+                    start.span.extended_to(ident.map(|m| m.span).or(mutable).unwrap_or(start.span));
 
                 match (mutable.is_some(), ident) {
                     (true, None) => set_policy(this, DefaultCapturePolicy::ByMutPtr, span),
@@ -1164,7 +1129,7 @@ impl<'a> Parser<'a> {
             }
             Token::Ident(ident) => {
                 let start = this.next();
-                let ident = Located::new(start.span, this.strings.get_or_intern(ident));
+                let ident = Located::new(start.span, ident);
                 if this.next_if(Token::Assign).is_some() {
                     captures.push(Capture::New { mutable: false, ident, expr: this.expression() });
                 } else {
@@ -1182,7 +1147,7 @@ impl<'a> Parser<'a> {
                     Some(token) => set_policy(
                         this,
                         DefaultCapturePolicy::ByValMut,
-                        start.span.extended_to(token.span),
+                        start.span.extended_to(token),
                     ),
                     None => set_policy(this, DefaultCapturePolicy::ByVal, start.span),
                 }
@@ -1198,7 +1163,7 @@ impl<'a> Parser<'a> {
         });
 
         let params = if let Some(head) = self.next_if(Token::LParen) {
-            self.csv(Vec::new(), Token::RParen, head.span, |this| {
+            self.csv(Vec::new(), Token::RParen, head, |this| {
                 (this.pattern(false), this.next_if(Token::Colon).map(|_| this.type_hint()))
             })
             .data
@@ -1211,7 +1176,7 @@ impl<'a> Parser<'a> {
             self.expression()
         } else {
             let token = self.expect(Token::LCurly);
-            self.block_expr(token.span, None)
+            self.block_expr(token, None)
         };
 
         self.arena.expr(
@@ -1226,7 +1191,7 @@ impl<'a> Parser<'a> {
         let token = self.next();
         match token.data {
             Token::Ident(ident) => {
-                let ident = Located::new(token.span, self.strings.get_or_intern(ident));
+                let ident = Located::new(token.span, ident);
                 if self.next_if(Token::As).is_some() {
                     let new_name = self.expect_ident("expected identifier");
                     return UsePathComponent::Rename { ident, new_name };
@@ -1293,7 +1258,7 @@ impl<'a> Parser<'a> {
             if tr && let Some(start) = self.next_if(Token::LParen) {
                 let mut next = 0;
                 let hints = self
-                    .csv(vec![], Token::RParen, start.span, |this| {
+                    .csv(vec![], Token::RParen, start, |this| {
                         let item = this.maybe_labeled_type_hint();
                         this.label_or_positional(item, &mut next)
                     })
@@ -1325,7 +1290,8 @@ impl<'a> Parser<'a> {
 
     //
 
-    fn parse_int(&mut self, base: u8, value: &str, span: Span) -> ComptimeInt {
+    fn parse_int(&mut self, base: u8, value: StrId, span: Span) -> ComptimeInt {
+        let value = self.strings.resolve(&value);
         if base == 10 && value.starts_with("0") && value.len() > 1 {
             self.diag.report(Warning::decimal_leading_zero(span));
         }
@@ -1355,7 +1321,7 @@ impl<'a> Parser<'a> {
                 IntPattern {
                     negative: negative.is_some(),
                     value: self.parse_int(base, value, t.span),
-                    width: width.map(|w| self.strings.get_or_intern(w)),
+                    width,
                 },
             )),
             Token::ByteChar(value) => Some(Located::new(
@@ -1382,10 +1348,9 @@ impl<'a> Parser<'a> {
             self.next_if_pred(|t| matches!(t, Token::Range | Token::RangeInclusive))
         {
             let negative = self.next_if(Token::Minus);
-            let Some(end) = self.expect_map(
-                |this, t| this.int_pattern(negative.map(|t| t.span), t),
-                "expected number",
-            ) else {
+            let Some(end) =
+                self.expect_map(|this, t| this.int_pattern(negative, t), "expected number")
+            else {
                 return Located::new(start.span, Pattern::Error);
             };
             let span = start.span.extended_to(end.span);
@@ -1405,24 +1370,24 @@ impl<'a> Parser<'a> {
     }
 
     fn literal_pattern(&mut self) -> Option<Located<Pattern>> {
-        if let Some(token) = self.next_if(Token::True) {
-            return Some(token.map(|_| Pattern::Bool(true)));
-        } else if let Some(token) = self.next_if(Token::False) {
-            return Some(token.map(|_| Pattern::Bool(false)));
-        } else if let Some(token) = self.next_if(Token::Void) {
-            return Some(token.map(|_| Pattern::Void));
-        } else if let Some(string) = self.next_if_map(|this, t| {
-            t.data.as_string().map(|value| Located::new(t.span, this.strings.get_or_intern(value)))
-        }) {
+        if let Some(span) = self.next_if(Token::True) {
+            return Some(Located::new(span, Pattern::Bool(true)));
+        } else if let Some(span) = self.next_if(Token::False) {
+            return Some(Located::new(span, Pattern::Bool(false)));
+        } else if let Some(span) = self.next_if(Token::Void) {
+            return Some(Located::new(span, Pattern::Void));
+        } else if let Some(string) =
+            self.next_if_map(|_, t| t.data.as_string().map(|value| Located::new(t.span, *value)))
+        {
             return Some(string.map(Pattern::String));
         }
 
         let range = self.next_if_pred(|t| matches!(t, Token::Range | Token::RangeInclusive));
-        if let Some(token) = self.next_if(Token::Minus) {
+        if let Some(span) = self.next_if(Token::Minus) {
             let Some(start) =
-                self.expect_map(|this, t| this.int_pattern(Some(token.span), t), "expected number")
+                self.expect_map(|this, t| this.int_pattern(Some(span), t), "expected number")
             else {
-                return Some(Located::new(token.span, Pattern::Error));
+                return Some(Located::new(span, Pattern::Error));
             };
 
             return Some(self.maybe_range_pattern(range, start));
@@ -1470,8 +1435,8 @@ impl<'a> Parser<'a> {
     fn struct_like(&mut self, span: Span, mut_var: bool) -> Located<Vec<Destructure>> {
         self.csv_one(Token::RCurly, span, |this| {
             let mutable = this.next_if(Token::Mut);
-            if let Some(token) = mutable.clone().filter(|_| mut_var) {
-                this.diag.report(Warning::redundant_token(&token));
+            if let Some(token) = mutable.filter(|_| mut_var) {
+                this.diag.report(Warning::redundant_token(this.lexer.source(), token));
             }
             let mutable = mutable.is_some();
             let name = this.expect_ident("expected name");
@@ -1524,19 +1489,14 @@ impl<'a> Parser<'a> {
                 let span = self.next().span;
                 return self
                     .csv(Vec::new(), Token::RBrace, span, |this| {
-                        if let Some(token) = this.next_if(Token::Ellipses) {
+                        if let Some(span) = this.next_if(Token::Ellipses) {
                             let pattern = if this.next_if(Token::Mut).is_some() {
-                                let ident = this.expect_ident("expected name");
-                                Some((true, ident))
+                                Some((true, this.expect_ident("expected name")))
                             } else {
-                                Some(false).zip(this.next_if_map(|this, t| {
-                                    t.data.as_ident().map(|&i| {
-                                        Located::new(t.span, this.strings.get_or_intern(i))
-                                    })
-                                }))
+                                Some(false).zip(this.next_if_ident())
                             };
 
-                            Located::new(token.span, Pattern::Rest(pattern))
+                            Located::new(span, Pattern::Rest(pattern))
                         } else {
                             this.pattern(mut_var)
                         }
@@ -1596,10 +1556,9 @@ impl<'a> Parser<'a> {
     }
 
     fn is_range_end(&mut self, ctx: EvalContext) -> bool {
-        self.matches_pred(|k| {
-            matches!(k, Token::Semicolon | Token::Comma | Token::RBrace | Token::RParen)
-                || matches!((k, ctx), (Token::LCurly, EvalContext::For))
-        })
+        let k = self.peek().data;
+        matches!(k, Token::Semicolon | Token::Comma | Token::RBrace | Token::RParen)
+            || matches!((k, ctx), (Token::LCurly, EvalContext::For))
     }
 
     fn attribute(&mut self) -> Attribute {
@@ -1607,10 +1566,10 @@ impl<'a> Parser<'a> {
         let name = self.next();
         let span = name.span;
         let name = name.map(|data| match data {
-            Token::String(name) => AttrName::Str(self.strings.get_or_intern(name)),
+            Token::String(name) => AttrName::Str(name),
             Token::Ident(name) => {
                 props = true;
-                AttrName::Str(self.strings.get_or_intern(name))
+                AttrName::Str(name)
             }
             Token::Int { base, value, width: _ } => {
                 AttrName::Int(self.parse_int(base, value, span))
@@ -1625,7 +1584,7 @@ impl<'a> Parser<'a> {
             name,
             props: if props {
                 self.next_if(Token::LParen)
-                    .map(|tk| self.csv_one(Token::RParen, tk.span, Self::attribute).data)
+                    .map(|span| self.csv_one(Token::RParen, span, Self::attribute).data)
                     .unwrap_or_default()
             } else {
                 vec![]
@@ -1635,9 +1594,9 @@ impl<'a> Parser<'a> {
 
     fn attributes(&mut self) -> Attributes {
         let mut attrs = vec![];
-        while let Some(token) = self.next_if(Token::Dollar) {
+        while let Some(span) = self.next_if(Token::Dollar) {
             self.expect(Token::LBrace);
-            attrs.extend(self.csv_one(Token::RBrace, token.span, Self::attribute).data);
+            attrs.extend(self.csv_one(Token::RBrace, span, Self::attribute).data);
         }
         Attributes::new(attrs)
     }
@@ -1646,8 +1605,8 @@ impl<'a> Parser<'a> {
 
     fn type_params(&mut self) -> TypeParams {
         self.next_if(Token::LAngle)
-            .map(|tk| {
-                self.rangle_csv_one(tk.span, |this| {
+            .map(|span| {
+                self.rangle_csv_one(span, |this| {
                     (this.expect_ident("expected type name"), this.trait_impls())
                 })
                 .data
@@ -1733,22 +1692,22 @@ impl<'a> Parser<'a> {
                 if self.next_if(Token::Mut).is_some() {
                     let inner = self.type_hint();
                     self.expect(Token::Range);
-                    span.extend_to(self.expect(Token::RBrace).span);
+                    span.extend_to(self.expect(Token::RBrace));
                     self.arena.hint(span, TypeHintData::SliceMut(inner))
                 } else {
                     let inner = self.type_hint();
                     if let Some(end) = self.next_if(Token::RBrace) {
-                        self.arena.hint(span.extended_to(end.span), TypeHintData::Vec(inner))
+                        self.arena.hint(span.extended_to(end), TypeHintData::Vec(inner))
                     } else if self.next_if(Token::Range).is_some() {
-                        span.extend_to(self.expect(Token::RBrace).span);
+                        span.extend_to(self.expect(Token::RBrace));
                         self.arena.hint(span, TypeHintData::Slice(inner))
                     } else if self.next_if(Token::Semicolon).is_some() {
                         let count = self.expression();
-                        span.extend_to(self.expect(Token::RBrace).span);
+                        span.extend_to(self.expect(Token::RBrace));
                         self.arena.hint(span, TypeHintData::Array(inner, count))
                     } else if self.next_if(Token::Colon).is_some() {
                         let value = self.type_hint();
-                        span.extend_to(self.expect(Token::RBrace).span);
+                        span.extend_to(self.expect(Token::RBrace));
                         self.arena.hint(span, TypeHintData::Map([inner, value]))
                     } else {
                         let end = self.next().span;
@@ -1761,7 +1720,7 @@ impl<'a> Parser<'a> {
                 let begin = self.next().span;
                 self.expect(Token::LBrace);
                 let inner = self.type_hint();
-                let end = self.expect(Token::RBrace).span;
+                let end = self.expect(Token::RBrace);
                 self.arena.hint(begin.extended_to(end), TypeHintData::Set(inner))
             }
             Token::LParen => {
@@ -1812,7 +1771,7 @@ impl<'a> Parser<'a> {
 
     fn block(&mut self, lcurly: Option<Span>) -> Located<Vec<Stmt>> {
         let mut stmts = Vec::new();
-        let lcurly = lcurly.unwrap_or_else(|| self.expect(Token::LCurly).span);
+        let lcurly = lcurly.unwrap_or_else(|| self.expect(Token::LCurly));
         let span = self.next_until(Token::RCurly, lcurly, |this| {
             while this.next_if(Token::Semicolon).is_some() {}
             if this.matches(Token::RCurly) {
@@ -1838,8 +1797,8 @@ impl<'a> Parser<'a> {
             let attrs = this.attributes();
             let public = this.next_if(Token::Pub);
             let config = FnConfig {
-                tk_public: public.as_ref().map(|t| t.span),
-                tk_unsafe: this.next_if(Token::Unsafe).map(|t| t.span),
+                tk_public: public,
+                tk_unsafe: this.next_if(Token::Unsafe),
                 require_body: true,
                 ..Default::default()
             };
@@ -1849,12 +1808,9 @@ impl<'a> Parser<'a> {
                     Some(Right(func)) => operators.push(func),
                     _ => {}
                 }
-            } else if let Some(token) = this.next_if(Token::Impl) {
-                if let Some(token) = public {
-                    this.error_no_sync(Error::not_valid_here(&token));
-                }
-
-                impls.push(this.impl_block(attrs, token.span));
+            } else if let Some(impl_span) = this.next_if(Token::Impl) {
+                this.invalid_here(public);
+                impls.push(this.impl_block(attrs, impl_span));
             } else if let Some(func) = this.try_function(config, attrs) {
                 // TODO: apply the attributes to the impl block or next member
                 match func {
@@ -1862,9 +1818,7 @@ impl<'a> Parser<'a> {
                     Right(func) => operators.push(func),
                 }
             } else {
-                if let Some(token) = public.as_ref().filter(|_| union) {
-                    this.error_no_sync(Error::not_valid_here(token));
-                }
+                this.invalid_here(public.filter(|_| union));
 
                 let name = this.expect_ident("expected name");
                 this.expect(Token::Colon);
@@ -1903,8 +1857,8 @@ impl<'a> Parser<'a> {
         let span = self.next_until(Token::RCurly, span, |this| {
             let attrs = this.attributes();
             let config = FnConfig {
-                tk_public: this.next_if(Token::Pub).map(|t| t.span),
-                tk_unsafe: this.next_if(Token::Unsafe).map(|t| t.span),
+                tk_public: this.next_if(Token::Pub),
+                tk_unsafe: this.next_if(Token::Unsafe),
                 require_body: true,
                 ..Default::default()
             };
@@ -1914,8 +1868,8 @@ impl<'a> Parser<'a> {
                     Some(Right(func)) => operators.push(func),
                     _ => {}
                 }
-            } else if let Some(token) = this.next_if(Token::Impl) {
-                impls.push(this.impl_block(attrs, token.span));
+            } else if let Some(impl_span) = this.next_if(Token::Impl) {
+                impls.push(this.impl_block(attrs, impl_span));
             } else if let Some(func) = this.try_function(config, attrs) {
                 // TODO: apply the attributes to the impl block or next member
                 match func {
@@ -1935,7 +1889,7 @@ impl<'a> Parser<'a> {
                 let data = if let Some(start) = this.next_if(Token::LParen) {
                     let mut hint_data = vec![];
                     let mut next = 0;
-                    let members = this.csv(vec![], Token::RParen, start.span, |this| {
+                    let members = this.csv(vec![], Token::RParen, start, |this| {
                         let original = this.maybe_labeled_type_hint();
                         let (name, ty) = this.label_or_positional(original, &mut next);
                         let default = this.next_if(Token::Assign).map(|_| this.expression());
@@ -1994,7 +1948,7 @@ impl<'a> Parser<'a> {
             }
 
             let config = FnConfig {
-                tk_unsafe: this.next_if(Token::Unsafe).map(|t| t.span),
+                tk_unsafe: this.next_if(Token::Unsafe),
                 forced_pub: true,
                 ..Default::default()
             };
@@ -2039,12 +1993,12 @@ impl<'a> Parser<'a> {
         let span = self.next_until(Token::RCurly, span, |this| {
             let attrs = this.attributes();
             if let Some(token) = this.next_if(Token::Impl) {
-                impls.push(this.impl_block(attrs, token.span));
+                impls.push(this.impl_block(attrs, token));
             } else {
                 let config = FnConfig {
                     require_body: true,
-                    tk_public: this.next_if(Token::Pub).map(|c| c.span),
-                    tk_unsafe: this.next_if(Token::Unsafe).map(|c| c.span),
+                    tk_public: this.next_if(Token::Pub),
+                    tk_unsafe: this.next_if(Token::Unsafe),
                     ..Default::default()
                 };
                 match this.expect_fn(config, attrs) {
@@ -2070,9 +2024,8 @@ impl<'a> Parser<'a> {
         let mut assoc_types = Vec::new();
         let span = self.next_until(Token::RCurly, span, |this| {
             let attrs = this.attributes();
-            if let Some(token) = this.next_if(Token::Pub) {
-                this.error_no_sync(Error::not_valid_here(&token));
-            }
+            let public = this.next_if(Token::Pub);
+            this.invalid_here(public);
 
             if this.next_if(Token::Type).is_some() {
                 let name = this.expect_ident("expected type name");
@@ -2084,7 +2037,7 @@ impl<'a> Parser<'a> {
             }
 
             let config = FnConfig {
-                tk_unsafe: this.next_if(Token::Unsafe).map(|c| c.span),
+                tk_unsafe: this.next_if(Token::Unsafe),
                 forced_pub: true,
                 require_body: true,
                 ..Default::default()
@@ -2109,15 +2062,15 @@ impl<'a> Parser<'a> {
         cfg: FnConfig,
         attrs: Attributes,
     ) -> Option<Either<Located<Fn>, Located<OperatorFn>>> {
-        let (head_token, is_async) = if let Some(token) = self.next_if(Token::Fn) {
-            (token, false)
+        let (head_span, is_async) = if let Some(token) = self.next_if(Token::Fn) {
+            (token, None)
         } else if let Some(token) = self.next_if(Token::Async) {
             self.expect(Token::Fn);
-            (token, true)
+            (token, Some(token))
         } else {
             return None;
         };
-        let mut span = cfg.tk_public.or(cfg.tk_extern).or(cfg.tk_unsafe).unwrap_or(head_token.span);
+        let mut span = cfg.tk_public.or(cfg.tk_extern).or(cfg.tk_unsafe).unwrap_or(head_span);
 
         let name = self.expect_fn_name();
         let type_params = self.type_params();
@@ -2136,24 +2089,24 @@ impl<'a> Parser<'a> {
             let keyword = self.next_if(Token::Keyword).is_some();
             let my = self.next_if(Token::My);
             let mutable = self.next_if(Token::Mut).is_some();
-            if let Some(token) = self.next_if(Token::This) {
+            if let Some(this_span) = self.next_if(Token::This) {
                 if count != 0 {
-                    self.error_no_sync(Error::not_valid_here(&token));
+                    self.invalid_here(Some(this_span));
                 }
 
                 let patt = if my.is_some() && mutable {
                     Pattern::MutBinding(Strings::THIS_PARAM)
                 } else {
-                    Pattern::Path(Path::from(Located::new(token.span, Strings::THIS_PARAM)))
+                    Pattern::Path(Path::from(Located::new(this_span, Strings::THIS_PARAM)))
                 };
 
-                let span = Span { len: 0, ..token.span };
+                let span = Span { len: 0, ..this_span };
                 let this_ty = self
                     .arena
                     .hint(span, TypeHintData::Path(Path::new(PathOrigin::This(span), vec![])));
                 params.push(Param {
                     keyword,
-                    patt: Located::new(token.span, patt),
+                    patt: Located::new(this_span, patt),
                     ty: if my.is_some() {
                         this_ty
                     } else if mutable {
@@ -2164,10 +2117,7 @@ impl<'a> Parser<'a> {
                     default: None,
                 });
             } else {
-                if let Some(token) = my {
-                    self.error_no_sync(Error::not_valid_here(&token));
-                }
-
+                self.invalid_here(my);
                 let patt = if mutable {
                     self.expect_ident("expected name").map(Pattern::MutBinding)
                 } else if keyword {
@@ -2206,18 +2156,18 @@ impl<'a> Parser<'a> {
         let ret = self.next_if(Token::Colon).map(|_| self.type_hint());
         let body = if let Some(semi) = self.next_if(Token::Semicolon) {
             if cfg.require_body {
-                self.error(Error::new("expected '{'", semi.span));
+                self.error(Error::new("expected '{'", semi));
             }
-            span.extend_to(semi.span);
+            span.extend_to(semi);
             None
         } else if self.next_if(Token::FatArrow).is_some() {
             let expr = self.expression();
             let token = self.expect(Token::Semicolon);
-            span.extend_to(token.span);
+            span.extend_to(token);
             Some(expr)
         } else {
             let lcurly = self.expect(Token::LCurly);
-            let expr = self.block_expr(lcurly.span, None);
+            let expr = self.block_expr(lcurly, None);
             span.extend_to(expr.span);
             Some(expr)
         };
@@ -2229,7 +2179,7 @@ impl<'a> Parser<'a> {
                     name: Located::new(name.span, ident),
                     public: cfg.forced_pub || cfg.tk_public.is_some(),
                     is_extern: cfg.tk_extern.is_some(),
-                    is_async,
+                    is_async: is_async.is_some(),
                     is_unsafe: cfg.tk_unsafe.is_some(),
                     variadic,
                     type_params,
@@ -2241,9 +2191,7 @@ impl<'a> Parser<'a> {
                 },
             ))),
             Right(op) => {
-                if is_async {
-                    self.error(Error::not_valid_here(&head_token));
-                }
+                self.invalid_here(is_async);
                 Some(Right(Located::new(
                     span,
                     OperatorFn {
@@ -2304,14 +2252,14 @@ impl<'a> Parser<'a> {
             Token::LBrace => {
                 let tk = self.expect(Token::RBrace);
                 if let Some(tk) = self.next_if(Token::Assign) {
-                    span.extend_to(tk.span);
+                    span.extend_to(tk);
                     Right(OperatorFnType::SubscriptAssign)
                 } else {
-                    span.extend_to(tk.span);
+                    span.extend_to(tk);
                     Right(OperatorFnType::Subscript)
                 }
             }
-            Token::Ident(name) => Left(self.strings.get_or_intern(name)),
+            Token::Ident(name) => Left(name),
             _ => {
                 self.error(Error::new("expected identifier", token.span));
                 Left(Strings::EMPTY)
@@ -2345,6 +2293,7 @@ impl<'a> Parser<'a> {
             let before = lexer.clone();
             let res = next_if_map(this, lexer, |this, t| match t.data {
                 FormatToken::Number(v) => {
+                    let v = this.strings.get_or_intern(v);
                     let value = this.parse_int(10, v, t.span);
                     Some(this.arena.expr(
                         t.span,
@@ -2418,14 +2367,14 @@ impl<'a> Parser<'a> {
         span: Span,
         mut f: impl FnMut(&mut Self) -> T,
     ) -> Located<Vec<T>> {
-        if !res.is_empty() && !self.matches(end.clone()) {
+        if !res.is_empty() && !self.matches(end) {
             self.expect(Token::Comma);
         }
 
-        let span = self.next_until(end.clone(), span, |this| {
+        let span = self.next_until(end, span, |this| {
             res.push(f(this));
 
-            if !this.matches(end.clone()) {
+            if !this.matches(end) {
                 this.expect(Token::Comma);
             }
         });
@@ -2460,7 +2409,7 @@ impl<'a> Parser<'a> {
         mut f: impl FnMut(&mut Self) -> T,
     ) -> Located<Vec<T>> {
         let mut res = vec![f(self)];
-        if !res.is_empty() && !self.matches_pred(|tk| matches!(tk, Token::RAngle | Token::Shr)) {
+        if !res.is_empty() && !matches!(self.peek().data, Token::RAngle | Token::Shr) {
             self.expect(Token::Comma);
         }
 
@@ -2479,7 +2428,7 @@ impl<'a> Parser<'a> {
             }
 
             res.push(f(self));
-            if !self.matches_pred(|t| matches!(t, Token::RAngle | Token::Shr)) {
+            if !matches!(self.peek().data, Token::RAngle | Token::Shr) {
                 self.expect(Token::Comma);
             }
         }
@@ -2537,33 +2486,35 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn invalid_here(&mut self, span: Option<Span>) {
+        if let Some(span) = span {
+            self.error_no_sync(Error::not_valid_here(self.lexer.source(), span));
+        }
+    }
+
     //
 
-    fn peek(&mut self) -> &Located<Token<'a>> {
-        self.peek.get_or_insert_with(|| self.lexer.next_skip_comments(self.diag))
+    fn peek(&mut self) -> Located<Token> {
+        *self.peek.get_or_insert_with(|| self.lexer.next_skip_comments(self.diag, self.strings))
     }
 
-    fn next(&mut self) -> Located<Token<'a>> {
-        self.peek.take().unwrap_or_else(|| self.lexer.next_skip_comments(self.diag))
+    fn next(&mut self) -> Located<Token> {
+        self.peek.take().unwrap_or_else(|| self.lexer.next_skip_comments(self.diag, self.strings))
     }
 
-    fn next_if_l(&mut self, f: impl FnOnce(&Located<Token>) -> bool) -> Option<Located<Token<'a>>> {
-        f(self.peek()).then(|| self.next())
+    fn next_if(&mut self, kind: Token) -> Option<Span> {
+        self.next_if_pred(|t| t == kind).map(|t| t.span)
     }
 
-    fn next_if_pred(&mut self, pred: impl FnOnce(&Token) -> bool) -> Option<Located<Token<'a>>> {
-        self.next_if_l(|tok| pred(&tok.data))
-    }
-
-    fn next_if(&mut self, kind: Token) -> Option<Located<Token<'a>>> {
-        self.next_if_pred(|t| t == &kind)
+    fn next_if_pred(&mut self, pred: impl FnOnce(Token) -> bool) -> Option<Located<Token>> {
+        pred(self.peek().data).then(|| self.next())
     }
 
     fn next_if_map<T>(
         &mut self,
         f: impl FnOnce(&mut Self, Located<Token>) -> Option<T>,
     ) -> Option<T> {
-        let peek = self.peek().clone();
+        let peek = self.peek();
         let outer = f(self, peek);
         if outer.is_some() {
             self.next();
@@ -2571,13 +2522,16 @@ impl<'a> Parser<'a> {
         outer
     }
 
+    fn next_if_ident(&mut self) -> Option<Located<StrId>> {
+        self.next_if_map(|_, t| t.data.as_ident().map(|&i| Located::new(t.span, i)))
+    }
+
     fn next_until(&mut self, token: Token, mut span: Span, mut f: impl FnMut(&mut Self)) -> Span {
         loop {
             let peek = self.peek();
             span.extend_to(peek.span);
             if peek.data == Token::Eof {
-                let pspan = peek.span;
-                self.error_no_sync(Error::expected_found(token, Token::Eof, pspan));
+                self.error_no_sync(Error::expected_found(token, Token::Eof, peek.span));
                 return span;
             } else if peek.data == token {
                 self.next();
@@ -2588,12 +2542,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn matches_pred(&mut self, pred: impl FnOnce(&Token) -> bool) -> bool {
-        pred(&self.peek().data)
-    }
-
     fn matches(&mut self, kind: Token) -> bool {
-        self.matches_pred(|t| t == &kind)
+        self.peek().data == kind
     }
 
     fn expect_map<T>(
@@ -2601,38 +2551,32 @@ impl<'a> Parser<'a> {
         f: impl FnOnce(&mut Self, Located<Token>) -> Option<T>,
         msg: &str,
     ) -> Option<T> {
-        let token = self.peek().clone();
+        let token = self.next();
         if let Some(res) = f(self, token) {
-            self.next();
             Some(res)
         } else {
-            let span = self.next().span;
-            self.error(Error::new(msg, span));
+            self.error(Error::new(msg, token.span));
             None
         }
     }
 
-    fn expect(&mut self, kind: Token) -> Located<Token<'a>> {
-        let token = self.peek();
+    fn expect(&mut self, kind: Token) -> Span {
+        let token = self.next();
         if token.data == kind {
-            self.next()
+            token.span
         } else {
-            let token = self.next();
             self.error(Error::new(format!("expected '{kind}'"), token.span));
-            token
+            token.span
         }
     }
 
     fn expect_ident(&mut self, msg: &str) -> Located<StrId> {
-        let token = self.peek();
+        let token = self.next();
         if let Token::Ident(ident) = token.data {
-            let name = Located::new(token.span, self.strings.get_or_intern(ident));
-            self.next();
-            name
+            Located::new(token.span, ident)
         } else {
-            let span = self.next().span;
-            self.error(Error::new(msg, span));
-            Located::new(span, Strings::EMPTY)
+            self.error(Error::new(msg, token.span));
+            Located::new(token.span, Strings::EMPTY)
         }
     }
 }

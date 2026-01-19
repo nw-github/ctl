@@ -1,4 +1,5 @@
 // Output: Passed!
+use std::sync::{Atomic, ext::*};
 
 trait Foo {
     fn bar(this);
@@ -10,7 +11,7 @@ struct Bar {
     }
 }
 
-static VALUE: std::sync::Atomic<int> = std::sync::Atomic::new(0);
+static VALUE: Atomic<int> = Atomic::new(0);
 
 fn main() {
     let _ = hello();

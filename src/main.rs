@@ -3,7 +3,7 @@ use clap::{Args, Parser, Subcommand, ValueHint};
 use colored::Colorize;
 use ctl::{
     CachingSourceProvider, Compiler, Configuration, Diagnostics, Error, FileId, LspBackend,
-    OffsetMode, SourceProvider, TestArgs, intern::Strings,
+    OffsetMode, SourceProvider, TestArgs,
 };
 use std::{
     ffi::OsString,
@@ -53,7 +53,7 @@ struct Arguments {
 }
 
 #[derive(Args)]
-struct BuildOrRun {
+struct BuildArgs {
     /// The path to the file or project folder
     input: Option<PathBuf>,
 
@@ -75,9 +75,13 @@ struct BuildOrRun {
     )]
     opt_level: Option<i32>,
 
+    /// Compile using the release profile
+    #[clap(action, short, long)]
+    release: bool,
+
     /// Include debug info and assertions
     #[clap(action, short, long)]
-    debug: bool,
+    debug_info: Option<bool>,
 
     /// The output path for the compiled artifacts.
     #[clap(long)]
@@ -122,12 +126,12 @@ enum SubCommand {
     #[clap(alias = "b")]
     Build {
         #[clap(flatten)]
-        build: BuildOrRun,
+        build: BuildArgs,
     },
     #[clap(alias = "r")]
     Run {
         #[clap(flatten)]
-        build: BuildOrRun,
+        build: BuildArgs,
 
         /// Command line arguments for the target program
         #[arg(trailing_var_arg = true, value_hint = ValueHint::CommandWithArguments)]
@@ -147,7 +151,7 @@ enum SubCommand {
     #[clap(alias = "t")]
     Test {
         #[clap(flatten)]
-        build: BuildOrRun,
+        build: BuildArgs,
 
         #[clap(short, long)]
         test: Option<String>,
@@ -156,6 +160,17 @@ enum SubCommand {
         modules: Vec<String>,
     },
     Lsp,
+}
+
+impl SubCommand {
+    pub fn as_build_args(&self) -> Option<&BuildArgs> {
+        match self {
+            SubCommand::Build { build } => Some(build),
+            SubCommand::Run { build, .. } => Some(build),
+            SubCommand::Test { build, .. } => Some(build),
+            _ => None,
+        }
+    }
 }
 
 trait LogIfVerbose {
@@ -178,7 +193,7 @@ impl LogIfVerbose for Command {
 
 fn compile_results(
     code: &str,
-    mut build: BuildOrRun,
+    build: BuildArgs,
     conf: Configuration,
     verbose: bool,
 ) -> Result<PathBuf> {
@@ -188,16 +203,11 @@ fn compile_results(
         std::array::from_fn(|_| Stdio::piped())
     };
 
-    if conf.has_feature(Strings::FEAT_BACKTRACE) {
-        build.libs.push(String::from("dw"));
-    }
-
-    let has_boehm = conf.has_feature(Strings::FEAT_BOEHM);
-    let output = build.out_dir.or(conf.build).unwrap_or_else(|| PathBuf::from("./build"));
+    let output = build.out_dir.unwrap_or(conf.build.dir);
     std::fs::create_dir_all(&output)?;
 
     let file_path = if !build.use_stdin {
-        let path = output.join(format!("{}.c", conf.name.as_deref().unwrap_or("main")));
+        let path = output.join(format!("{}.c", conf.name));
         let mut file = File::create(&path)?;
         print_results(code, build.pretty, verbose, &mut file)?;
         Some(path)
@@ -205,22 +215,17 @@ fn compile_results(
         None
     };
 
-    let output = output.join(conf.name.as_deref().unwrap_or("a.out"));
+    let output = output.join(conf.name);
     let debug_flags = ["-fno-omit-frame-pointer", "-rdynamic", "-g"];
-    let debug_info = build.debug || build.opt_level.is_none_or(|l| l == 0);
     let mut cc = Command::new(build.cc)
         .args(include_str!("../compile_flags.txt").split("\n").filter(|f| !f.is_empty()))
         .args(build.ccargs.unwrap_or_default().split(' ').filter(|f| !f.is_empty()))
-        .arg(format!("-O{}", build.opt_level.unwrap_or_default()))
-        .args(debug_info.then_some(debug_flags).into_iter().flatten())
-        .args(has_boehm.then_some("-lgc"))
-        .args(
-            build
-                .libs
-                .iter()
-                .chain(conf.libs.unwrap_or_default().iter())
-                .map(|lib| format!("-l{lib}")),
-        )
+        .arg(format!("-O{}", conf.build.opt_level))
+        .args(conf.build.debug_info.then_some(debug_flags).into_iter().flatten())
+        .args(conf.libs.into_iter().map(|lib| match lib {
+            ctl::package::Lib::Name(name) => OsString::from(format!("-l{name}")),
+            ctl::package::Lib::Path(path) => path.into_os_string(),
+        }))
         .args(["-x", "c", "-o"])
         .arg(&output)
         .arg(file_path.as_deref().unwrap_or(Path::new("-")))
@@ -336,19 +341,13 @@ fn display_diagnostics(diag: &Diagnostics) {
     }
 }
 
-fn dump(path: &Path, conf: Configuration, mods: &[String]) -> Result<()> {
-    let result = Compiler::new().parse(path, conf)?;
-    result.dump(mods);
-    display_diagnostics(result.diagnostics());
-    Ok(())
-}
-
 fn dump_tokens(input: Option<&Path>) -> Result<()> {
     let source = std::fs::read_to_string(input.context("missing input file")?)?;
     let mut lexer = ctl::Lexer::new(&source, Default::default());
     let mut diag = ctl::Diagnostics::default();
+    let mut strings = ctl::Strings::new();
     loop {
-        let token = lexer.next(&mut diag);
+        let token = lexer.next(&mut diag, &mut strings);
         if token.data == ctl::Token::Eof {
             break Ok(());
         }
@@ -376,7 +375,7 @@ fn execute_binary(path: &Path, args: Option<Vec<OsString>>, verbose: bool) -> Re
 
 fn main() -> Result<()> {
     let args = Arguments::parse();
-    let input = match &args.command {
+    let path = match &args.command {
         SubCommand::Print { input, .. } => input,
         SubCommand::Dump { input, tokens, .. } => {
             if *tokens {
@@ -398,32 +397,48 @@ fn main() -> Result<()> {
             return Ok(());
         }
     };
-    let mut conf = Configuration::default();
-    conf.flags.no_bit_int = args.no_bit_int;
-    conf.flags.lib = args.shared.unwrap_or(conf.flags.lib);
-    conf.flags.minify = matches!(args.command, SubCommand::Print { minify: true, .. });
-    conf.no_std = args.no_std;
-    if args.leak {
-        conf.remove_feature(Strings::FEAT_BOEHM);
-    }
 
-    let path = input.as_deref().unwrap_or(Path::new("."));
+    let input = ctl::package::Input {
+        features: Default::default(),
+        no_default_features: false,
+        args: ctl::package::ConstraintArgs {
+            release: args.command.as_build_args().is_some_and(|b| b.release),
+            no_std: args.no_std,
+            ..Default::default()
+        },
+    };
+
+    let path = path.as_deref().unwrap_or(Path::new("."));
+    let compiler = Compiler::new().parse(path, input)?.modify_conf(|conf| {
+        conf.build.no_bit_int = args.no_bit_int;
+        conf.is_library = args.shared.unwrap_or(conf.is_library);
+        conf.build.minify = matches!(args.command, SubCommand::Print { minify: true, .. });
+        conf.build.no_gc = args.leak;
+        if let SubCommand::Test { test, modules, .. } = &args.command {
+            conf.test_args = Some(TestArgs {
+                test: test.clone(),
+                modules: (!modules.is_empty()).then(|| modules.clone()),
+            });
+        } else if let SubCommand::Print { test: true, .. } = &args.command {
+            conf.test_args = Some(TestArgs { test: None, modules: None });
+        }
+
+        if let Some(args) = args.command.as_build_args() {
+            conf.build.debug_info = args.debug_info.unwrap_or(conf.build.debug_info);
+            conf.build.opt_level =
+                args.opt_level.map(|i| i as usize).unwrap_or(conf.build.opt_level);
+            for lib in args.libs.iter() {
+                conf.libs.insert(ctl::package::Lib::Name(lib.clone()));
+            }
+        }
+    });
     if let SubCommand::Dump { modules, .. } = &args.command {
-        return dump(path, conf, modules);
+        compiler.dump(modules);
+        display_diagnostics(compiler.diagnostics());
+        return Ok(());
     }
 
-    if let SubCommand::Test { .. } | SubCommand::Print { test: true, .. } = &args.command {
-        conf.set_feature(Strings::FEAT_TEST);
-    }
-
-    if let SubCommand::Test { test, modules, .. } = &args.command {
-        conf.test_args = Some(TestArgs {
-            test: test.clone(),
-            modules: (!modules.is_empty()).then(|| modules.clone()),
-        });
-    }
-
-    let result = Compiler::new().parse(path, conf)?.typecheck(None).build();
+    let result = compiler.typecheck(None).build();
     let (conf, result) = match result {
         (Some(code), conf, diag) => {
             if !args.quiet {

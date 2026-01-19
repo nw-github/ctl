@@ -200,6 +200,14 @@ impl Pretty<'_> {
                     )],
                 );
             }
+            StmtData::Alias { public, name, type_params, ty } => {
+                self.print_header(&tabs, "Stmt::Alias", &[bool!(public)]);
+                let tabs = INDENT.repeat(indent + 1);
+                eprintln!("{tabs}{}: {}", "Name".yellow(), self.strings.resolve(&name.data));
+
+                self.print_type_params(type_params, indent + 1, None);
+                eprintln!("{tabs}{}: {}", "Type".yellow(), self.typ(*ty));
+            }
             StmtData::Error => {}
         }
     }
@@ -426,8 +434,8 @@ impl Pretty<'_> {
                 eprintln!("{tabs}{}: {}", "Pattern".yellow(), self.patt(&pattern.data));
                 self.print_expr(expr, indent + 1);
             }
-            ExprData::As { expr, ty, throwing } => {
-                self.print_header(&tabs, "Expr::As", &[bool!(throwing)]);
+            ExprData::As { expr, ty } => {
+                self.print_header(&tabs, "Expr::As", &[]);
                 let tabs = INDENT.repeat(indent + 1);
                 eprintln!("{tabs}{}: {}", "Type".yellow(), self.typ(*ty));
                 self.print_expr(expr, indent + 1);

@@ -85,7 +85,7 @@ pub fn s2d(buffer: [u8..]): Result<f64, ParseError> {
         e10 = -e10;
     }
 
-    e10 -= dot_index < e_index then (e_index - dot_index - 1) as! i32 else 0;
+    e10 -= dot_index < e_index then (e_index - dot_index - 1).cast() else 0;
     if m10 == 0 {
         return :Ok(signed_m then -0.0 else 0.0);
     } else if m10digits + e10 <= -324 or m10 == 0 /* ??? */ {
@@ -108,10 +108,11 @@ pub fn s2d(buffer: [u8..]): Result<f64, ParseError> {
         //
         // We use floor(log2(5^e10)) so that we get at least this many bits;
         // better to have an additional bit than to not have enough bits.
-        let e2 = floor_log2(m10)
-            .wrapping_add(e10 as! u32)
-            .wrapping_add(log2_pow5(e10) as! u32)
-            .wrapping_sub(d2s::DOUBLE_MANTISSA_BITS + 1) as! i32;
+        let e2: i32 = floor_log2(m10)
+            .wrapping_add(e10.cast())
+            .wrapping_add(log2_pow5(e10).cast())
+            .wrapping_sub(d2s::DOUBLE_MANTISSA_BITS + 1)
+            .cast();
 
         // We now compute [m10 * 10^e10 / 2^e2] = [m10 * 5^e10 / 2^(e2-e10)].
         // To that end, we use the DOUBLE_POW5_SPLIT table.
@@ -120,11 +121,11 @@ pub fn s2d(buffer: [u8..]): Result<f64, ParseError> {
             .wrapping_sub(ceil_log2_pow5(e10))
             .wrapping_add(d2s::DOUBLE_POW5_BITCOUNT);
         debug_assert(j >= 0);
-        debug_assert(e10 < DOUBLE_POW5_SPLIT.len() as! i32);
+        debug_assert(e10 < DOUBLE_POW5_SPLIT.len().cast());
         let m2 = mul_shift_64(
             m10,
-            unsafe DOUBLE_POW5_SPLIT.get_unchecked(e10 as! uint),
-            j as! u32,
+            unsafe DOUBLE_POW5_SPLIT.get_unchecked(e10.cast()),
+            j.cast(),
         );
 
         // We also compute if the result is exact, i.e.,
@@ -134,30 +135,31 @@ pub fn s2d(buffer: [u8..]): Result<f64, ParseError> {
         // greater than e2. If e2 is less than e10, then the result must be
         // exact. Otherwise we use the existing multiple_of_power_of_2 function.
         let trailing_zeros =
-            e2 < e10 or e2 - e10 < 64 and multiple_of_power_of_2(m10, (e2 - e10) as! u32);
+            e2 < e10 or e2 - e10 < 64 and multiple_of_power_of_2(m10, (e2 - e10).cast());
         (e2, m2, trailing_zeros)
     } else {
-        let e2 = floor_log2(m10)
-            .wrapping_add(e10 as! u32)
-            .wrapping_sub(ceil_log2_pow5(-e10) as! u32)
-            .wrapping_sub(d2s::DOUBLE_MANTISSA_BITS + 1) as! i32;
+        let e2: i32 = floor_log2(m10)
+            .wrapping_add(e10.cast())
+            .wrapping_sub(ceil_log2_pow5(-e10).cast())
+            .wrapping_sub(d2s::DOUBLE_MANTISSA_BITS + 1)
+            .cast();
         let j = e2
             .wrapping_sub(e10)
             .wrapping_add(ceil_log2_pow5(-e10))
             .wrapping_sub(1)
             .wrapping_add(d2s::DOUBLE_POW5_INV_BITCOUNT);
-        debug_assert(-e10 < DOUBLE_POW5_INV_SPLIT.len() as! i32);
+        debug_assert(-e10 < DOUBLE_POW5_INV_SPLIT.len().cast());
         let m2 = mul_shift_64(
             m10,
-            unsafe DOUBLE_POW5_INV_SPLIT.get_unchecked(-e10 as! uint),
-            j as! u32,
+            unsafe DOUBLE_POW5_INV_SPLIT.get_unchecked((-e10).cast()),
+            j.cast(),
         );
-        let trailing_zeros = multiple_of_power_of_5(m10, -e10 as! u32);
+        let trailing_zeros = multiple_of_power_of_5(m10, (-e10).cast());
         (e2, m2, trailing_zeros)
     };
 
     // Compute the final IEEE exponent.
-    let mut ieee_e2 = i32::max(0, e2 + DOUBLE_EXPONENT_BIAS as! i32 + floor_log2(m2) as! i32) as! u32;
+    mut ieee_e2: u32 = i32::max(0, e2 + DOUBLE_EXPONENT_BIAS.cast() + floor_log2(m2).cast()).cast();
     if ieee_e2 > 0x7fe {
         // Final IEEE exponent is larger than the maximum representable; return +/-Infinity.
         return :Ok(infinity(signed_m));
@@ -166,11 +168,12 @@ pub fn s2d(buffer: [u8..]): Result<f64, ParseError> {
     // We need to figure out how much we need to shift m2. The tricky part is
     // that we need to take the final IEEE exponent into account, so we need to
     // reverse the bias and also special-case the value 0.
-    let shift = (ieee_e2 == 0 then 1i32 else ieee_e2 as! i32)
+    let shift = (ieee_e2 == 0 then 1i32 else ieee_e2.cast())
         .wrapping_sub(e2)
-        .wrapping_sub(DOUBLE_EXPONENT_BIAS as! i32)
-        .wrapping_sub(d2s::DOUBLE_MANTISSA_BITS as! i32) as! u32;
+        .wrapping_sub(DOUBLE_EXPONENT_BIAS.cast())
+        .wrapping_sub(d2s::DOUBLE_MANTISSA_BITS.cast());
     debug_assert(shift >= 0);
+    let shift = u32::from(shift);
 
     // We need to round up if the exact value is more than 0.5 above the value
     // we computed. That's equivalent to checking if the last removed bit was 1

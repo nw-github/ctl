@@ -1,2 +1,21 @@
+[package]
+name = "std"
+root = "."
 no_std = true
 lib = true
+version = "0"
+
+[features]
+backtrace = { default = true, available = "os:linux+arch:x86-64" }
+hosted = { default = true }
+# TODO: Alloc should not require hosted, but we need a way to override the default allocator
+alloc = { default = true, requires = ["hosted"] }
+io = { default = true, requires = ["hosted"] }
+
+# In the future, this can move to the build script
+[link-libs]
+c = { requires = ["hosted"] }
+dw = { requires = ["backtrace"], available = "os:linux+arch:x86-64" }
+gc = { available = "!ctl:no-gc" }
+unwind = { requires = ["backtrace"] }
+unwind-x86_64 = { requires = ["backtrace"], available = "arch:x86-64" }

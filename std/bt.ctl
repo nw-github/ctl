@@ -2,6 +2,7 @@ use std::runtime::*;
 use std::deps::libdwfl::*;
 use std::deps::libc;
 use std::panic::SourceLocation;
+use std::str::CStr;
 
 extension Helpers for str {
     fn advance_if_eq(mut this, v: char): bool {
@@ -51,7 +52,8 @@ extension Helpers for str {
 pub struct MaybeMangledName {
     func: [u8..],
 
-    pub fn new(func: str): This => This(func: func.as_bytes());
+    pub fn from_str(func: str): This => This(func: func.as_bytes());
+    pub fn from_bytes(func: [u8..]): This => This(func:);
 
     fn demangle_type_name(name: *mut str, f: *mut std::fmt::Formatter): ?void {
         match name.advance()? {
@@ -59,8 +61,6 @@ pub struct MaybeMangledName {
             'V' => write(f, "never"),
             'i' => write(f, "i{name}"),
             'u' => write(f, "u{name}"),
-            'c' => write(f, "c_{name}"),
-            'C' => write(f, "c_u{name}"),
             'I' => write(f, "int"),
             'U' => write(f, "uint"),
             'f' => write(f, "f32"),
@@ -106,7 +106,7 @@ pub struct MaybeMangledName {
                 write(f, ") => ");
                 This::demangle_type_name(name, f)?;
             }
-            'n' => write(f, "{This::new(name.read_len_prefixed()?)}"),
+            'n' => write(f, "{This::from_str(name.read_len_prefixed()?)}"),
             _ => null,
         }
     }
@@ -158,7 +158,7 @@ pub struct MaybeMangledName {
 
     impl std::fmt::Format {
         fn fmt(this, f: *mut std::fmt::Formatter) {
-            use std::string::ext::*;
+            use std::str::ext::*;
 
             guard str::from_utf8(this.func) is ?base else {
                 for ch in this.func.iter_chars_lossy() {
@@ -187,7 +187,7 @@ pub struct SymbolInfo {
 }
 
 pub struct Call {
-    addr: uint,
+    pub addr: uint,
 
     pub fn addr(my this): uint => this.addr;
 
@@ -195,7 +195,7 @@ pub struct Call {
     pub fn symbolicate(my this): ?SymbolInfo {
         let dwfl = unsafe DWFL?;
 
-        mut [lineno, colno] = [0ic; 2];
+        mut [lineno, colno] = [0 as c_int; 2];
         mut addr = this.addr;
         unsafe {
             let line = dwfl_getsrc(dwfl, addr)?;
@@ -211,9 +211,9 @@ pub struct Call {
             }
 
             SymbolInfo(
-                file: str::from_cstr(file),
-                line: lineno as! u32,
-                col: colno as! u32,
+                file: CStr::new(file).as_str(),
+                line: u32::try_from(lineno) ?? 0,
+                col: u32::try_from(colno) ?? 0,
                 func:,
                 offs:
             )
@@ -225,29 +225,81 @@ pub struct Call {
 }
 
 pub struct Backtrace {
-    addrs: [?^mut void; 1024],
-    count: uint,
+    addrs: [Call],
 
     $[inline(never)]
     pub fn capture(): This {
-        mut addrs: [?^mut void; 1024] = [null; 1024];
-        let count = unsafe libc::backtrace(addrs.as_raw_mut(), addrs.len() as! c_int);
-        Backtrace(addrs:, count: count as! uint)
+        mut addrs: [Call] = @[];
+        unsafe backtrace(|&mut addrs, mut i = 0,| (pc) {
+            if i++ >= 2 {
+                // TODO: allow this to fail
+                addrs.push(Call(addr: pc));
+            }
+
+            true
+        });
+
+        Backtrace(addrs:)
     }
 
-    pub fn iter(this): BacktraceIter {
-        BacktraceIter(addrs: this.addrs[..this.count].iter().skip(1))
-    }
+    pub fn iter(this): BacktraceIter => BacktraceIter(addrs: this.addrs.iter());
 }
 
 pub struct BacktraceIter {
-    addrs: std::iter::Skip<*?^mut void, std::span::Iter<?^mut void>>,
+    addrs: std::span::Iter<Call>,
 
     impl Iterator<Call> {
-        fn next(mut this): ?Call {
-            if this.addrs.next() is ?next {
-                Call(addr: next is ?ptr then *ptr as uint else 0)
+        fn next(mut this): ?Call => this.addrs.next().copied();
+    }
+}
+
+pub struct Context {
+    pub pc: uint,
+    pub bp: uint,
+    pub sp: uint,
+    pub signal: bool,
+}
+
+$[inline(never)]
+pub unsafe fn backtrace<F: Fn(uint) => bool>(f: F, kw ctx: ?Context = null): bool {
+    $[feature(backtrace)]
+    unsafe {
+        use std::deps::libunwind::*;
+
+        mut context: unw_context_t;
+        mut cursor: unw_cursor_t;
+        if ctx is ?{pc, bp, sp, signal} {
+            if _Ux86_64_init_local2(
+                &mut cursor,
+                &mut context,
+                signal then UNW_INIT_SIGNAL_FRAME else 0
+            ) != 0
+            {
+                return false;
+            }
+
+            _Ux86_64_set_reg(&mut cursor, UNW_REG_SP, sp);
+            _Ux86_64_set_reg(&mut cursor, UNW_REG_BP, bp);
+            _Ux86_64_set_reg(&mut cursor, UNW_REG_IP, pc);
+        } else {
+            if _Ux86_64_getcontext(&mut context) != 0 {
+                return false;
+            } else if _Ux86_64_init_local(&mut cursor, &mut context) != 0 {
+                return false;
             }
         }
+
+        loop {
+            mut ip = 0u;
+            if _Ux86_64_get_reg(&mut cursor, UNW_REG_IP, &mut ip) != 0 {
+                return false;
+            }
+
+            if !f(ip) {
+                break;
+            }
+        } while _Ux86_64_step(&mut cursor) > 0;
     }
+
+    true
 }

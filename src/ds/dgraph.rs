@@ -4,7 +4,7 @@ use std::hash::Hash;
 #[derive(Clone)]
 pub enum Dependencies<T> {
     Resolving,
-    Resolved(Vec<T>),
+    Resolved(HashSet<T>),
     Recursive,
 }
 

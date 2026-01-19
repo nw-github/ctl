@@ -49,7 +49,7 @@ fn opt_str_arg(attr: &Attribute, name: StrId, proj: &mut Project) -> Option<Loca
 }
 
 fn unrecognized(attr: &Attribute, proj: &mut Project) {
-    if matches!(attr.name.data, AN::Str(Strings::ATTR_FEATURE)) {
+    if matches!(attr.name.data, AN::Str(Strings::ATTR_FEATURE | Strings::ATTR_CFG)) {
         return;
     }
 

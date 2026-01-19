@@ -1,4 +1,4 @@
-use std::deps::libc;
+use std::deps::{libc, libc::posix::*};
 
 const NS_PER_SEC: u64 = 1_000_000_000;
 
@@ -7,16 +7,16 @@ pub struct Duration {
     nanos: u32,
 
     pub fn new(kw mut secs: u64, kw nanos: u32): This {
-        mut dur = Duration::from_nanos(nanos as u64);
+        mut dur = This::from_nanos(nanos as u64);
         dur.secs += secs;
         dur
     }
-    pub fn zero(): This => Duration(secs: 0, nanos: 0);
+    pub fn zero(): This => This(secs: 0, nanos: 0);
 
-    pub fn from_nanos(ns: u64): This => Duration(secs: ns / NS_PER_SEC, nanos: (ns % NS_PER_SEC) as! u32);
+    pub fn from_nanos(ns: u64): This => This(secs: ns / NS_PER_SEC, nanos: (ns % NS_PER_SEC).cast());
     pub fn from_micros(us: u64): This => This::from_nanos(us * 1_000);
     pub fn from_millis(ms: u64): This => This::from_nanos(ms * 1_000_000);
-    pub fn from_secs(secs: u64): This => Duration(secs:, nanos: 0);
+    pub fn from_secs(secs: u64): This => This(secs:, nanos: 0);
 
     pub fn as_nanos(this): u64 => this.secs * NS_PER_SEC + this.nanos as u64;
     pub fn as_micros(this): u64 => this.secs * 1_000_000 + this.nanos as u64 / 1_000;
@@ -40,8 +40,8 @@ pub struct Duration {
     pub fn +=(mut this, rhs: This) {
         this.secs += rhs.secs;
         this.nanos += rhs.nanos;
-        if this.nanos > NS_PER_SEC as! u32 {
-            this.nanos -= NS_PER_SEC as! u32;
+        if this.nanos > NS_PER_SEC.cast() {
+            this.nanos -= NS_PER_SEC.cast();
             this.secs++;
         }
     }
@@ -52,8 +52,8 @@ pub struct Instant {
 
     pub fn now(): This {
         mut tp = libc::Timespec(tv_sec: 0, tv_nsec: 0);
-        unsafe libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut tp);
-        Instant(ns: tp.tv_nsec as! u64 + tp.tv_sec as! u64 * 1_000_000_000)
+        unsafe clock_gettime(CLOCK_MONOTONIC, &mut tp);
+        Instant(ns: tp.tv_nsec.cast() + tp.tv_sec.cast() * 1_000_000_000)
     }
 
     pub fn duration_since(this, kw prev: This): Duration {
@@ -81,7 +81,7 @@ pub struct Instant {
 }
 
 pub fn sleep(dur: Duration) {
-    mut spec = libc::Timespec(tv_sec: dur.secs as! c_long, tv_nsec: dur.nanos as! c_long);
-    while unsafe libc::nanosleep(&spec, &mut spec) != 0 {
+    mut spec = libc::Timespec(tv_sec: dur.secs.saturating_cast(), tv_nsec: dur.nanos.cast());
+    while unsafe nanosleep(&spec, &mut spec) != 0 {
     }
 }

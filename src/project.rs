@@ -1,17 +1,16 @@
-use std::{collections::HashSet, path::PathBuf};
+use std::collections::HashSet;
 
 use crate::{
-    CodegenFlags, Diagnostics, Span,
-    ast::{Attribute, Attributes},
+    Diagnostics, Span,
     ds::{DependencyGraph, HashMap},
     format::{FmtTy, FmtUt},
     intern::{StrId, Strings},
+    package::ConstraintArgs,
     sym::{FunctionId, ScopeId, Scopes, TypeItem, UserTypeId, ValueItem, VariableId, Vis},
     typecheck::{Completions, LspItem},
     typeid::{GenericUserType, TypeId, Types},
 };
 
-#[derive(Default)]
 pub struct Project {
     pub scopes: Scopes,
     pub types: Types,
@@ -33,7 +32,24 @@ pub struct Project {
 
 impl Project {
     pub fn new(conf: Configuration, diag: Diagnostics, strings: Strings, lsp: bool) -> Self {
-        Self { diag, conf, strings, lsp_items: lsp.then(Vec::new), ..Default::default() }
+        Self {
+            diag,
+            conf,
+            strings,
+            lsp_items: lsp.then(Vec::new),
+            scopes: Default::default(),
+            types: Default::default(),
+            completions: Default::default(),
+            main: Default::default(),
+            main_module: Default::default(),
+            panic_handler: Default::default(),
+            test_runner: Default::default(),
+            deps: Default::default(),
+            static_deps: Default::default(),
+            trait_deps: Default::default(),
+            autouse_tns: Default::default(),
+            autouse_vns: Default::default(),
+        }
     }
 
     pub fn fmt_ty(&self, ty: TypeId) -> FmtTy<'_> {
@@ -57,66 +73,16 @@ pub struct TestArgs {
 
 #[derive(Debug, Clone)]
 pub struct Configuration {
-    features: HashSet<StrId>,
-    pub flags: CodegenFlags,
-    pub build: Option<PathBuf>,
-    pub libs: Option<Vec<String>>,
-    pub name: Option<String>,
-    pub no_std: bool,
+    pub build: crate::package::Build,
+    pub libs: HashSet<crate::package::Lib>,
+    pub name: String,
     pub test_args: Option<TestArgs>,
+    pub is_library: bool,
+    pub args: ConstraintArgs,
 }
 
 impl Configuration {
-    pub fn is_disabled_by_attrs(&self, attrs: &Attributes) -> bool {
-        attrs
-            .iter()
-            .filter(|f| f.name.data.is_str_eq(Strings::ATTR_FEATURE))
-            .any(|v| v.props.iter().any(|v| !self.has_attr_features(v)))
-    }
-
-    pub fn has_feature(&self, feat: StrId) -> bool {
-        self.features.contains(&feat)
-    }
-
-    pub fn has_attr_features(&self, attr: &Attribute) -> bool {
-        if !attr.name.data.is_str_eq(Strings::ATTR_NOT) || attr.props.is_empty() {
-            let Some(name) = attr.name.data.as_str() else {
-                return false;
-            };
-            self.has_feature(*name)
-        } else {
-            !attr.props.iter().flat_map(|v| v.name.data.as_str()).any(|v| self.has_feature(*v))
-        }
-    }
-
-    pub fn set_feature(&mut self, feat: StrId) {
-        self.features.insert(feat);
-    }
-
-    pub fn remove_feature(&mut self, feat: StrId) {
-        self.features.remove(&feat);
-    }
-}
-
-impl Default for Configuration {
-    fn default() -> Self {
-        Self {
-            features: [
-                Strings::FEAT_ALLOC,
-                Strings::FEAT_IO,
-                Strings::FEAT_HOSTED,
-                Strings::FEAT_BOEHM,
-                Strings::FEAT_OVERFLOW_CHECKS,
-                #[cfg(target_os = "linux")]
-                Strings::FEAT_BACKTRACE,
-            ]
-            .into(),
-            flags: Default::default(),
-            build: None,
-            libs: None,
-            name: None,
-            test_args: None,
-            no_std: false,
-        }
+    pub fn in_test_mode(&self) -> bool {
+        self.test_args.is_some()
     }
 }

@@ -1,7 +1,5 @@
-use std::hash::*;
-use std::ops::*;
-use std::fmt::*;
-use std::reflect::*;
+use std::fmt::{Debug, Format, Formatter};
+use std::reflect::{Integral, Signed, Unsigned};
 use super::ByteSpanExt;
 
 pub extension U8Impl for u8 {
@@ -44,11 +42,11 @@ mod gcc_intrin {
 }
 
 pub extension IntegralImpl<T: Integral> for T {
-    impl TotallyOrdered { }
+    impl std::ops::TotallyOrdered { }
 
     pub fn +(this, rhs: T): T {
         let (val, _overflow) = this.overflowing_add(rhs);
-        $[feature(overflow_checks)]
+        $[cfg("!ctl:no-overflow-checks")]
         if _overflow {
             panic("integer overflow adding values {val} and {rhs}");
         }
@@ -57,7 +55,7 @@ pub extension IntegralImpl<T: Integral> for T {
 
     pub fn -(this, rhs: T): T {
         let (val, _overflow) = this.overflowing_sub(rhs);
-        $[feature(overflow_checks)]
+        $[cfg("!ctl:no-overflow-checks")]
         if _overflow {
             panic("integer overflow subtracting values {val} and {rhs}");
         }
@@ -66,7 +64,7 @@ pub extension IntegralImpl<T: Integral> for T {
 
     pub fn *(this, rhs: T): T {
         let (val, _overflow) = this.overflowing_mul(rhs);
-        $[feature(overflow_checks)]
+        $[cfg("!ctl:no-overflow-checks")]
         if _overflow {
             panic("integer overflow multiplying values {val} and {rhs}");
         }
@@ -75,7 +73,7 @@ pub extension IntegralImpl<T: Integral> for T {
 
     pub fn /(this, rhs: T): T {
         let (val, _overflow) = this.overflowing_div(rhs);
-        $[feature(overflow_checks)]
+        $[cfg("!ctl:no-overflow-checks")]
         if _overflow {
             panic("integer overflow dividing values {val} and {rhs}");
         }
@@ -220,15 +218,24 @@ pub extension IntegralImpl<T: Integral> for T {
     $[intrinsic]
     pub fn min_value(): T => T::min_value();
 
-    /// C-style cast from `this` to type U with overflow/truncation.
+    /// C-style cast from `from` to This with wraparound/truncation.
     $[intrinsic(numeric_cast)]
-    pub fn cast<U: Integral>(my this): U => this.cast();
+    pub fn from<U: Integral>(from: U): T => T::from(from);
 
     /// Cast `this` to type `U` if the value of this is exactly representable in U
     $[inline]
     pub fn try_cast<U: Integral>(my this): ?U {
         let rhs: U = this.cast();
         this == rhs.cast() then rhs
+    }
+
+    $[inline]
+    pub fn try_from<U: Integral>(val: U): ?T => val.try_cast::<T>();
+
+    $[inline]
+    pub fn saturating_cast<U: Integral>(my this): U {
+        // TODO: actually saturate
+        this.cast()
     }
 
     $[inline]
@@ -243,7 +250,7 @@ pub extension IntegralImpl<T: Integral> for T {
         this
     }
 
-    fn from_str_radix_common(chars: std::string::Chars, radix: u32): ?T {
+    fn from_str_radix_common(chars: std::str::Chars, radix: u32): ?T {
         mut value: ?T = null;
         for ch in chars {
             let digit = ch.to_digit(radix)?.try_cast::<T>()?;
@@ -262,12 +269,11 @@ pub extension IntegralImpl<T: Integral> for T {
     /// `buf`   must have a length of at least size_of::<T> * 8
     ///
     /// Returns the position of the start of the digits within `buf`
-    unsafe fn write_digits(my mut this, buf: [mut u8..], radix: u32, upper: bool): uint {
+    unsafe fn write_digits(my mut this, buf: [mut u8..], radix: int, upper: bool): uint {
         static UPPER_DIGITS: *[u8; 36] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
         static LOWER_DIGITS: *[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
 
         let digits = upper then UPPER_DIGITS else LOWER_DIGITS;
-        let radix = radix as! int;
         mut pos = buf.len();
         loop {
             // TODO: do this at CTL compile time
@@ -299,15 +305,25 @@ pub extension IntegralImpl<T: Integral> for T {
         fn oct(this, f: *mut Formatter) => this.format_into(f, 8, "0o");
     }
 
-    fn format_into(my mut this, f: *mut Formatter, radix: u32, prefix: ?str) {
+    fn format_into(this, f: *mut Formatter, radix: int, prefix: ?str) {
+        // TODO: const if
         if std::mem::size_of::<T>() <= std::mem::size_of::<u128>() {
             mut buf: [u8; /* std::mem::size_of::<u128>() * 8 */ 128];
             let start = unsafe this.write_digits(buf.subspan_mut_unchecked(..), radix, f.options().upper);
             let digits = unsafe str::from_utf8_unchecked(buf.subspan_unchecked(start..));
             f.pad_integral(negative: this < 0.cast(), digits:, prefix:);
         } else {
-            "<TODO: format int >128 bits>".fmt(f);
+            // Don't generate a large stack buffer for small types
+            this.format_large(f, radix, prefix)
         }
+    }
+
+    $[inline(never)]
+    fn format_large(this, f: *mut Formatter, radix: int, prefix: ?str) {
+        mut buf: [u8; /* std::mem::size_of::<u65535>() * 8 */ 65535];
+        let start = unsafe this.write_digits(buf.subspan_mut_unchecked(..), radix, f.options().upper);
+        let digits = unsafe str::from_utf8_unchecked(buf.subspan_unchecked(start..));
+        f.pad_integral(negative: this < 0.cast(), digits:, prefix:);
     }
 }
 
@@ -357,17 +373,44 @@ pub extension UnsignedImpl<T: Unsigned> for T {
     //       pub fn count_ones(this) => (this as! T::UI).count_ones();
     // In the meantime, an intrinsic might be the way to go
 
-    pub fn count_ones(my this): u32 => unsafe gcc_intrin::__builtin_popcountg(this) as! u32;
-    pub fn count_zeros(my this): u32 => unsafe gcc_intrin::__builtin_popcountg(!this) as! u32;
-    pub fn leading_zeros(my this): u32 => unsafe gcc_intrin::__builtin_clzg(this) as! u32;
-    pub fn trailing_zeros(my this): u32 => unsafe gcc_intrin::__builtin_ctzg(this) as! u32;
+    pub fn count_ones(my this): u32 => unsafe gcc_intrin::__builtin_popcountg(this).cast();
+    pub fn count_zeros(my this): u32 => unsafe gcc_intrin::__builtin_popcountg(!this).cast();
+    pub fn leading_zeros(my this): u32 => unsafe gcc_intrin::__builtin_clzg(this).cast();
+    pub fn trailing_zeros(my this): u32 => unsafe gcc_intrin::__builtin_ctzg(this).cast();
     pub fn is_power_of_two(my this): bool => this.count_ones() == 1;
 }
 
+use std::mem::{size_of, bit_cast};
+
 pub extension U32Impl for u32 {
-    pub fn from_le_bytes(bytes: [u8; 4]): u32 => unsafe std::mem::bit_cast(bytes);
-    pub fn from_ne_bytes(bytes: [u8; 4]): u32 => unsafe std::mem::bit_cast(bytes);
-    pub fn from_be_bytes(bytes: [u8; 4]): u32 => unsafe std::mem::bit_cast::<[u8; 4], u32>(bytes).swap_bytes();
+    // TODO: make these a macro
+    pub fn from_le_bytes(bytes: [u8; size_of::<This>()]): This => unsafe bit_cast(bytes);
+    pub fn from_ne_bytes(bytes: [u8; size_of::<This>()]): This => unsafe bit_cast(bytes);
+    pub fn from_be_bytes(bytes: [u8; size_of::<This>()]): This => This::from_le_bytes(bytes).swap_bytes();
+}
+
+pub extension UintImpl for uint {
+    pub fn from_le_bytes(bytes: [u8; size_of::<This>()]): This => unsafe bit_cast(bytes);
+    pub fn from_ne_bytes(bytes: [u8; size_of::<This>()]): This => unsafe bit_cast(bytes);
+    pub fn from_be_bytes(bytes: [u8; size_of::<This>()]): This => This::from_le_bytes(bytes).swap_bytes();
+
+    $[intrinsic(numeric_cast)]
+    pub fn to_raw<T>(my this): ^T => This::to_raw(this);
+
+    $[intrinsic(numeric_cast)]
+    pub fn to_raw_mut<T>(my this): ^mut T => This::to_raw_mut(this);
+}
+
+pub extension IntImpl for int {
+    pub fn from_le_bytes(bytes: [u8; size_of::<This>()]): This => unsafe bit_cast(bytes);
+    pub fn from_ne_bytes(bytes: [u8; size_of::<This>()]): This => unsafe bit_cast(bytes);
+    pub fn from_be_bytes(bytes: [u8; size_of::<This>()]): This => This::from_le_bytes(bytes).swap_bytes();
+
+    $[intrinsic(numeric_cast)]
+    pub fn to_raw<T>(my this): ^T => This::to_raw(this);
+
+    $[intrinsic(numeric_cast)]
+    pub fn to_raw_mut<T>(my this): ^mut T => This::to_raw_mut(this);
 }
 
 mod test {

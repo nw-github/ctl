@@ -85,8 +85,9 @@ pub struct InsertionResult<T> {
 }
 
 id!(FunctionId => Function, fns, vns);
-id!(UserTypeId => UserType, types, tns);
 id!(VariableId => Variable, vars, vns);
+id!(UserTypeId => UserType, types, tns);
+id!(AliasId => Alias, aliases, tns);
 
 pub type TraitId = UserTypeId;
 pub type ExtensionId = UserTypeId;
@@ -272,6 +273,7 @@ pub struct Function {
     pub body: Option<CheckedExpr>,
     pub constructor: Option<UserTypeId>,
     pub body_scope: ScopeId,
+    pub full_span: Span,
 }
 
 impl Function {
@@ -375,6 +377,7 @@ pub struct UserType {
     pub members_resolved: bool,
     pub recursive: bool,
     pub interior_mutable: bool,
+    pub full_span: Span,
 }
 
 impl UserType {
@@ -407,8 +410,17 @@ impl UserType {
             members_resolved: true,
             recursive: false,
             interior_mutable: false,
+            full_span: name.span,
         }
     }
+}
+
+pub struct Alias {
+    pub public: bool,
+    pub name: Located<StrId>,
+    pub type_params: Vec<UserTypeId>,
+    pub ty: TypeId,
+    pub body_scope: ScopeId,
 }
 
 pub trait HasTypeParams {
@@ -422,6 +434,12 @@ impl HasTypeParams for UserType {
 }
 
 impl HasTypeParams for Function {
+    fn get_type_params(&self) -> &[UserTypeId] {
+        &self.type_params
+    }
+}
+
+impl HasTypeParams for Alias {
     fn get_type_params(&self) -> &[UserTypeId] {
         &self.type_params
     }
@@ -462,6 +480,7 @@ pub trait ItemId: Sized + Copy + Clone {
 pub enum TypeItem {
     Type(UserTypeId),
     Module(ScopeId),
+    Alias(AliasId),
 }
 
 #[derive(Debug, Clone, Copy, EnumAsInner, From)]
@@ -496,6 +515,7 @@ pub struct Scopes {
     scopes: Vec<Scope>,
     fns: Vec<Scoped<Function>>,
     types: Vec<Scoped<UserType>>,
+    aliases: Vec<Scoped<Alias>>,
     vars: Vec<Scoped<Variable>>,
     tuples: HashMap<Vec<StrId>, UserTypeId>,
     pub lang_types: HashMap<LangType, UserTypeId>,
@@ -508,6 +528,7 @@ impl Scopes {
             fns: vec![Scoped::new(Function::default(), ScopeId::ROOT)],
             types: Vec::new(),
             vars: Vec::new(),
+            aliases: Vec::new(),
             tuples: HashMap::new(),
             lang_types: HashMap::new(),
         }
@@ -563,22 +584,7 @@ impl Scopes {
                 .map(|_| {
                     UserTypeId::insert_in(
                         self,
-                        UserType {
-                            public: false,
-                            name: Default::default(),
-                            body_scope: ScopeId::ROOT,
-                            kind: UserTypeKind::Template,
-                            impls: Default::default(),
-                            impl_blocks: Vec::new(),
-                            type_params: Vec::new(),
-                            attrs: Default::default(),
-                            fns: Vec::new(),
-                            members: IndexMap::new(),
-                            subscripts: Vec::new(),
-                            members_resolved: true,
-                            recursive: false,
-                            interior_mutable: false,
-                        },
+                        UserType::template(Default::default(), ScopeId::ROOT, Default::default()),
                         false,
                         ScopeId::ROOT,
                     )
@@ -613,6 +619,7 @@ impl Scopes {
                     members_resolved: true,
                     recursive: false,
                     interior_mutable: false,
+                    full_span: Span::nowhere(),
                 },
                 false,
                 ScopeId::ROOT,

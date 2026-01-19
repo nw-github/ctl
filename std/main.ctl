@@ -13,11 +13,12 @@ pub mod alloc;
 mod deps;
 mod runtime;
 mod ryu;
+mod test;
 
 $[autouse]
 mod prelude {
     pub use super::panic::{panic, unreachable, assert, assert_eq, assert_ne, debug_assert};
-    pub use super::string::str;
+    pub use super::str::str;
     pub use super::span::{Span, SpanMut};
     pub use super::opt::Option::{null, Some};
     pub use super::err::{Result, Result::{Ok, Err}};
@@ -30,6 +31,7 @@ mod prelude {
     pub use super::fmt::ext::*;
     pub use super::fmt::{write, writeln};
     pub use super::ops::{Fn, ext::*};
+    pub use super::ffi::types::*;
 
     $[feature(alloc)]
     pub use super::alloc::collections::*;

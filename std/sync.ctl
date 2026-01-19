@@ -70,43 +70,99 @@ pub struct Atomic<T> {
 
     $[inline(always)]
     pub fn as_raw_mut(this): ^mut T => this.val.get();
+}
 
-    $[inline(always)]
-    pub fn fetch_add(this, val: T, order: MemoryOrder = :SeqCst): T {
-        unsafe atomic_fetch_add_explicit(this.val.get(), val, order as u32)
+pub mod ext {
+    use super::*;
+
+    pub extension AtomicIntImpl<T: std::reflect::Integral> for Atomic<T> {
+        $[inline(always)]
+        pub fn fetch_add(this, val: T, order: MemoryOrder = :SeqCst): T {
+            unsafe atomic_fetch_add_explicit(this.val.get(), val, order as u32)
+        }
+
+        $[inline(always)]
+        pub fn fetch_sub(this, val: T, order: MemoryOrder = :SeqCst): T {
+            unsafe atomic_fetch_sub_explicit(this.val.get(), val, order as u32)
+        }
+
+        $[inline(always)]
+        pub fn fetch_and(this, val: T, order: MemoryOrder = :SeqCst): T {
+            unsafe atomic_fetch_and_explicit(this.val.get(), val, order as u32)
+        }
+
+        $[inline(always)]
+        pub fn fetch_or(this, val: T, order: MemoryOrder = :SeqCst): T {
+            unsafe atomic_fetch_or_explicit(this.val.get(), val, order as u32)
+        }
+
+        $[inline(always)]
+        pub fn fetch_xor(this, val: T, order: MemoryOrder = :SeqCst): T {
+            unsafe atomic_fetch_xor_explicit(this.val.get(), val, order as u32)
+        }
     }
 
-    $[inline(always)]
-    pub fn fetch_sub(this, val: T, order: MemoryOrder = :SeqCst): T {
-        unsafe atomic_fetch_sub_explicit(this.val.get(), val, order as u32)
+    pub extension AtomicRawPtrImpl<T> for Atomic<^T> {
+        $[inline(always)]
+        pub fn fetch_add(this, offs: uint, order: MemoryOrder = :SeqCst): ^T {
+            unsafe atomic_fetch_add_explicit(this.val.get(), offs, order as u32)
+        }
+
+        $[inline(always)]
+        pub fn fetch_sub(this, offs: uint, order: MemoryOrder = :SeqCst): ^T {
+            unsafe atomic_fetch_sub_explicit(this.val.get(), offs, order as u32)
+        }
+
+        $[inline(always)]
+        pub fn fetch_add_signed(this, val: int, order: MemoryOrder = :SeqCst): ^T {
+            unsafe atomic_fetch_add_explicit(this.val.get(), val, order as u32)
+        }
+
+        $[inline(always)]
+        pub fn fetch_sub_signed(this, val: int, order: MemoryOrder = :SeqCst): ^T {
+            unsafe atomic_fetch_sub_explicit(this.val.get(), val, order as u32)
+        }
     }
 
-    $[inline(always)]
-    pub fn fetch_and(this, val: T, order: MemoryOrder = :SeqCst): T {
-        unsafe atomic_fetch_and_explicit(this.val.get(), val, order as u32)
-    }
+    pub extension AtomicRawMutPtrImpl<T> for Atomic<^mut T> {
+        $[inline(always)]
+        pub fn fetch_add(this, offs: uint, order: MemoryOrder = :SeqCst): ^mut T {
+            unsafe atomic_fetch_add_explicit(this.val.get(), offs, order as u32)
+        }
 
-    $[inline(always)]
-    pub fn fetch_or(this, val: T, order: MemoryOrder = :SeqCst): T {
-        unsafe atomic_fetch_or_explicit(this.val.get(), val, order as u32)
-    }
+        $[inline(always)]
+        pub fn fetch_sub(this, offs: uint, order: MemoryOrder = :SeqCst): ^mut T {
+            unsafe atomic_fetch_sub_explicit(this.val.get(), offs, order as u32)
+        }
 
-    $[inline(always)]
-    pub fn fetch_xor(this, val: T, order: MemoryOrder = :SeqCst): T {
-        unsafe atomic_fetch_xor_explicit(this.val.get(), val, order as u32)
+        $[inline(always)]
+        pub fn fetch_add_signed(this, val: int, order: MemoryOrder = :SeqCst): ^mut T {
+            unsafe atomic_fetch_add_explicit(this.val.get(), val, order as u32)
+        }
+
+        $[inline(always)]
+        pub fn fetch_sub_signed(this, val: int, order: MemoryOrder = :SeqCst): ^mut T {
+            unsafe atomic_fetch_sub_explicit(this.val.get(), val, order as u32)
+        }
     }
 }
 
-// pub type AtomicU8 = Atomic<u8>;
-// pub type AtomicU16 = Atomic<u16>;
-// pub type AtomicU32 = Atomic<u32>;
-// pub type AtomicU64 = Atomic<u64>;
-// pub type AtomicU128 = Atomic<u128>;
-// pub type AtomicUint = Atomic<uint>;
+pub type AtomicU8 = Atomic<u8>;
+pub type AtomicU16 = Atomic<u16>;
+pub type AtomicU32 = Atomic<u32>;
+pub type AtomicU64 = Atomic<u64>;
+pub type AtomicU128 = Atomic<u128>;
+pub type AtomicUint = Atomic<uint>;
 
-// pub type AtomicI8 = Atomic<i8>;
-// pub type AtomicI16 = Atomic<i16>;
-// pub type AtomicI32 = Atomic<i32>;
-// pub type AtomicI64 = Atomic<i64>;
-// pub type AtomicI128 = Atomic<i128>;
-// pub type AtomicInt = Atomic<int>;
+pub type AtomicI8 = Atomic<i8>;
+pub type AtomicI16 = Atomic<i16>;
+pub type AtomicI32 = Atomic<i32>;
+pub type AtomicI64 = Atomic<i64>;
+pub type AtomicI128 = Atomic<i128>;
+pub type AtomicInt = Atomic<int>;
+
+pub type AtomicPtr<T> = Atomic<*T>;
+pub type AtomicMutPtr<T> = Atomic<*mut T>;
+
+pub type AtomicRawPtr<T> = Atomic<^T>;
+pub type AtomicRawMutPtr<T> = Atomic<^mut T>;

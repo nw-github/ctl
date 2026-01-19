@@ -3,6 +3,8 @@ use std::ops::Eq;
 use std::range::RangeBounds;
 use std::fmt::*;
 use std::reflect::*;
+use super::cstring::CStr;
+// use super::CStr;
 
 $[lang(string)]
 pub struct str {
@@ -22,14 +24,6 @@ pub struct str {
     }
 
     pub unsafe fn from_utf8_unchecked(span: [u8..]): str => str(span:);
-
-    pub unsafe fn from_cstr(s: ^c_char): ?str {
-        str::from_utf8(unsafe Span::new(s.cast(), std::intrin::strlen(s)))
-    }
-
-    pub unsafe fn from_cstr_unchecked(s: ^c_char): str {
-        str(span: unsafe Span::new(s.cast(), std::intrin::strlen(s)))
-    }
 
     pub fn len(this): uint => this.span.len();
     pub fn is_empty(this): bool => this.span.is_empty();
@@ -72,7 +66,7 @@ pub struct str {
             nlen: rhs.span.len(),
         );
         if cmp is ?val {
-            return this.span.as_raw().cast::<void>().sub_ptr(val) as! uint
+            this.span.as_raw().cast::<void>().sub_ptr(val)
         }
     }
 
@@ -213,7 +207,7 @@ pub struct LossyChars {
 mod utf8 {
     // From the Rust standard library:
     // This is bit magic equivalent to: b < 128 or b >= 192
-    pub fn is_char_boundary(b: u8): bool => b as! i8 >= -0x40;
+    pub fn is_char_boundary(b: u8): bool => i8::from(b) >= -0x40;
 
     pub fn sequence_length(lead: u8): ?uint {
         if lead < 0x80 {
