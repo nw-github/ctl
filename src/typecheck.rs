@@ -5279,11 +5279,11 @@ impl TypeChecker<'_> {
 
         self.proj.trait_deps.insert(id, Dependencies::Resolving);
 
-        let mut deps = HashSet::new();
+        let mut deps = Vec::new();
         let mut failed = false;
         let ids: Vec<_> = self.proj.scopes.get(id).impls.iter_checked().map(|i| i.id).collect();
         for id in ids {
-            deps.insert(id);
+            deps.push(id);
             if self.check_trait_dependencies(id) {
                 failed = true;
             }

@@ -5,7 +5,6 @@ mod hash_arena;
 pub mod arena;
 
 pub use comptime_int::ComptimeInt;
-pub use dgraph::Dependencies;
-pub use dgraph::DependencyGraph;
+pub use dgraph::*;
 pub use hash::*;
 pub use hash_arena::HashArena;

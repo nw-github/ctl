@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::{
     Diagnostics, Span,
-    ds::{DependencyGraph, HashMap},
+    ds::{DependencyGraph, OrderedDependencyGraph, HashMap},
     format::{FmtTy, FmtUt},
     intern::{StrId, Strings},
     package::ConstraintArgs,
@@ -23,7 +23,7 @@ pub struct Project {
     pub test_runner: Option<FunctionId>,
     pub deps: DependencyGraph<TypeId>,
     pub static_deps: DependencyGraph<VariableId>,
-    pub trait_deps: DependencyGraph<UserTypeId>,
+    pub trait_deps: OrderedDependencyGraph<UserTypeId>,
     pub conf: Configuration,
     pub strings: Strings,
     pub autouse_tns: HashMap<StrId, Vis<TypeItem>>,
