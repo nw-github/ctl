@@ -36,5 +36,5 @@ mod prelude {
     $[feature(alloc)]
     pub use super::alloc::collections::*;
     $[feature(io)]
-    pub use super::io::{print, println, eprint, eprintln};
+    pub use super::io::{print, println, eprint, eprintln, dbg};
 }

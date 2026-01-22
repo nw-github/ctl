@@ -1,5 +1,6 @@
 use std::fmt;
 use std::deps::libc::posix;
+use std::panic::SourceLocation;
 
 pub struct Stdout {
     impl fmt::Write {
@@ -35,4 +36,9 @@ pub fn eprintln<T: fmt::Format>(args: T) {
 
 pub fn eprint<T: fmt::Format>(args: T) {
     fmt::write(&mut Stderr(), args);
+}
+
+pub fn dbg<T>(t: T, here: SourceLocation = SourceLocation::here()): T {
+    eprintln("dbg() at {here}:\n\t{t:?}");
+    t
 }

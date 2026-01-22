@@ -250,19 +250,6 @@ pub extension IntegralImpl<T: Integral> for T {
         this
     }
 
-    fn from_str_radix_common(chars: std::str::Chars, radix: u32): ?T {
-        mut value: ?T = null;
-        for ch in chars {
-            let digit = ch.to_digit(radix)?.try_cast::<T>()?;
-            if &mut value is ?value {
-                *value = value.checked_mul(radix.try_cast::<T>()?)?.checked_add(digit)?;
-            } else {
-                value = digit;
-            }
-        }
-        value
-    }
-
     /// Formats the digits of `this` into `buf` according to `radix`. Does not add a sign or prefix.
     ///
     /// `radix` must be between 2 and 36 inclusive
@@ -325,6 +312,44 @@ pub extension IntegralImpl<T: Integral> for T {
         let digits = unsafe str::from_utf8_unchecked(buf.subspan_unchecked(start..));
         f.pad_integral(negative: this < 0.cast(), digits:, prefix:);
     }
+
+    pub fn from_str_radix(s: str, radix: u32): ?T {
+        fn parse_digits<T: Integral>(chars: std::str::Chars, radix: u32): ?T {
+            mut value: ?T = null;
+            for ch in chars {
+                let digit = ch.to_digit(radix)?.try_cast::<T>()?;
+                if &mut value is ?value {
+                    *value = value.checked_mul(radix.try_cast::<T>()?)?.checked_add(digit)?;
+                } else {
+                    value = digit;
+                }
+            }
+            value
+        }
+
+        mut chars = s.chars();
+        if T::is_signed() {
+            let negative = match chars.next()? {
+                '-' => true,
+                '+' => false,
+                _ => {
+                    chars = s.chars();
+                    false
+                }
+            };
+
+            let val = parse_digits::<T>(chars, radix)?;
+            negative then val.checked_mul((-1).cast()) else val
+        } else {
+            if !(chars.next()? is '+') {
+                chars = s.chars();
+            }
+
+            parse_digits(chars, radix)
+        }
+    }
+
+    pub fn is_signed(): bool => T::min_value() < 0.cast();
 }
 
 pub extension SignedImpl<T: Signed> for T {
@@ -333,33 +358,9 @@ pub extension SignedImpl<T: Signed> for T {
 
     $[intrinsic(unary_op)]
     pub fn -(this): T => -this;
-
-    pub fn from_str_radix(s: str, radix: u32): ?T {
-        mut chars = s.chars();
-        let negative = match chars.next()? {
-            '-' => true,
-            '+' => false,
-            _ => {
-                chars = s.chars();
-                false
-            }
-        };
-
-        let val = T::from_str_radix_common(chars, radix)?;
-        negative then val.checked_mul((-1).cast()) else val
-    }
 }
 
 pub extension UnsignedImpl<T: Unsigned> for T {
-    pub fn from_str_radix(s: str, radix: u32): ?T {
-        mut chars = s.chars();
-        if !(chars.next()? is '+') {
-            chars = s.chars();
-        }
-
-        T::from_str_radix_common(chars, radix)
-    }
-
     // TODO: popcountg and friends only work for unsigned integers/BitInts under 128 bits, and are
     // only supported on later versions of clang & gcc. Generate a fallback for other types.
     //

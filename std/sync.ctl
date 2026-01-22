@@ -23,7 +23,7 @@ pub struct Atomic<T> {
         unsafe atomic_exchange_explicit(this.val.get(), val, order as u32)
     }
 
-    // On success, this function returns null. On error, it returns Some(actual value)
+    /// On success, this function returns Ok(previous value). On error, it returns Err(previous value)
     $[inline(always)]
     pub fn compare_exchange(
         this,
@@ -31,15 +31,18 @@ pub struct Atomic<T> {
         kw val: T,
         kw success: MemoryOrder = :SeqCst,
         kw failure: MemoryOrder = :SeqCst,
-    ): ?T {
-        if !unsafe atomic_compare_exchange_strong_explicit(
+    ): Result<T, T> {
+        if unsafe atomic_compare_exchange_strong_explicit(
             this.val.get(),
             &mut expected,
             val,
             success as u32,
             failure as u32,
         ) {
-            expected
+            // If it succeeds, expected was the previous value
+            Ok(expected)
+        } else {
+            Err(expected)
         }
     }
 
@@ -50,16 +53,34 @@ pub struct Atomic<T> {
         kw val: T,
         kw success: MemoryOrder = :SeqCst,
         kw failure: MemoryOrder = :SeqCst,
-    ): ?T {
-        if !unsafe atomic_compare_exchange_weak_explicit(
+    ): Result<T, T> {
+        if unsafe atomic_compare_exchange_weak_explicit(
             this.val.get(),
             &mut expected,
             val,
             success as u32,
             failure as u32,
         ) {
-            expected
+            Ok(expected)
+        } else {
+            Err(expected)
         }
+    }
+
+    pub fn fetch_update<F: Fn(T) => ?T>(
+        this,
+        f: F,
+        kw fetch: MemoryOrder = :SeqCst,
+        kw set: MemoryOrder = :SeqCst,
+    ): Result<T, T> {
+        mut prev = this.load(fetch);
+        while f(prev) is ?val {
+            match this.compare_exchange_weak(expected: prev, val:, success: set, failure: fetch) {
+                Ok(v) => return Ok(v),
+                Err(next) => prev = next,
+            }
+        }
+        Err(prev)
     }
 
     $[inline(always)]
@@ -98,6 +119,23 @@ pub mod ext {
 
         $[inline(always)]
         pub fn fetch_xor(this, val: T, order: MemoryOrder = :SeqCst): T {
+            unsafe atomic_fetch_xor_explicit(this.val.get(), val, order as u32)
+        }
+    }
+
+    pub extension AtomicBoolImpl for Atomic<bool> {
+        $[inline(always)]
+        pub fn fetch_and(this, val: bool, order: MemoryOrder = :SeqCst): bool {
+            unsafe atomic_fetch_and_explicit(this.val.get(), val, order as u32)
+        }
+
+        $[inline(always)]
+        pub fn fetch_or(this, val: bool, order: MemoryOrder = :SeqCst): bool {
+            unsafe atomic_fetch_or_explicit(this.val.get(), val, order as u32)
+        }
+
+        $[inline(always)]
+        pub fn fetch_xor(this, val: bool, order: MemoryOrder = :SeqCst): bool {
             unsafe atomic_fetch_xor_explicit(this.val.get(), val, order as u32)
         }
     }
@@ -161,8 +199,11 @@ pub type AtomicI64 = Atomic<i64>;
 pub type AtomicI128 = Atomic<i128>;
 pub type AtomicInt = Atomic<int>;
 
-pub type AtomicPtr<T> = Atomic<*T>;
-pub type AtomicMutPtr<T> = Atomic<*mut T>;
+pub type AtomicBool = Atomic<bool>;
+pub type AtomicChar = Atomic<char>;
 
-pub type AtomicRawPtr<T> = Atomic<^T>;
-pub type AtomicRawMutPtr<T> = Atomic<^mut T>;
+// pub type AtomicPtr<T> = Atomic<*T>;
+// pub type AtomicMutPtr<T> = Atomic<*mut T>;
+
+// pub type AtomicRawPtr<T> = Atomic<^T>;
+// pub type AtomicRawMutPtr<T> = Atomic<^mut T>;
