@@ -3,23 +3,24 @@ use std::reflect::{Integral, Signed, Unsigned};
 use super::ByteSpanExt;
 
 pub extension U8Impl for u8 {
-    pub fn is_ascii(my this): bool => this < 0b1000_0000;
-    pub fn is_ascii_whitespace(my this): bool => this is b'\t' | b'\n' | b'\x0C' | b'\r' | b' ';
-    pub fn is_ascii_upper(my this): bool => this is b'A'..=b'Z';
-    pub fn is_ascii_lower(my this): bool => this is b'a'..=b'z';
-    pub fn is_ascii_digit(my this): bool => this is b'0'..=b'9';
-    pub fn is_ascii_hexdigit(my this): bool => this is b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F';
+    pub fn is_ascii(my this): bool => (this as char).is_ascii();
+    pub fn is_ascii_whitespace(my this): bool => (this as char).is_ascii_whitespace();
+    pub fn is_ascii_upper(my this): bool => (this as char).is_ascii_upper();
+    pub fn is_ascii_lower(my this): bool => (this as char).is_ascii_lower();
+    pub fn is_ascii_alphabetic(my this): bool => (this as char).is_ascii_alphabetic();
+    pub fn is_ascii_alphanumeric(my this): bool => (this as char).is_ascii_alphanumeric();
+    pub fn is_ascii_digit(my this): bool => (this as char).is_ascii_digit();
+    pub fn is_ascii_hexdigit(my this): bool => (this as char).is_ascii_hexdigit();
 
     pub fn make_ascii_upper(mut this) => *this = this.to_ascii_upper();
     pub fn make_ascii_lower(mut this) => *this = this.to_ascii_upper();
 
-    pub fn to_ascii_upper(my this): u8 => this ^ (0b100000 * this.is_ascii_upper() as u8);
-    pub fn to_ascii_lower(my this): u8 => this ^ (0b100000 * this.is_ascii_lower() as u8);
+    pub fn to_ascii_upper(my this): u8 => this ^ (0b10_0000 * this.is_ascii_upper() as u8);
+    pub fn to_ascii_lower(my this): u8 => this ^ (0b10_0000 * this.is_ascii_lower() as u8);
 }
 
 mod gcc_intrin {
-    use super::Integral;
-    use super::Unsigned;
+    use super::{Integral, Unsigned};
 
     // TODO: compiler independent fallback for these functions
     $[c_macro]
@@ -169,7 +170,7 @@ pub extension IntegralImpl<T: Integral> for T {
     $[inline]
     pub fn overflowing_div(this, rhs: T): (T, bool) {
         // Only signed division can overflow
-        if T::min_value() != 0.cast() {
+        if T::is_signed() {
             if this == T::min_value() and rhs == (-1).cast() {
                 return (*this, true);
             }

@@ -64,6 +64,8 @@ pub extension CharImpl for char {
     pub fn is_ascii(my this): bool => (this as u32) < 0b1000_0000;
     pub fn is_ascii_upper(my this): bool => this is 'A'..='Z';
     pub fn is_ascii_lower(my this): bool => this is 'a'..='z';
+    pub fn is_ascii_alphabetic(my this): bool => this is 'a'..='z' | 'A'..='Z';
+    pub fn is_ascii_alphanumeric(my this): bool => this is 'a'..='z' | 'A'..='Z' | '0'..='9';
     pub fn is_ascii_digit(my this): bool => this is '0'..='9';
     pub fn is_ascii_hexdigit(my this): bool => this is '0'..='9' | 'a'..='f' | 'A'..='F';
     pub fn is_ascii_whitespace(my this): bool => this is '\t' | '\n' | '\x0C' | '\r' | ' ';
