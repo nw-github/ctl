@@ -2,13 +2,13 @@ use std::collections::HashSet;
 
 use crate::{
     Diagnostics, Span,
-    ds::{DependencyGraph, OrderedDependencyGraph, HashMap},
-    format::{FmtTy, FmtUt},
+    ds::{DependencyGraph, HashMap, OrderedDependencyGraph},
+    format::{FmtTr, FmtTy, FmtUt, FmtWta},
     intern::{StrId, Strings},
     package::ConstraintArgs,
-    sym::{FunctionId, ScopeId, Scopes, TypeItem, UserTypeId, ValueItem, VariableId, Vis},
+    sym::{FunctionId, ScopeId, Scopes, TraitId, TypeItem, ValueItem, VariableId, Vis},
     typecheck::{Completions, LspItem},
-    typeid::{GenericUserType, TypeId, Types},
+    typeid::{GenericTrait, GenericUserType, TypeId, Types, WithTypeArgs},
 };
 
 pub struct Project {
@@ -23,7 +23,7 @@ pub struct Project {
     pub test_runner: Option<FunctionId>,
     pub deps: DependencyGraph<TypeId>,
     pub static_deps: DependencyGraph<VariableId>,
-    pub trait_deps: OrderedDependencyGraph<UserTypeId>,
+    pub trait_deps: OrderedDependencyGraph<TraitId>,
     pub conf: Configuration,
     pub strings: Strings,
     pub autouse_tns: HashMap<StrId, Vis<TypeItem>>,
@@ -56,8 +56,16 @@ impl Project {
         FmtTy::new(ty, self)
     }
 
-    pub fn fmt_ut<'b>(&self, ty: &'b GenericUserType) -> FmtUt<'b, '_> {
+    pub fn fmt_ut<'a>(&self, ty: &'a GenericUserType) -> FmtUt<'a, '_> {
         FmtUt::new(ty, self)
+    }
+
+    pub fn fmt_tr<'a>(&self, ty: &'a GenericTrait) -> FmtTr<'a, '_> {
+        FmtTr::new(ty, self)
+    }
+
+    pub fn dbg_wta<'a, T>(&self, wta: &'a WithTypeArgs<T>) -> FmtWta<'a, '_, T> {
+        FmtWta::new(wta, self)
     }
 
     pub fn str(&self, id: StrId) -> &str {

@@ -5,8 +5,8 @@ use crate::{
     },
     intern::Strings,
     project::Project,
-    sym::LangType,
-    typeid::{GenericUserType, Type, TypeId},
+    sym::{ItemId, LangTrait, LangType},
+    typeid::{GenericTrait, GenericUserType, Type, TypeId, WithTypeArgs},
 };
 
 #[derive(Clone, Copy, derive_more::Constructor)]
@@ -36,8 +36,8 @@ impl std::fmt::Display for FmtTy<'_> {
             &Type::MutPtr(id) => write!(f, "*mut {}", p.fmt_ty(id)),
             &Type::RawPtr(id) => write!(f, "^{}", p.fmt_ty(id)),
             &Type::RawMutPtr(id) => write!(f, "^mut {}", p.fmt_ty(id)),
-            Type::DynPtr(id) => write!(f, "*dyn {}", p.fmt_ut(id)),
-            Type::DynMutPtr(id) => write!(f, "*dyn mut {}", p.fmt_ut(id)),
+            Type::DynPtr(id) => write!(f, "*dyn {}", p.fmt_tr(id)),
+            Type::DynMutPtr(id) => write!(f, "*dyn mut {}", p.fmt_tr(id)),
             Type::User(ut) => write!(f, "{}", p.fmt_ut(ut)),
             Type::FnPtr(func) => {
                 crate::write_if!(func.is_extern, f, "extern ");
@@ -99,12 +99,11 @@ impl std::fmt::Display for FmtUt<'_, '_> {
                 write!(f, ")")
             }
             crate::sym::UserTypeKind::Closure => {
-                let tr = ut_data
-                    .impls
-                    .iter_checked()
-                    .find(|tr| p.scopes.get(tr.id).attrs.lang == Some(LangType::OpFn))
+                let imp = ut_data
+                    .iter_impls(&p.scopes, false)
+                    .find(|imp| p.scopes.get(imp.tr.id).attrs.lang == Some(LangTrait::OpFn))
                     .unwrap();
-                write!(f, "{{closure {}}}", p.fmt_ut(tr))
+                write!(f, "{{closure {}}}", p.fmt_tr(&imp.tr))
             }
             _ => {
                 let args = &ut.ty_args;
@@ -123,14 +122,6 @@ impl std::fmt::Display for FmtUt<'_, '_> {
                 }
 
                 write!(f, "{}", p.strings.resolve(&ut_data.name.data))?;
-                if ut_data.attrs.lang == Some(LangType::OpFn)
-                    && p.types[args[0]]
-                        .as_user()
-                        .is_some_and(|ut| p.scopes.get(ut.id).kind.is_tuple())
-                {
-                    return write!(f, "{} => {}", p.fmt_ty(args[0]), p.fmt_ty(args[1]));
-                }
-
                 if !args.is_empty() {
                     write!(f, "<")?;
                     for (i, concrete) in args.values().enumerate() {
@@ -144,6 +135,68 @@ impl std::fmt::Display for FmtUt<'_, '_> {
                 Ok(())
             }
         }
+    }
+}
+
+#[derive(Clone, Copy, derive_more::Constructor)]
+pub struct FmtTr<'a, 'b> {
+    tr: &'a GenericTrait,
+    p: &'b Project,
+}
+
+impl std::fmt::Display for FmtTr<'_, '_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let p = self.p;
+        let tr_data = p.scopes.get(self.tr.id);
+        let args = &self.tr.ty_args;
+
+        write!(f, "{}", p.strings.resolve(&tr_data.name.data))?;
+        if tr_data.attrs.lang == Some(LangTrait::OpFn)
+            && p.types[args[0]].as_user().is_some_and(|ut| p.scopes.get(ut.id).kind.is_tuple())
+        {
+            return write!(f, "{} => {}", p.fmt_ty(args[0]), p.fmt_ty(args[1]));
+        }
+
+        if !args.is_empty() {
+            write!(f, "<")?;
+            for (i, concrete) in args.values().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}", p.fmt_ty(*concrete))?;
+            }
+            write!(f, ">")?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, derive_more::Constructor)]
+pub struct FmtWta<'a, 'b, T> {
+    wta: &'a WithTypeArgs<T>,
+    p: &'b Project,
+}
+
+impl<T: ItemId> std::fmt::Display for FmtWta<'_, '_, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let p = self.p;
+        write!(f, "{}", p.str(self.wta.id.name(&p.scopes).data))?;
+        if !self.wta.ty_args.is_empty() {
+            write!(f, "<")?;
+            for (i, (tp, concrete)) in self.wta.ty_args.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+
+                if f.alternate() {
+                    write!(f, "{}", p.fmt_ty(*concrete))?;
+                } else {
+                    write!(f, "{} = {}", p.str(p.scopes.get(*tp).name.data), p.fmt_ty(*concrete))?;
+                }
+            }
+            write!(f, ">")?;
+        }
+        Ok(())
     }
 }
 

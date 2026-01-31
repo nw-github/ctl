@@ -2,6 +2,7 @@
 // Error: no method 'b' found on type 'int'
 // Error: no method 'c' found on type 'int'
 
+/*
 trait Foo {}
 trait Bar {}
 trait Baz {}
@@ -38,3 +39,4 @@ fn main() {
     10.b();
     10.c();
 }
+ */

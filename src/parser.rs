@@ -848,10 +848,7 @@ impl<'a> Parser<'a> {
                 self.invalid_here(bang);
 
                 let ty = self.type_hint();
-                self.arena.expr(
-                    left.span.extended_to(ty.span),
-                    ExprData::As { expr: left, ty },
-                )
+                self.arena.expr(left.span.extended_to(ty.span), ExprData::As { expr: left, ty })
             }
             Token::Dot => {
                 let token = self.peek();
@@ -1928,11 +1925,11 @@ impl<'a> Parser<'a> {
         public: bool,
         span: Span,
         is_unsafe: bool,
-        sealed: bool,
+        is_sealed: bool,
     ) -> Located<StmtData> {
         let name = self.expect_ident("expected name");
         let type_params = self.type_params();
-        let impls = self.trait_impls();
+        let super_traits = self.trait_impls();
         self.expect(Token::LCurly);
 
         let mut functions = Vec::new();
@@ -1968,11 +1965,11 @@ impl<'a> Parser<'a> {
             span,
             StmtData::Trait {
                 public,
-                sealed,
+                is_sealed,
                 is_unsafe,
                 name,
                 type_params,
-                impls,
+                super_traits,
                 functions,
                 assoc_types,
             },

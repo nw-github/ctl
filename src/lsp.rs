@@ -262,7 +262,7 @@ impl LanguageServer for LspBackend {
                 &LspItem::Var(id) => scopes.get(id).name.span,
                 &LspItem::Type(id) => scopes.get(id).name.span,
                 &LspItem::Module(id, _) => scopes[id].kind.name(scopes).unwrap().span,
-                &LspItem::Fn(id, _) => scopes.get(id).name.span,
+                &LspItem::Fn(id) => scopes.get(id).name.span,
                 &LspItem::Alias(id) => scopes.get(id).name.span,
                 LspItem::Property(_, id, member) => {
                     let ut = scopes.get(*id);
@@ -324,8 +324,21 @@ impl LanguageServer for LspBackend {
         self.find_lsp_item(uri, pos, async |item, proj| {
             let str = match *item {
                 LspItem::Var(id) | LspItem::FnParamLabel(id, _) => Some(visualize_var(id, proj)),
-                LspItem::Fn(id, _) => Some(visualize_func(id, false, proj)),
+                LspItem::Fn(id) => Some(visualize_func(id, false, proj)),
                 LspItem::Type(id) => Some(visualize_type(id, proj)),
+                LspItem::Trait(id) => {
+                    let tr_data = proj.scopes.get(id);
+                    let mut res = String::new();
+                    res += &visualize_location(tr_data.scope, proj);
+                    if tr_data.public {
+                        res += "pub ";
+                    }
+
+                    write_de!(res, "trait {}", proj.strings.resolve(&tr_data.name.data));
+                    visualize_type_params(&mut res, &tr_data.type_params, proj);
+
+                    Some(res)
+                }
                 LspItem::Alias(id) => {
                     let alias = proj.scopes.get(id);
                     let mut str = String::new();
@@ -756,9 +769,9 @@ impl LspBackend {
                     if lhs == rhs && (!is_super || !rename) => {}
 
                 (LspItem::Type(lhs), LspItem::Type(rhs)) if lhs == rhs => {}
-                (LspItem::Fn(lhs, _), LspItem::Fn(rhs, _)) if lhs == rhs => {}
-                (LspItem::Type(lhs), LspItem::Fn(rhs, _)) if is_constructor_for(rhs, lhs) => {}
-                (LspItem::Fn(lhs, _), LspItem::Type(rhs)) if is_constructor_for(lhs, rhs) => {}
+                (LspItem::Fn(lhs), LspItem::Fn(rhs)) if lhs == rhs => {}
+                (LspItem::Type(lhs), LspItem::Fn(rhs)) if is_constructor_for(rhs, lhs) => {}
+                (LspItem::Fn(lhs), LspItem::Type(rhs)) if is_constructor_for(lhs, rhs) => {}
 
                 (LspItem::Alias(lhs), LspItem::Alias(rhs)) if lhs == rhs => {}
                 (LspItem::Var(lhs), LspItem::Var(rhs)) if lhs == rhs => {}
@@ -901,7 +914,7 @@ fn get_semantic_token(
         LspItem::Type(_) => token::TYPE,
         LspItem::Alias(_) => token::TYPE,
         LspItem::BuiltinType(_) => token::TYPE,
-        &LspItem::Fn(id, _) => {
+        &LspItem::Fn(id) => {
             if let Some(id) = scopes.get(id).constructor {
                 if scopes.get(id).kind.is_union() { token::ENUM_MEMBER } else { token::TYPE }
             } else if scopes
@@ -977,60 +990,62 @@ fn get_document_symbols(proj: &Project, src: &str, file: FileId) -> Vec<Document
     };
 
     let mut result = vec![];
-    for (_, ut) in proj.scopes.types() {
-        if !valid_name(ut.name) {
-            continue;
-        }
+    /*
+       for (_, ut) in proj.scopes.types() {
+           if !valid_name(ut.name) {
+               continue;
+           }
 
-        let kind = match &ut.kind {
-            UserTypeKind::Template => continue,
-            UserTypeKind::Union(_) => SymbolKind::ENUM,
-            UserTypeKind::Trait { .. } => SymbolKind::INTERFACE,
-            _ => SymbolKind::STRUCT,
-        };
+           let kind = match &ut.kind {
+               UserTypeKind::Template => continue,
+               UserTypeKind::Union(_) => SymbolKind::ENUM,
+               UserTypeKind::Trait { .. } => SymbolKind::INTERFACE,
+               _ => SymbolKind::STRUCT,
+           };
 
-        let mut children = vec![];
-        for id in ut.fns.iter() {
-            if !valid_name(proj.scopes.get(**id).name) {
-                continue;
-            }
+           let mut children = vec![];
+           for id in ut.fns.iter() {
+               if !valid_name(proj.scopes.get(**id).name) {
+                   continue;
+               }
 
-            children.push(func_symbol(proj.scopes.get(**id)));
-        }
+               children.push(func_symbol(proj.scopes.get(**id)));
+           }
 
-        for (name, member) in ut.members.iter() {
-            if !valid_name(Located::new(member.span, *name)) {
-                continue;
-            }
+           for (name, member) in ut.members.iter() {
+               if !valid_name(Located::new(member.span, *name)) {
+                   continue;
+               }
 
-            let range = Diagnostics::get_span_range(src, member.span, OffsetMode::Utf16);
-            children.push(DocumentSymbol {
-                name: proj.strings.resolve(name).into(),
-                kind: SymbolKind::FIELD,
-                range,
-                selection_range: range,
-                children: None,
-                detail: None,
-                tags: None,
-                #[allow(deprecated)]
-                deprecated: None,
-            });
-        }
+               let range = Diagnostics::get_span_range(src, member.span, OffsetMode::Utf16);
+               children.push(DocumentSymbol {
+                   name: proj.strings.resolve(name).into(),
+                   kind: SymbolKind::FIELD,
+                   range,
+                   selection_range: range,
+                   children: None,
+                   detail: None,
+                   tags: None,
+                   #[allow(deprecated)]
+                   deprecated: None,
+               });
+           }
 
-        let range = get_range(ut.name.span, ut.full_span);
-        let selection_range = Diagnostics::get_span_range(src, ut.name.span, OffsetMode::Utf16);
-        result.push(DocumentSymbol {
-            name: proj.strings.resolve(&ut.name.data).into(),
-            kind,
-            range,
-            selection_range,
-            children: (!children.is_empty()).then_some(children),
-            detail: None,
-            tags: None,
-            #[allow(deprecated)]
-            deprecated: None,
-        });
-    }
+           let range = get_range(ut.name.span, ut.full_span);
+           let selection_range = Diagnostics::get_span_range(src, ut.name.span, OffsetMode::Utf16);
+           result.push(DocumentSymbol {
+               name: proj.strings.resolve(&ut.name.data).into(),
+               kind,
+               range,
+               selection_range,
+               children: (!children.is_empty()).then_some(children),
+               detail: None,
+               tags: None,
+               #[allow(deprecated)]
+               deprecated: None,
+           });
+       }
+    */
 
     for (_, func) in proj.scopes.functions() {
         if !valid_name(func.name)
@@ -1085,10 +1100,28 @@ fn get_completion(proj: &Project, item: &LspItem, method: bool) -> Option<Comple
                 ..Default::default()
             }
         }
-        &LspItem::Fn(id, owner) => {
+        &LspItem::Fn(id) => {
             let f = scopes.get(id);
-            let empty_variant =
-                owner.is_some_and(|id| scopes.get(id).is_empty_variant(f.name.data));
+            let mut owner = &scopes[f.scope];
+            let mut detail = None;
+            if let Some(imp_id) = owner.kind.as_impl() {
+                owner = &scopes[owner.parent.unwrap()];
+
+                if let Some(imp) = scopes.impls.get(*imp_id).as_checked() {
+                    detail = Some(format!(" (as {})", proj.fmt_tr(&imp.tr)));
+                }
+            }
+
+            let mut empty_variant = false;
+            if let Some(&id) = owner.kind.as_user_type() {
+                if scopes.get(id).kind.is_extension() && detail.is_none() {
+                    detail =
+                        Some(format!(" (from {})", strings.resolve(&scopes.get(id).name.data)));
+                }
+
+                empty_variant = scopes.get(id).is_empty_variant(f.name.data);
+            }
+
             let name = strings.resolve(&f.name.data);
             let insert_text = (!empty_variant).then(|| {
                 let mut text = format!("{name}(");
@@ -1115,16 +1148,7 @@ fn get_completion(proj: &Project, item: &LspItem, method: bool) -> Option<Comple
             CompletionItem {
                 label: name.into(),
                 label_details: Some(CompletionItemLabelDetails {
-                    detail: owner.and_then(|owner| match &scopes.get(owner).kind {
-                        UserTypeKind::Extension(_) => Some(format!(
-                            " (from {})",
-                            strings.resolve(&scopes.get(owner).name.data)
-                        )),
-                        UserTypeKind::Trait { .. } => {
-                            Some(format!(" (as {})", strings.resolve(&scopes.get(owner).name.data)))
-                        }
-                        _ => None,
-                    }),
+                    detail,
                     description: desc.clone().into(),
                 }),
                 kind: Some(if f.constructor.is_some_and(|id| scopes.get(id).kind.is_union()) {
@@ -1149,10 +1173,23 @@ fn get_completion(proj: &Project, item: &LspItem, method: bool) -> Option<Comple
                 label: name.clone(),
                 kind: Some(match ut.kind {
                     UserTypeKind::Union(_) => CompletionItemKind::ENUM,
-                    UserTypeKind::Trait { .. } => CompletionItemKind::INTERFACE,
                     UserTypeKind::Template => CompletionItemKind::TYPE_PARAMETER,
                     _ => CompletionItemKind::STRUCT,
                 }),
+                label_details: Some(CompletionItemLabelDetails {
+                    detail: None,
+                    description: Some(name.clone()),
+                }),
+                detail: Some(name),
+                ..Default::default()
+            }
+        }
+        &LspItem::Trait(id) => {
+            let ut = scopes.get(id);
+            let name = strings.resolve(&ut.name.data).to_string();
+            CompletionItem {
+                label: name.clone(),
+                kind: Some(CompletionItemKind::INTERFACE),
                 label_details: Some(CompletionItemLabelDetails {
                     detail: None,
                     description: Some(name.clone()),
@@ -1449,19 +1486,15 @@ fn visualize_type(id: UserTypeId, proj: &Project) -> String {
         }
         UserTypeKind::Template => {
             res += proj.strings.resolve(&ut.name.data);
-            for (i, tr) in ut.impls.iter_checked().enumerate() {
+            for (i, imp) in ut.iter_impls(&proj.scopes, false).enumerate() {
                 if i > 0 {
                     res += " + ";
                 } else {
                     res += ": ";
                 }
 
-                write_de!(res, "{}", proj.fmt_ut(tr));
+                write_de!(res, "{}", proj.fmt_tr(&imp.tr));
             }
-        }
-        UserTypeKind::Trait { .. } => {
-            write_de!(res, "trait {}", proj.strings.resolve(&ut.name.data));
-            visualize_type_params(&mut res, &ut.type_params, proj);
         }
         &UserTypeKind::Extension(ty) => {
             write_de!(res, "extension {}", proj.strings.resolve(&ut.name.data));

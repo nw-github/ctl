@@ -255,6 +255,38 @@ impl UserTypeAttrs {
     }
 }
 
+#[derive(Default)]
+pub struct TraitAttrs {
+    pub lang: Option<LangTrait>,
+}
+
+impl TraitAttrs {
+    pub fn relevant(attrs: &Attributes, proj: &mut Project) -> Self {
+        let mut this = Self::default();
+        for attr in attrs.iter() {
+            match attr.name.data {
+                AN::Str(id @ Strings::ATTR_LANG) => {
+                    let Some(arg) = one_str_arg_l(attr, id, proj) else {
+                        continue;
+                    };
+
+                    let Some(ty) = LangTrait::from_str(proj.str(arg.data)) else {
+                        proj.diag.report(Error::new(
+                            format!("unknown lang trait '{}'", proj.str(arg.data)),
+                            arg.span,
+                        ));
+                        continue;
+                    };
+
+                    this.lang = Some(ty);
+                }
+                _ => unrecognized(attr, proj),
+            }
+        }
+        this
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LangType {
     Span,
@@ -277,6 +309,45 @@ pub enum LangType {
     RangeFrom,
     RangeInclusive,
 
+    FallbackDebug,
+}
+
+impl LangType {
+    fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "span" => Some(Self::Span),
+            "span_mut" => Some(Self::SpanMut),
+            "vec" => Some(Self::Vec),
+            "set" => Some(Self::Set),
+            "map" => Some(Self::Map),
+            "string" => Some(Self::String),
+            "option" => Some(Self::Option),
+            "fmt_arg" => Some(Self::FmtArg),
+            "fmt_args" => Some(Self::FmtArgs),
+            "test_info" => Some(Self::TestInfo),
+            "mutable" => Some(Self::Mutable),
+            "ordering" => Some(Self::Ordering),
+            "range" => Some(Self::Range),
+            "range_full" => Some(Self::RangeFull),
+            "range_to" => Some(Self::RangeTo),
+            "range_to_inclusive" => Some(Self::RangeToInclusive),
+            "range_from" => Some(Self::RangeFrom),
+            "range_inclusive" => Some(Self::RangeInclusive),
+            "fallback_debug" => Some(Self::FallbackDebug),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for LangType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LangTrait {
     Numeric,
     Integral,
     Signed,
@@ -318,31 +389,11 @@ pub enum LangType {
     OpDec,
     OpInc,
     OpFn,
-
-    FallbackDebug,
 }
 
-impl LangType {
-    fn from_str(s: &str) -> Option<LangType> {
+impl LangTrait {
+    fn from_str(s: &str) -> Option<Self> {
         match s {
-            "span" => Some(Self::Span),
-            "span_mut" => Some(Self::SpanMut),
-            "vec" => Some(Self::Vec),
-            "set" => Some(Self::Set),
-            "map" => Some(Self::Map),
-            "string" => Some(Self::String),
-            "option" => Some(Self::Option),
-            "fmt_arg" => Some(Self::FmtArg),
-            "fmt_args" => Some(Self::FmtArgs),
-            "test_info" => Some(Self::TestInfo),
-            "mutable" => Some(Self::Mutable),
-            "ordering" => Some(Self::Ordering),
-            "range" => Some(Self::Range),
-            "range_full" => Some(Self::RangeFull),
-            "range_to" => Some(Self::RangeTo),
-            "range_to_inclusive" => Some(Self::RangeToInclusive),
-            "range_from" => Some(Self::RangeFrom),
-            "range_inclusive" => Some(Self::RangeInclusive),
             "numeric" => Some(Self::Numeric),
             "integral" => Some(Self::Integral),
             "signed" => Some(Self::Signed),
@@ -383,13 +434,12 @@ impl LangType {
             "op_dec" => Some(Self::OpDec),
             "op_inc" => Some(Self::OpInc),
             "op_fn" => Some(Self::OpFn),
-            "fallback_debug" => Some(Self::FallbackDebug),
             _ => None,
         }
     }
 }
 
-impl std::fmt::Display for LangType {
+impl std::fmt::Display for LangTrait {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{self:?}")
     }

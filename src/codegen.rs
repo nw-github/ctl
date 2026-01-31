@@ -10,8 +10,8 @@ use crate::{
     sym::*,
     typecheck::{ExtensionCache, MemberFn, MemberFnType, SharedStuff},
     typeid::{
-        BitSizeResult, FnPtr, GenericFn, GenericTrait, GenericUserType, Integer,
-        LayoutItemKind, Type, TypeArgs, TypeId, Types,
+        BitSizeResult, FnPtr, GenericFn, GenericTrait, GenericUserType, Integer, LayoutItemKind,
+        Type, TypeArgs, TypeId, Types,
     },
     write_de, writeln_de,
 };
@@ -112,7 +112,7 @@ impl TypeGen {
         writeln_de!(buffer, ");");
     }
 
-    fn gen_vtable_info(buf: &mut Buffer, tr: UserTypeId) {
+    fn gen_vtable_info(buf: &mut Buffer, tr: TraitId) {
         let Some(Dependencies::Resolved(deps)) = buf.1.trait_deps.get(&tr) else {
             panic!(
                 "ICE: Dyn pointer for trait '{}' has invalid dependencies",
@@ -130,7 +130,7 @@ impl TypeGen {
 
             for f in vtable_methods(&buf.1.scopes, &buf.1.types, id) {
                 buf.emit_vtable_prefix(tr);
-                buf.emit_vtable_fn_name(f.id);
+                buf.emit_vtable_fn_name(f);
                 write_de!(buf, "={offset},");
                 offset += 1;
             }
@@ -360,11 +360,15 @@ struct State {
     tmpvar: usize,
     caller: ScopeId,
     emitted_names: HashMap<StrId, VariableId>,
+    uniq: Vec<(UserTypeId, TypeId)>,
 }
 
 impl State {
     pub fn new(func: GenericFn, caller: ScopeId) -> Self {
-        Self { func, caller, tmpvar: 0, emitted_names: Default::default() }
+        let mut uniq: Vec<_> = func.ty_args.iter().map(|v| (*v.0, *v.1)).collect();
+        uniq.sort_by_key(|k| k.0);
+
+        Self { func, caller, tmpvar: 0, emitted_names: Default::default(), uniq }
     }
 
     pub fn in_body_scope(func: GenericFn, scopes: &Scopes) -> Self {
@@ -393,13 +397,14 @@ impl State {
 
 impl std::hash::Hash for State {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.func.hash(state);
+        self.func.id.hash(state);
+        self.uniq.hash(state);
     }
 }
 
 impl PartialEq for State {
     fn eq(&self, other: &Self) -> bool {
-        self.func == other.func
+        self.func.id == other.func.id && self.uniq == other.uniq
     }
 }
 
@@ -459,11 +464,11 @@ impl<'a> Buffer<'a> {
             }
             Type::DynPtr(tr) => {
                 self.emit("d");
-                self.emit_type_name(tr);
+                self.emit_trait_name(tr);
             }
             Type::DynMutPtr(tr) => {
                 self.emit("D");
-                self.emit_type_name(tr);
+                self.emit_trait_name(tr);
             }
             Type::FnPtr(f) => self.emit_fnptr_name(f),
             Type::Fn(f) => self.emit_fn_type_name(f),
@@ -557,6 +562,11 @@ impl<'a> Buffer<'a> {
         }
     }
 
+    fn emit_trait_name(&mut self, tr: &GenericTrait) {
+        write_de!(self, "T");
+        self.scope_emit_mangled_name(self.1.scopes.get(tr.id).body_scope, &tr.ty_args);
+    }
+
     fn emit_array_struct_name(&mut self, ty: TypeId, size: usize) {
         write_de!(self, "A{size}");
         self.emit_mangled_name(ty);
@@ -581,7 +591,7 @@ impl<'a> Buffer<'a> {
         }
     }
 
-    fn emit_vtable_prefix(&mut self, tr: UserTypeId) {
+    fn emit_vtable_prefix(&mut self, tr: TraitId) {
         self.emit(if self.1.conf.build.minify { "v" } else { "$vtable_" });
         if self.1.conf.build.minify {
             write_de!(self, "t{tr}");
@@ -627,24 +637,12 @@ impl<'a> Buffer<'a> {
 
     fn scope_emit_mangled_name(&mut self, id: ScopeId, ty_args: &TypeArgs) {
         let mut parts = vec![];
-        let mut imp = None;
         for (_id, scope) in self.1.scopes.walk(id) {
-            match &scope.kind {
-                &ScopeKind::Function(id) => parts.push(self.raw_get_mangled_name(id, ty_args)),
-                &ScopeKind::UserType(id) => {
-                    let ut = self.1.scopes.get(id);
-                    if let Some(imp) = imp.take().and_then(|i| ut.impls.get_checked(i)) {
-                        let name = Buffer::format(self.1, |name| {
-                            name.emit_type_name(&imp.with_templates(&self.1.types, ty_args));
-                        });
-                        parts.push(Buffer::format(self.1, |data| {
-                            write_de!(data, "I");
-                            data.write_len_prefixed(&name);
-                        }));
-                    } else if let Some(this) =
-                        ut.kind.as_trait().and_then(|(this, _, _)| ty_args.get(this))
-                    {
-                        let name = Buffer::format(self.1, |b| b.emit_mangled_name(*this));
+            match scope.kind {
+                ScopeKind::Function(id) => parts.push(self.raw_get_mangled_name(id, ty_args)),
+                ScopeKind::Trait(id) => {
+                    if let Some(&this) = ty_args.get(&self.1.scopes.get(id).this) {
+                        let name = Buffer::format(self.1, |b| b.emit_mangled_name(this));
                         parts.push(Buffer::format(self.1, |data| {
                             write_de!(data, "S");
                             data.write_len_prefixed(&name);
@@ -652,7 +650,17 @@ impl<'a> Buffer<'a> {
                     }
                     parts.push(self.raw_get_mangled_name(id, ty_args));
                 }
-                &ScopeKind::Impl(i) => imp = Some(i),
+                ScopeKind::UserType(id) => parts.push(self.raw_get_mangled_name(id, ty_args)),
+                ScopeKind::Impl(id) => {
+                    let imp = &self.1.scopes.impls.get(id).as_checked().unwrap().tr;
+                    let name = Buffer::format(self.1, |name| {
+                        name.emit_trait_name(&imp.with_templates(&self.1.types, ty_args));
+                    });
+                    parts.push(Buffer::format(self.1, |data| {
+                        write_de!(data, "I");
+                        data.write_len_prefixed(&name);
+                    }));
+                }
                 ScopeKind::Module(name) => {
                     parts.push(Buffer::format(self.1, |data| {
                         data.write_len_prefixed(self.1.str(name.data));
@@ -1024,12 +1032,12 @@ impl<'a> Codegen<'a> {
                 for f in vtable_methods(&self.proj.scopes, &self.proj.types, tr.id) {
                     write_de!(self.buffer, "[");
                     self.buffer.emit_vtable_prefix(vtable.tr.id);
-                    self.buffer.emit_vtable_fn_name(f.id);
+                    self.buffer.emit_vtable_fn_name(f);
                     write_de!(self.buffer, "]=(VirtualFn)");
                     let func = self.find_implementation(
                         vtable.ty,
                         &tr,
-                        self.proj.scopes.get(f.id).name.data,
+                        self.proj.scopes.get(f).name.data,
                         vtable.scope,
                         |_, _| Default::default(),
                     );
@@ -1864,16 +1872,14 @@ impl<'a> Codegen<'a> {
                     .unwrap()
                     .with_templates(&self.proj.types, &state.func.ty_args);
                 // TODO: if the function pointer is extern, use/generate a wrapper
-                let f = self
+                let fid = self
                     .proj
                     .scopes
                     .get(closure.id)
-                    .fns
-                    .iter()
-                    .find(|f| self.proj.scopes.get(f.id).name.data == Strings::FN_CLOSURE_DO_INVOKE)
+                    .find_associated_fn(&self.proj.scopes, Strings::FN_CLOSURE_DO_INVOKE)
                     .unwrap();
 
-                let mut func = GenericFn::new(f.id, TypeArgs::default());
+                let mut func = GenericFn::new(fid, TypeArgs::default());
                 func.fill_templates(&self.proj.types, &closure.ty_args);
                 self.buffer.emit_fn_name(&func);
                 self.funcs.insert(State::new(func, scope));
@@ -2784,9 +2790,9 @@ impl<'a> Codegen<'a> {
             }
             Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
                 if self.proj.types[arg_ty].is_dyn_mut_ptr() {
-                    write_str_fmt!("*dyn mut {} {{self: ", self.proj.fmt_ut(tr));
+                    write_str_fmt!("*dyn mut {} {{self: ", self.proj.fmt_tr(tr));
                 } else {
-                    write_str_fmt!("*dyn {} {{self: ", self.proj.fmt_ut(tr));
+                    write_str_fmt!("*dyn {} {{self: ", self.proj.fmt_tr(tr));
                 }
 
                 let ty = self.proj.types.insert(Type::RawPtr(TypeId::VOID));
@@ -2824,7 +2830,7 @@ impl<'a> Codegen<'a> {
         if !self.proj.conf.build.minify {
             write_de!(self.buffer, "_");
         }
-        self.buffer.emit_type_name(&vtable.tr);
+        self.buffer.emit_trait_name(&vtable.tr);
         self.buffer.emit(if self.proj.conf.build.minify { "v" } else { "_$vtable" });
         write_de!(self.buffer, "{}", vtable.scope);
     }
@@ -3682,7 +3688,7 @@ impl<'a> Codegen<'a> {
             panic!(
                 "searching from scope: '{}', cannot find implementation for method '{}::{}' for type '{}'",
                 full_name_pretty(self.proj, scope, false),
-                self.proj.fmt_ut(tr),
+                self.proj.fmt_tr(tr),
                 self.proj.str(method),
                 self.proj.fmt_ty(inst)
             )
@@ -3693,7 +3699,7 @@ impl<'a> Codegen<'a> {
             panic!(
                 "searching from scope: '{}', get_member_fn_ex picked invalid function for implementation for method '{}::{}' for type '{}' (picked {}::{})",
                 full_name_pretty(self.proj, scope, false),
-                self.proj.fmt_ut(tr),
+                self.proj.fmt_tr(tr),
                 self.proj.str(method),
                 self.proj.fmt_ty(inst),
                 full_name_pretty(self.proj, picked.scope, false),
@@ -3754,12 +3760,12 @@ impl<'a> Codegen<'a> {
         scope: ScopeId,
     ) -> BuiltinDbgArgs {
         let dbg_fn = self.proj.strings.get("dbg").unwrap();
-        let dbg = self.proj.scopes.lang_types[&LangType::Debug];
-        let dbg_tr = GenericUserType::new(dbg, TypeArgs::default());
+        let dbg = self.proj.scopes.lang_traits[&LangTrait::Debug];
+        let dbg_tr = GenericTrait::new(dbg, TypeArgs::default());
 
         let write_str_fn = self.proj.strings.get("write_str").unwrap();
-        let write = self.proj.scopes.lang_types[&LangType::Write];
-        let write_tr = GenericUserType::new(write, TypeArgs::default());
+        let write = self.proj.scopes.lang_traits[&LangTrait::Write];
+        let write_tr = GenericTrait::new(write, TypeArgs::default());
 
         let fallback_dbg_ext = self.proj.scopes.lang_types.get(&LangType::FallbackDebug).copied();
 
@@ -3852,8 +3858,6 @@ impl SharedStuff for Codegen<'_> {
         *self.proj.scopes.get(id).kind.as_extension().unwrap()
     }
 
-    fn do_resolve_impls(&mut self, _: UserTypeId) {}
-
     fn proj(&self) -> &Project {
         self.proj
     }
@@ -3895,20 +3899,22 @@ struct BitfieldAccess {
 }
 
 struct BuiltinDbgArgs {
-    dbg_tr: GenericUserType,
+    dbg_tr: GenericTrait,
     dbg_fn: StrId,
     formatter_write_str: String,
     fallback_dbg_ext: Option<ExtensionId>,
 }
 
-fn vtable_methods(scopes: &Scopes, types: &Types, tr: UserTypeId) -> Vec<Vis<FunctionId>> {
-    scopes
-        .get(tr)
-        .fns
-        .iter()
-        .filter(move |f| scopes.get(f.id).is_dyn_compatible(scopes, types, tr))
-        .copied()
-        .collect()
+fn vtable_methods(scopes: &Scopes, types: &Types, tr: TraitId) -> Vec<FunctionId> {
+    let mut funcs = vec![];
+    for item in scopes[scopes.get(tr).body_scope].vns.iter() {
+        if let Some(&id) = item.1.as_fn()
+            && scopes.get(id).is_dyn_compatible(scopes, types, tr)
+        {
+            funcs.push(id);
+        }
+    }
+    funcs
 }
 
 fn member_name(proj: &Project, name: StrId) -> String {
