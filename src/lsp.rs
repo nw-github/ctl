@@ -258,14 +258,14 @@ impl LanguageServer for LspBackend {
         let pos = params.text_document_position_params.position;
         self.find_lsp_item(uri, pos, async |hover, proj| {
             let scopes = &proj.scopes;
-            let span = match hover {
-                &LspItem::Var(id) => scopes.get(id).name.span,
-                &LspItem::Type(id) => scopes.get(id).name.span,
-                &LspItem::Module(id, _) => scopes[id].kind.name(scopes).unwrap().span,
-                &LspItem::Fn(id) => scopes.get(id).name.span,
-                &LspItem::Alias(id) => scopes.get(id).name.span,
-                LspItem::Property(_, id, member) => {
-                    let ut = scopes.get(*id);
+            let span = match *hover {
+                LspItem::Var(id) => scopes.get(id).name.span,
+                LspItem::Type(id) => scopes.get(id).name.span,
+                LspItem::Module(id, _) => scopes[id].kind.name(scopes).unwrap().span,
+                LspItem::Fn(id) => scopes.get(id).name.span,
+                LspItem::Alias(id) => scopes.get(id).name.span,
+                LspItem::Property(_, id, ref member) => {
+                    let ut = scopes.get(id);
                     ut.members.get(member).map(|m| m.span).or_else(|| {
                         ut.kind.as_union().and_then(|u| u.variants.get(member).map(|v| v.span))
                     })?
@@ -886,12 +886,12 @@ fn get_semantic_token(
     prev_start: &mut u32,
 ) -> Option<SemanticToken> {
     let mut mods = token::mods::NONE;
-    let token_type = match item {
+    let token_type = match *item {
         LspItem::Module(_, true) => token::KEYWORD,
         LspItem::Module(_, false) => token::NAMESPACE,
         LspItem::Property(_, _, _) => token::VARIABLE,
         LspItem::FnParamLabel(_, _) => token::VARIABLE,
-        &LspItem::Var(id) => {
+        LspItem::Var(id) => {
             let var = scopes.get(id);
             if var.mutable || types[var.ty].is_mut_ptr() {
                 mods |= token::mods::MUTABLE;
@@ -914,7 +914,7 @@ fn get_semantic_token(
         LspItem::Type(_) => token::TYPE,
         LspItem::Alias(_) => token::TYPE,
         LspItem::BuiltinType(_) => token::TYPE,
-        &LspItem::Fn(id) => {
+        LspItem::Fn(id) => {
             if let Some(id) = scopes.get(id).constructor {
                 if scopes.get(id).kind.is_union() { token::ENUM_MEMBER } else { token::TYPE }
             } else if scopes
@@ -1084,9 +1084,9 @@ fn get_document_symbols(proj: &Project, src: &str, file: FileId) -> Vec<Document
 fn get_completion(proj: &Project, item: &LspItem, method: bool) -> Option<CompletionItem> {
     let scopes = &proj.scopes;
     let strings = &proj.strings;
-    Some(match item {
-        LspItem::Property(_, id, name) => {
-            let ut = scopes.get(*id);
+    Some(match *item {
+        LspItem::Property(_, id, ref name) => {
+            let ut = scopes.get(id);
             let member = ut.members.get(name).unwrap();
             let detail = proj.fmt_ty(member.ty).to_string();
             CompletionItem {
@@ -1100,7 +1100,7 @@ fn get_completion(proj: &Project, item: &LspItem, method: bool) -> Option<Comple
                 ..Default::default()
             }
         }
-        &LspItem::Fn(id) => {
+        LspItem::Fn(id) => {
             let f = scopes.get(id);
             let mut owner = &scopes[f.scope];
             let mut detail = None;
@@ -1166,7 +1166,7 @@ fn get_completion(proj: &Project, item: &LspItem, method: bool) -> Option<Comple
                 ..Default::default()
             }
         }
-        &LspItem::Type(id) => {
+        LspItem::Type(id) => {
             let ut = scopes.get(id);
             let name = strings.resolve(&ut.name.data).to_string();
             CompletionItem {
@@ -1184,7 +1184,7 @@ fn get_completion(proj: &Project, item: &LspItem, method: bool) -> Option<Comple
                 ..Default::default()
             }
         }
-        &LspItem::Trait(id) => {
+        LspItem::Trait(id) => {
             let ut = scopes.get(id);
             let name = strings.resolve(&ut.name.data).to_string();
             CompletionItem {
@@ -1198,7 +1198,7 @@ fn get_completion(proj: &Project, item: &LspItem, method: bool) -> Option<Comple
                 ..Default::default()
             }
         }
-        &LspItem::Alias(id) => {
+        LspItem::Alias(id) => {
             let alias = scopes.get(id);
             let name = strings.resolve(&alias.name.data).to_string();
             // TODO: pick CompletionItemKind based on alias.ty
@@ -1213,7 +1213,7 @@ fn get_completion(proj: &Project, item: &LspItem, method: bool) -> Option<Comple
                 ..Default::default()
             }
         }
-        &LspItem::Module(id, _) => {
+        LspItem::Module(id, _) => {
             let name = strings.resolve(&scopes[id].kind.name(scopes).unwrap().data).to_string();
             CompletionItem {
                 label: name.clone(),
@@ -1226,7 +1226,7 @@ fn get_completion(proj: &Project, item: &LspItem, method: bool) -> Option<Comple
                 ..Default::default()
             }
         }
-        &LspItem::Var(id) | &LspItem::FnParamLabel(id, _) => {
+        LspItem::Var(id) | LspItem::FnParamLabel(id, _) => {
             let var = scopes.get(id);
             let name = strings.resolve(&var.name.data).to_string();
             CompletionItem {
@@ -1244,7 +1244,7 @@ fn get_completion(proj: &Project, item: &LspItem, method: bool) -> Option<Comple
                 ..Default::default()
             }
         }
-        &LspItem::BuiltinType(name) => CompletionItem {
+        LspItem::BuiltinType(name) => CompletionItem {
             label: name.into(),
             kind: Some(CompletionItemKind::STRUCT),
             label_details: Some(CompletionItemLabelDetails {
