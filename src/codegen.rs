@@ -8,7 +8,7 @@ use crate::{
     nearest_pow_of_two,
     project::Project,
     sym::*,
-    typecheck::{MemberFn, MemberFnType, SharedStuff},
+    typecheck::{MemberFn, SharedStuff},
     typeid::{
         BitSizeResult, FnPtr, GenericFn, GenericTrait, GenericUserType, Integer, LayoutItemKind,
         Type, TypeArgs, TypeId, Types,
@@ -1879,8 +1879,8 @@ impl<'a> Codegen<'a> {
     }
 
     fn emit_member_fn(&mut self, state: &mut State, mut mfn: MemberFn) {
-        if let MemberFnType::Trait(mut tr) = mfn.typ {
-            let inst = mfn.inst.with_templates(&self.proj.types, &state.func.ty_args);
+        if let Some((inst, mut tr)) = mfn.trait_fn {
+            let inst = inst.with_templates(&self.proj.types, &state.func.ty_args);
             tr.fill_templates(&self.proj.types, &state.func.ty_args);
             mfn.func = self.find_implementation(
                 inst,

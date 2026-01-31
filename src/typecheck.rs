@@ -1,7 +1,5 @@
 use std::marker::PhantomData;
 
-use enum_as_inner::EnumAsInner;
-
 use crate::{
     FeatureSet, Warning,
     ast::{
@@ -113,20 +111,25 @@ macro_rules! check_unsafe {
     }};
 }
 
-#[derive(Debug, Clone, EnumAsInner)]
-pub enum MemberFnType {
-    Normal,
-    Dynamic,
-    Trait(GenericTrait),
-}
-
 #[derive(Debug, Clone)]
 pub struct MemberFn {
     pub func: GenericFn,
+    pub trait_fn: Option<(TypeId, GenericTrait)>,
+}
+
+impl From<LookupFnResult> for MemberFn {
+    fn from(val: LookupFnResult) -> Self {
+        MemberFn { func: val.func, trait_fn: val.trait_fn }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LookupFnResult {
+    pub func: GenericFn,
+    pub trait_fn: Option<(TypeId, GenericTrait)>,
     pub owner: ScopeId,
-    pub typ: MemberFnType,
     pub public: bool,
-    pub inst: TypeId,
+    pub dynamic: bool,
 }
 
 #[derive(Default)]
@@ -4345,28 +4348,27 @@ impl TypeChecker<'_> {
                 // however, if you start editing a function call, it is possible for the span
                 // to end up here
                 self.check_dot_completions(member.span, id, true);
-                let Some(mut mfn) = self.lookup_member_fn(id, member.data, &generics, span) else {
+                let Some(res) = self.lookup_member_fn(id, member.data, &generics, span) else {
                     bail!(
                         self,
                         Error::no_method(self.proj.fmt_ty(id), strdata!(self, member.data), span)
                     );
                 };
-                self.check_hover(member.span, mfn.func.id);
-                if mfn.typ.is_dynamic() && !self.proj.scopes.get(mfn.func.id).type_params.is_empty()
-                {
+                self.check_hover(member.span, res.func.id);
+                if res.dynamic && !self.proj.scopes.get(res.func.id).type_params.is_empty() {
                     self.error(Error::new(
                         "cannot call generic functions through a dynamic pointer",
                         span,
                     ))
                 }
 
-                let f = self.proj.scopes.get(mfn.func.id);
-                if !mfn.public && !self.can_access_privates(mfn.owner) {
+                let f = self.proj.scopes.get(res.func.id);
+                if !res.public && !self.can_access_privates(res.owner) {
                     report_error!(
                         self,
                         span,
                         "cannot access private method '{}' of type '{}'",
-                        strdata!(self, self.proj.scopes.get(mfn.func.id).name.data),
+                        strdata!(self, self.proj.scopes.get(res.func.id).name.data),
                         self.proj.fmt_ty(id),
                     )
                 }
@@ -4381,7 +4383,7 @@ impl TypeChecker<'_> {
                     );
                 };
 
-                if mfn.typ.is_dynamic() && !self.proj.types[this_param.ty].is_safe_ptr() {
+                if res.dynamic && !self.proj.types[this_param.ty].is_safe_ptr() {
                     return report_error!(
                         self,
                         span,
@@ -4422,15 +4424,14 @@ impl TypeChecker<'_> {
 
                 let recv = recv.auto_deref(&self.proj.types, this_param_ty, &mut self.arena);
                 let (func, args, ret, _) =
-                    self.check_fn_args(mfn.func, Some(recv), args, target, span);
-                mfn.func = func;
-                if mfn.typ.is_dynamic() {
-                    return self.arena.typed(ret, CExprData::CallDyn(mfn.func, args));
+                    self.check_fn_args(res.func, Some(recv), args, target, span);
+                if res.dynamic {
+                    return self.arena.typed(ret, CExprData::CallDyn(func, args));
                 } else {
                     return CExpr::member_call(
                         ret,
                         &self.proj.types,
-                        mfn,
+                        MemberFn { func, trait_fn: res.trait_fn },
                         args,
                         self.current,
                         span,
@@ -5395,7 +5396,7 @@ impl TypeChecker<'_> {
         name: StrId,
         generics: &[TypeHint],
         span: Span,
-    ) -> Option<MemberFn> {
+    ) -> Option<LookupFnResult> {
         // TODO: return multiple functions
         let finish = |this: &mut TypeChecker, id: FunctionId| {
             this.resolve_proto(id);
@@ -5410,12 +5411,12 @@ impl TypeChecker<'_> {
                 if let Some(f) = self.proj.scopes[body].find_fn(name) {
                     let mut func = finish(self, f.id);
                     func.ty_args.copy_args(&imp.ty_args);
-                    return Some(MemberFn {
+                    return Some(LookupFnResult {
                         func,
+                        trait_fn: None,
+                        dynamic: true,
                         owner: body,
-                        typ: MemberFnType::Dynamic,
                         public: f.public,
-                        inst,
                     });
                 }
             }
@@ -5428,12 +5429,12 @@ impl TypeChecker<'_> {
             if let Some(f) = self.proj.scopes[body].find_fn(name) {
                 let mut func = finish(self, f.id);
                 func.ty_args.copy_args(&ut.ty_args);
-                return Some(MemberFn {
+                return Some(LookupFnResult {
                     func,
+                    trait_fn: None,
                     owner: body,
-                    typ: MemberFnType::Normal,
                     public: f.public,
-                    inst,
+                    dynamic: false,
                 });
             }
         }
@@ -5461,14 +5462,14 @@ impl TypeChecker<'_> {
 
                 let type_params = imp.type_params.clone();
                 let this = tr_data.this;
-                let (mut func, typ) = if trait_fn {
+                let (mut func, trait_fn) = if trait_fn {
                     let tr = imp.tr.with_templates(&self.proj.types, &ut.ty_args);
                     let mut func = finish(self, f.id);
                     func.ty_args.insert(this, inst);
                     func.ty_args.copy_args(&tr.ty_args);
-                    (func, MemberFnType::Trait(tr))
+                    (func, Some((inst, tr)))
                 } else {
-                    (finish(self, f.id), MemberFnType::Normal)
+                    (finish(self, f.id), None)
                 };
 
                 func.fill_templates(&self.proj.types, &ut.ty_args);
@@ -5477,7 +5478,13 @@ impl TypeChecker<'_> {
                         .entry(type_param)
                         .or_insert(ut.ty_args.get(&type_param).copied().unwrap_or(TypeId::UNKNOWN));
                 }
-                return Some(MemberFn { func, owner: scope, typ, public: f.public, inst });
+                return Some(LookupFnResult {
+                    func,
+                    trait_fn,
+                    owner: scope,
+                    public: f.public,
+                    dynamic: false,
+                });
             }
         }
 
@@ -5486,14 +5493,14 @@ impl TypeChecker<'_> {
 
     fn lookup_unk_trait_fn(&mut self, inst: TypeId, id: TraitId, name: StrId) -> Option<MemberFn> {
         let (imp, my_ut) = self.find_trait_impl(inst, id)?;
-        let (owner, fn_id, trait_fn) = if let Some(owner) = imp.scope
+        let (fn_id, trait_fn) = if let Some(owner) = imp.scope
             && let Some(imp_fn) = self.proj.scopes[owner].find_fn(name)
         {
-            (owner, imp_fn.id, false)
+            (imp_fn.id, false)
         } else {
             let body_scope = self.proj.scopes.get(id).body_scope;
             let tr_fn = self.proj.scopes[body_scope].find_fn(name)?;
-            (body_scope, tr_fn.id, true)
+            (tr_fn.id, true)
         };
 
         self.resolve_proto(fn_id);
@@ -5514,8 +5521,8 @@ impl TypeChecker<'_> {
             func.ty_args.copy_args(&ty_args);
         }
 
-        let typ = if trait_fn { MemberFnType::Trait(imp.tr) } else { MemberFnType::Normal };
-        Some(MemberFn { func, owner, typ, inst, public: true })
+        let trait_fn = trait_fn.then_some((inst, imp.tr));
+        Some(MemberFn { func, trait_fn })
     }
 
     fn get_int_type_and_val(
@@ -7357,25 +7364,25 @@ impl TypeChecker<'_> {
         let ((name, args), rest) = rest.split_first().unwrap();
         self.check_dot_completions(total_span, ty, false);
 
-        let Some(mfn) = self.lookup_member_fn(ty, name.data, args, name.span) else {
+        let Some(res) = self.lookup_member_fn(ty, name.data, args, name.span) else {
             return ResolvedValue::NotFound(*name);
         };
 
-        self.check_hover(name.span, mfn.func.id);
+        self.check_hover(name.span, res.func.id);
         if let Some((name, _)) = rest.first() {
             return ResolvedValue::NotFound(*name);
         }
 
-        if !mfn.public && !self.can_access_privates(mfn.owner) {
+        if !res.public && !self.can_access_privates(res.owner) {
             report_error!(
                 self,
                 name.span,
                 "cannot access private method '{}' of type '{}'",
-                strdata!(self, self.proj.scopes.get(mfn.func.id).name.data),
+                strdata!(self, self.proj.scopes.get(res.func.id).name.data),
                 self.proj.fmt_ty(ty)
             )
         }
-        ResolvedValue::MemberFn(mfn)
+        ResolvedValue::MemberFn(res.into())
     }
 
     fn resolve_type_args<T: ItemId>(
@@ -7694,24 +7701,24 @@ pub trait SharedStuff {
     ) -> Option<MemberFn> {
         let (impl_scope, args) = self.do_implements_trait(inst, tr)?;
         let proj = self.proj();
-        let (owner, fn_id, typ) = if let Some(owner) = impl_scope
+        let (fn_id, trait_fn) = if let Some(owner) = impl_scope
             && let Some(imp_fn) = proj.scopes[owner].find_fn(name)
         {
-            (owner, imp_fn.id, MemberFnType::Normal)
+            (imp_fn.id, None)
         } else {
             let body_scope = proj.scopes.get(tr.id).body_scope;
             let tr_fn = proj.scopes[body_scope].find_fn(name)?;
-            (body_scope, tr_fn.id, MemberFnType::Trait(tr.clone()))
+            (tr_fn.id, Some((inst, tr.clone())))
         };
 
         let this = proj.scopes.get(tr.id).this;
         let mut func = GenericFn::new(fn_id, finish(proj, fn_id));
-        if typ.is_trait() {
-            func.ty_args.insert(this, inst);
+        if let Some((inst, tr)) = &trait_fn {
+            func.ty_args.insert(this, *inst);
             func.ty_args.copy_args(&tr.ty_args);
         }
         func.ty_args.copy_args(&args);
-        Some(MemberFn { func, owner, typ, inst, public: true })
+        Some(MemberFn { func, trait_fn })
     }
 
     // ------
