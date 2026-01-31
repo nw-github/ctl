@@ -23,7 +23,7 @@ pub trait Foo {
 
 struct Override {}
 
-extension _ for Override {
+extension Override {
     impl Foo {
         fn add(this, x: *mut int) {
             *x += 1;

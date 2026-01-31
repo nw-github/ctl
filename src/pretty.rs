@@ -137,13 +137,8 @@ impl Pretty<'_> {
                     self.print_fn(&f.data, indent + 2);
                 }
             }
-            StmtData::Extension { public, name, ty, type_params, impls, functions, operators } => {
-                self.print_header(
-                    &tabs,
-                    "Stmt::Extension",
-                    &[str!(self, name, LOCATED), bool!(public)],
-                );
-
+            StmtData::Extension { ty, type_params, impls, functions, operators } => {
+                self.print_header(&tabs, "Stmt::Extension", &[]);
                 self.print_type_params(type_params, indent + 1, None);
 
                 let plus_1 = INDENT.repeat(indent + 1);

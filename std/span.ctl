@@ -1,7 +1,8 @@
 use std::range::RangeBounds;
-use std::reflect::*;
-use std::fmt::Debug;
-use std::fmt::Formatter;
+use std::fmt::{Debug, Formatter};
+use std::ops::{Eq, Cmp, Ordering};
+use std::hash::{Hash, Hasher};
+use std::reflect::Integral;
 
 $[lang(span)]
 pub struct Span<T> {
@@ -242,90 +243,82 @@ fn range_bounds<R: RangeBounds<uint>>(range: R, len: uint): (uint, uint) {
 
 // TODO: make these member functions/impls when the syntax allows for it
 
-pub mod ext {
-    use std::ops::Eq;
-    use std::ops::Cmp;
-    use std::ops::Ordering;
-    use std::hash::Hash;
-    use std::hash::Hasher;
+extension<T: Eq<T>> [T..] {
+    pub fn ==(this, rhs: *[T..]): bool {
+        if this.len() != rhs.len() {
+            return false;
+        }
 
-    pub extension SpanEq<T: Eq<T>> for [T..] {
-        pub fn ==(this, rhs: *[T..]): bool {
-            if this.len() != rhs.len() {
+        for (l, r) in this.iter().zip(rhs.iter()) {
+            if l != r {
                 return false;
             }
-
-            for (l, r) in this.iter().zip(rhs.iter()) {
-                if l != r {
-                    return false;
-                }
-            }
-
-            true
         }
 
-        pub fn ==(this, rhs: *[mut T..]): bool => this == rhs.as_span();
+        true
     }
 
-    pub extension SpanCmp<T: Cmp<T>> for [T..] {
-        pub fn <=>(this, rhs: *[T..]): Ordering {
-            for (l, r) in this.iter().zip(rhs.iter()) {
-                let ord = l <=> r;
-                if ord != :Equal {
-                    return ord;
-                }
-            }
+    pub fn ==(this, rhs: *[mut T..]): bool => this == rhs.as_span();
+}
 
-            this.len().cmp(&rhs.len())
+extension<T: Cmp<T>> [T..] {
+    pub fn <=>(this, rhs: *[T..]): Ordering {
+        for (l, r) in this.iter().zip(rhs.iter()) {
+            let ord = l <=> r;
+            if ord != :Equal {
+                return ord;
+            }
         }
 
-        pub fn <=>(this, rhs: *[mut T..]): Ordering => this <=> rhs.as_span();
+        this.len().cmp(&rhs.len())
     }
 
-    pub extension SpanHash<T: Hash> for [T..] {
-        impl Hash {
-            fn hash<H: Hasher>(this, hasher: *mut H) {
-                for v in this.iter() {
-                    v.hash(hasher);
-                }
+    pub fn <=>(this, rhs: *[mut T..]): Ordering => this <=> rhs.as_span();
+}
+
+extension<T: Hash> [T..] {
+    impl Hash {
+        fn hash<H: Hasher>(this, hasher: *mut H) {
+            for v in this.iter() {
+                v.hash(hasher);
             }
         }
     }
+}
 
-    pub extension SpanMutHash<T: Hash> for [mut T..] {
-        impl Hash {
-            fn hash<H: Hasher>(this, hasher: *mut H) => this.as_span().hash(hasher);
-        }
+extension<T: Hash> [mut T..] {
+    impl Hash {
+        fn hash<H: Hasher>(this, hasher: *mut H) => this.as_span().hash(hasher);
     }
+}
 
-    pub extension SpanMutEq<T: Eq<T>> for [mut T..] {
-        pub fn ==(this, rhs: *[T..]): bool => this.as_span() == rhs;
-        pub fn ==(this, rhs: *[mut T..]): bool => this.as_span() == rhs.as_span();
-    }
+extension<T: Eq<T>> [mut T..] {
+    pub fn ==(this, rhs: *[T..]): bool => this.as_span() == rhs;
+    pub fn ==(this, rhs: *[mut T..]): bool => this.as_span() == rhs.as_span();
+}
 
-    pub extension SpanMutCmp<T: Cmp<T>> for [mut T..] {
-        pub fn <=>(this, rhs: *[T..]): Ordering => this.as_span() <=> rhs;
-        pub fn <=>(this, rhs: *[mut T..]): Ordering => this.as_span() <=> rhs.as_span();
+extension<T: Cmp<T>> [mut T..] {
+    pub fn <=>(this, rhs: *[T..]): Ordering => this.as_span() <=> rhs;
+    pub fn <=>(this, rhs: *[mut T..]): Ordering => this.as_span() <=> rhs.as_span();
 
-        pub fn sort(this) {
-            guard !this.is_empty() else {
-                return;
-            }
-
-            let end      = this.len() - 1;
-            let pivot    = &this[end];
-            mut part_idx = 0u;
-            for j in 0u..end {
-                if this[j] <= pivot {
-                    this.swap(part_idx, j);
-                    part_idx++;
-                }
-            }
-
-            this.swap(part_idx, end);
-            this[0u..part_idx].sort();
-            this[part_idx + 1..].sort();
+    pub fn sort(this) {
+        guard !this.is_empty() else {
+            return;
         }
+
+        let end      = this.len() - 1;
+        let pivot    = &this[end];
+        mut part_idx = 0u;
+        for j in 0u..end {
+            if this[j] <= pivot {
+                this.swap(part_idx, j);
+                part_idx++;
+            }
+        }
+
+        this.swap(part_idx, end);
+        this[0u..part_idx].sort();
+        this[part_idx + 1..].sort();
     }
 }
 

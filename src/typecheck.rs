@@ -315,8 +315,6 @@ struct PatternParams<'a> {
     has_hint: bool,
 }
 
-pub type ExtensionCache = HashMap<Vec<UserTypeId>, HashMap<TypeId, Vec<GenericExtension>>>;
-
 pub struct TypeChecker<'a> {
     safety: Safety,
     current: ScopeId,
@@ -325,7 +323,7 @@ pub struct TypeChecker<'a> {
     listening_vars: Option<Vec<VariableId>>,
     current_static: Option<(VariableId, HashSet<VariableId>)>,
     current_call_ty_args: Option<TypeArgs>,
-    cache: ExtensionCache,
+    cache: HashMap<TypeId, Vec<GenericExtension>>,
     arena: ExprArena,
     parsed: PExprArena,
     _none: PhantomData<&'a ()>,
@@ -597,7 +595,7 @@ impl TypeChecker<'_> {
             add_methods(self, &mut completions, data.body_scope, None);
         }
 
-        let extensions = self.extensions_in_scope_for(ty);
+        let extensions = self.extensions_for(ty);
         for ext in extensions.iter() {
             let data = self.proj.scopes.get(ext.id);
             add_methods(self, &mut completions, data.body_scope, None);
@@ -1188,7 +1186,7 @@ impl<'a> TypeChecker<'a> {
                 self.proj.scopes[scope].kind = ScopeKind::Trait(id);
                 DStmt::Trait { id, fns }
             }
-            PStmtData::Extension { public, name, ty, type_params, impls, functions, operators } => {
+            PStmtData::Extension { ty, type_params, impls, functions, operators } => {
                 let (ext, impls, fns) = self.enter(ScopeKind::None, |this| {
                     let type_params = this.declare_type_params(type_params);
                     let mut fns = this.declare_fns(functions);
@@ -1196,8 +1194,8 @@ impl<'a> TypeChecker<'a> {
                     let ty = this.declare_type_hint(*ty);
                     let ext = this.create_user_type(
                         &stmt.attrs,
-                        *name,
-                        *public,
+                        Located::nowhere(Strings::EXTENSION_NAME),
+                        false,
                         Default::default(),
                         UserTypeKind::Extension(ty),
                         type_params,
@@ -1207,7 +1205,10 @@ impl<'a> TypeChecker<'a> {
                 });
 
                 let scope = ext.body_scope;
-                let id = self.insert_user_type(ext, *public);
+                let id = self.insert::<UserTypeId>(ext, false, false);
+                if let Some(name) = self.proj.scopes.get(id).attrs.lang {
+                    self.proj.scopes.lang_types.insert(name, id);
+                }
                 self.proj.scopes.get_mut(id).impls = self.declare_impls(id, impls);
 
                 self.proj.scopes[scope].kind = ScopeKind::UserType(id);
@@ -3807,11 +3808,7 @@ impl TypeChecker<'_> {
         // }
 
         let mut candidates = vec![];
-        for ut in self.proj.types[ty]
-            .as_user()
-            .cloned()
-            .into_iter()
-            .chain(self.extensions_in_scope_for(ty))
+        for ut in self.proj.types[ty].as_user().cloned().into_iter().chain(self.extensions_for(ty))
         {
             let subscripts: Vec<_> =
                 self.proj.scopes.get(ut.id).get_subscripts(&self.proj.scopes).collect();
@@ -5275,6 +5272,7 @@ impl TypeChecker<'_> {
 
         self.checked_impls = self.proj.scopes.impls.len();
         self.impl_resolve_phase = false;
+        self.cache.clear();
     }
 
     fn resolve_super_traits(&mut self, id: TraitId) -> bool {
@@ -5373,7 +5371,7 @@ impl TypeChecker<'_> {
             }
         }
 
-        let exts = self.extensions_in_scope_for(inst);
+        let exts = self.extensions_for(inst);
         let ut = self.proj.types[inst].as_user().cloned();
         for ut in ut.as_ref().into_iter().chain(exts.iter()) {
             let body = self.proj.scopes.get(ut.id).body_scope;
@@ -7548,51 +7546,31 @@ impl TypeChecker<'_> {
 }
 
 impl TypeChecker<'_> {
-    fn extensions_in_scope(&self, scope: ScopeId) -> Vec<ExtensionId> {
-        fn get_tns_extensions<'a>(
-            scopes: &'a Scopes,
-            tns: &'a HashMap<StrId, Vis<TypeItem>>,
-        ) -> impl Iterator<Item = UserTypeId> + use<'a> {
-            tns.iter().flat_map(|s| {
-                s.1.as_type().filter(|&&id| scopes.get(id).kind.is_extension()).cloned()
-            })
-        }
-
-        let mut exts = vec![];
-        let scopes = &self.proj().scopes;
-        for (_, scope) in scopes.walk(scope) {
-            exts.extend(get_tns_extensions(scopes, &scope.tns));
-            if matches!(scope.kind, ScopeKind::Module(_)) {
-                break;
-            }
-        }
-
-        exts.extend(get_tns_extensions(scopes, &self.proj().autouse_tns));
-        exts.sort();
-        exts
-    }
-
-    fn extensions_in_scope_for(&mut self, ty: TypeId) -> Vec<GenericExtension> {
-        let in_scope = self.extensions_in_scope(self.current);
+    fn extensions_for(&mut self, ty: TypeId) -> Vec<GenericExtension> {
         if ty == TypeId::UNKNOWN {
             return vec![];
         }
 
-        let map = self.cache.entry(in_scope.to_vec()).or_default();
-        if let Some(checked) = map.get(&ty) {
+        if let Some(checked) = self.cache.get(&ty) {
             return checked.clone();
         }
 
-        map.insert(ty, vec![]);
+        self.cache.insert(ty, vec![]);
 
+        let in_scope: Vec<_> = self
+            .proj
+            .scopes
+            .types()
+            .filter_map(|(id, ut)| ut.kind.is_extension().then_some(id))
+            .collect();
         let res: Vec<_> = in_scope
-            .iter()
-            .flat_map(|&id| {
+            .into_iter()
+            .flat_map(|id| {
                 let for_ty = self.resolve_ext_type(id);
                 self.applies_to(id, for_ty, ty)
             })
             .collect();
-        self.cache.get_mut(&in_scope).unwrap().insert(ty, res.clone());
+        self.cache.insert(ty, res.clone());
         res
     }
 

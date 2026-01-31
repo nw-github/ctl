@@ -23,14 +23,8 @@ mod prelude {
     pub use super::opt::Option::{null, Some};
     pub use super::err::{Result, Result::{Ok, Err}};
     pub use super::iter::Iterator;
-    pub use super::impls::ext::*;
-    pub use super::span::ext::*;
-    pub use super::opt::ext::*;
-    pub use super::range::ext::*;
-    pub use super::any::ext::*;
-    pub use super::fmt::ext::*;
     pub use super::fmt::{write, writeln};
-    pub use super::ops::{Fn, ext::*};
+    pub use super::ops::Fn;
     pub use super::ffi::types::*;
 
     $[feature(alloc)]

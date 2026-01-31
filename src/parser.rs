@@ -200,7 +200,7 @@ impl<'a> Parser<'a> {
                 self.invalid_here(tk_unsafe);
                 self.invalid_here(tk_extern);
 
-                Ok(Stmt { attrs, data: self.extension(tk_public.is_some(), earliest_span) })
+                Ok(Stmt { attrs, data: self.extension(tk_public, earliest_span) })
             }
             Token::Mod => {
                 self.next();
@@ -1976,11 +1976,10 @@ impl<'a> Parser<'a> {
         )
     }
 
-    fn extension(&mut self, public: bool, span: Span) -> Located<StmtData> {
-        let name = self.expect_ident("expected name");
-        let type_params = self.type_params();
+    fn extension(&mut self, public: Option<Span>, span: Span) -> Located<StmtData> {
+        self.invalid_here(public);
 
-        self.expect(Token::For);
+        let type_params = self.type_params();
         let ty = self.type_hint();
         self.expect(Token::LCurly);
 
@@ -2006,10 +2005,7 @@ impl<'a> Parser<'a> {
             }
         });
 
-        Located::new(
-            span,
-            StmtData::Extension { public, name, ty, type_params, impls, functions, operators },
-        )
+        Located::new(span, StmtData::Extension { ty, type_params, impls, functions, operators })
     }
 
     fn impl_block(&mut self, attrs: Attributes, span: Span) -> Located<ImplBlock> {

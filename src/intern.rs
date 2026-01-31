@@ -26,6 +26,7 @@ impl Strings {
     pub const TUPLE_ZERO: StrId = str_id(SID::TUPLE_ZERO);
     pub const TUPLE_NAME: StrId = str_id(SID::TUPLE_NAME);
     pub const CLOSURE_NAME: StrId = str_id(SID::CLOSURE_NAME);
+    pub const EXTENSION_NAME: StrId = str_id(SID::EXTENSION_NAME);
     pub const FN_TR_ARGS_NAME: StrId = str_id(SID::FN_TR_ARGS_NAME);
     pub const ITER_VAR_NAME: StrId = str_id(SID::ITER_VAR_NAME);
     pub const SKIP_REASON: StrId = str_id(SID::SKIP_REASON);
@@ -96,6 +97,7 @@ impl Strings {
         assert_eq!(Self::ATTR_COLD, rodeo.get_or_intern_static("cold"));
         assert_eq!(Self::TUPLE_NAME, rodeo.get_or_intern_static("$tuple"));
         assert_eq!(Self::CLOSURE_NAME, rodeo.get_or_intern_static("{closure}"));
+        assert_eq!(Self::EXTENSION_NAME, rodeo.get_or_intern_static("{extension}"));
         assert_eq!(Self::ATTR_ALIGN, rodeo.get_or_intern_static("align"));
         assert_eq!(Self::ATTR_LAYOUT, rodeo.get_or_intern_static("layout"));
         assert_eq!(Self::FN_TR_ARGS_NAME, rodeo.get_or_intern_static("args"));
@@ -167,6 +169,7 @@ enum SID {
     ATTR_COLD,
     TUPLE_NAME,
     CLOSURE_NAME,
+    EXTENSION_NAME,
     ATTR_ALIGN,
     ATTR_LAYOUT,
     FN_TR_ARGS_NAME,

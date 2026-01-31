@@ -293,12 +293,8 @@ unittest "from_utf8_lossy" {
     assert_eq(str::from_utf8_lossy(b"AB\xc0\xafC\xc1\x81D"[..]), "AB�C�D");
 }
 
-pub mod ext {
-    use super::LossyChars;
-
-    pub extension LossyCharIter for [u8..] {
-        pub fn iter_chars_lossy(this, replacement: char = char::replacement_marker()): LossyChars {
-            LossyChars(iter: this.iter(), replacement:)
-        }
+extension [u8..] {
+    pub fn iter_chars_lossy(this, replacement: char = char::replacement_marker()): LossyChars {
+        LossyChars(iter: this.iter(), replacement:)
     }
 }

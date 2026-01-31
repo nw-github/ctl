@@ -1,8 +1,7 @@
 use std::hash::*;
 use std::ops::*;
-use super::ByteSpanExt;
 
-pub extension NumericImpl<T: std::reflect::Numeric> for T {
+extension<T: std::reflect::Numeric> T {
     impl Hash {
         fn hash<H: Hasher>(this, h: *mut H) => h.hash(this.as_byte_span());
     }

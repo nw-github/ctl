@@ -3253,7 +3253,9 @@ impl<'a> Codegen<'a> {
             if var.is_extern {
                 self.buffer.emit_str(var.attrs.link_name.unwrap_or(var.name.data))
             } else {
-                self.buffer.emit(full_name(self.proj, var.scope, var.name.data));
+                self.buffer.emit("CTL$");
+                self.buffer.scope_emit_mangled_name(var.scope, &TypeArgs::default());
+                self.buffer.write_len_prefixed(self.proj.str(var.name.data));
             }
         } else {
             write_de!(self.buffer, "$");

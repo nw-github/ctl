@@ -93,95 +93,91 @@ pub struct Atomic<T> {
     pub fn as_raw_mut(this): ^mut T => this.val.get();
 }
 
-pub mod ext {
-    use super::*;
-
-    pub extension AtomicIntImpl<T: std::reflect::Integral> for Atomic<T> {
-        $[inline(always)]
-        pub fn fetch_add(this, val: T, order: MemoryOrder = :SeqCst): T {
-            unsafe atomic_fetch_add_explicit(this.val.get(), val, order as u32)
-        }
-
-        $[inline(always)]
-        pub fn fetch_sub(this, val: T, order: MemoryOrder = :SeqCst): T {
-            unsafe atomic_fetch_sub_explicit(this.val.get(), val, order as u32)
-        }
-
-        $[inline(always)]
-        pub fn fetch_and(this, val: T, order: MemoryOrder = :SeqCst): T {
-            unsafe atomic_fetch_and_explicit(this.val.get(), val, order as u32)
-        }
-
-        $[inline(always)]
-        pub fn fetch_or(this, val: T, order: MemoryOrder = :SeqCst): T {
-            unsafe atomic_fetch_or_explicit(this.val.get(), val, order as u32)
-        }
-
-        $[inline(always)]
-        pub fn fetch_xor(this, val: T, order: MemoryOrder = :SeqCst): T {
-            unsafe atomic_fetch_xor_explicit(this.val.get(), val, order as u32)
-        }
+extension<T: std::reflect::Integral> Atomic<T> {
+    $[inline(always)]
+    pub fn fetch_add(this, val: T, order: MemoryOrder = :SeqCst): T {
+        unsafe atomic_fetch_add_explicit(this.val.get(), val, order as u32)
     }
 
-    pub extension AtomicBoolImpl for Atomic<bool> {
-        $[inline(always)]
-        pub fn fetch_and(this, val: bool, order: MemoryOrder = :SeqCst): bool {
-            unsafe atomic_fetch_and_explicit(this.val.get(), val, order as u32)
-        }
-
-        $[inline(always)]
-        pub fn fetch_or(this, val: bool, order: MemoryOrder = :SeqCst): bool {
-            unsafe atomic_fetch_or_explicit(this.val.get(), val, order as u32)
-        }
-
-        $[inline(always)]
-        pub fn fetch_xor(this, val: bool, order: MemoryOrder = :SeqCst): bool {
-            unsafe atomic_fetch_xor_explicit(this.val.get(), val, order as u32)
-        }
+    $[inline(always)]
+    pub fn fetch_sub(this, val: T, order: MemoryOrder = :SeqCst): T {
+        unsafe atomic_fetch_sub_explicit(this.val.get(), val, order as u32)
     }
 
-    pub extension AtomicRawPtrImpl<T> for Atomic<^T> {
-        $[inline(always)]
-        pub fn fetch_add(this, offs: uint, order: MemoryOrder = :SeqCst): ^T {
-            unsafe atomic_fetch_add_explicit(this.val.get(), offs, order as u32)
-        }
-
-        $[inline(always)]
-        pub fn fetch_sub(this, offs: uint, order: MemoryOrder = :SeqCst): ^T {
-            unsafe atomic_fetch_sub_explicit(this.val.get(), offs, order as u32)
-        }
-
-        $[inline(always)]
-        pub fn fetch_add_signed(this, val: int, order: MemoryOrder = :SeqCst): ^T {
-            unsafe atomic_fetch_add_explicit(this.val.get(), val, order as u32)
-        }
-
-        $[inline(always)]
-        pub fn fetch_sub_signed(this, val: int, order: MemoryOrder = :SeqCst): ^T {
-            unsafe atomic_fetch_sub_explicit(this.val.get(), val, order as u32)
-        }
+    $[inline(always)]
+    pub fn fetch_and(this, val: T, order: MemoryOrder = :SeqCst): T {
+        unsafe atomic_fetch_and_explicit(this.val.get(), val, order as u32)
     }
 
-    pub extension AtomicRawMutPtrImpl<T> for Atomic<^mut T> {
-        $[inline(always)]
-        pub fn fetch_add(this, offs: uint, order: MemoryOrder = :SeqCst): ^mut T {
-            unsafe atomic_fetch_add_explicit(this.val.get(), offs, order as u32)
-        }
+    $[inline(always)]
+    pub fn fetch_or(this, val: T, order: MemoryOrder = :SeqCst): T {
+        unsafe atomic_fetch_or_explicit(this.val.get(), val, order as u32)
+    }
 
-        $[inline(always)]
-        pub fn fetch_sub(this, offs: uint, order: MemoryOrder = :SeqCst): ^mut T {
-            unsafe atomic_fetch_sub_explicit(this.val.get(), offs, order as u32)
-        }
+    $[inline(always)]
+    pub fn fetch_xor(this, val: T, order: MemoryOrder = :SeqCst): T {
+        unsafe atomic_fetch_xor_explicit(this.val.get(), val, order as u32)
+    }
+}
 
-        $[inline(always)]
-        pub fn fetch_add_signed(this, val: int, order: MemoryOrder = :SeqCst): ^mut T {
-            unsafe atomic_fetch_add_explicit(this.val.get(), val, order as u32)
-        }
+extension Atomic<bool> {
+    $[inline(always)]
+    pub fn fetch_and(this, val: bool, order: MemoryOrder = :SeqCst): bool {
+        unsafe atomic_fetch_and_explicit(this.val.get(), val, order as u32)
+    }
 
-        $[inline(always)]
-        pub fn fetch_sub_signed(this, val: int, order: MemoryOrder = :SeqCst): ^mut T {
-            unsafe atomic_fetch_sub_explicit(this.val.get(), val, order as u32)
-        }
+    $[inline(always)]
+    pub fn fetch_or(this, val: bool, order: MemoryOrder = :SeqCst): bool {
+        unsafe atomic_fetch_or_explicit(this.val.get(), val, order as u32)
+    }
+
+    $[inline(always)]
+    pub fn fetch_xor(this, val: bool, order: MemoryOrder = :SeqCst): bool {
+        unsafe atomic_fetch_xor_explicit(this.val.get(), val, order as u32)
+    }
+}
+
+extension<T> Atomic<^T> {
+    $[inline(always)]
+    pub fn fetch_add(this, offs: uint, order: MemoryOrder = :SeqCst): ^T {
+        unsafe atomic_fetch_add_explicit(this.val.get(), offs, order as u32)
+    }
+
+    $[inline(always)]
+    pub fn fetch_sub(this, offs: uint, order: MemoryOrder = :SeqCst): ^T {
+        unsafe atomic_fetch_sub_explicit(this.val.get(), offs, order as u32)
+    }
+
+    $[inline(always)]
+    pub fn fetch_add_signed(this, val: int, order: MemoryOrder = :SeqCst): ^T {
+        unsafe atomic_fetch_add_explicit(this.val.get(), val, order as u32)
+    }
+
+    $[inline(always)]
+    pub fn fetch_sub_signed(this, val: int, order: MemoryOrder = :SeqCst): ^T {
+        unsafe atomic_fetch_sub_explicit(this.val.get(), val, order as u32)
+    }
+}
+
+extension<T> Atomic<^mut T> {
+    $[inline(always)]
+    pub fn fetch_add(this, offs: uint, order: MemoryOrder = :SeqCst): ^mut T {
+        unsafe atomic_fetch_add_explicit(this.val.get(), offs, order as u32)
+    }
+
+    $[inline(always)]
+    pub fn fetch_sub(this, offs: uint, order: MemoryOrder = :SeqCst): ^mut T {
+        unsafe atomic_fetch_sub_explicit(this.val.get(), offs, order as u32)
+    }
+
+    $[inline(always)]
+    pub fn fetch_add_signed(this, val: int, order: MemoryOrder = :SeqCst): ^mut T {
+        unsafe atomic_fetch_add_explicit(this.val.get(), val, order as u32)
+    }
+
+    $[inline(always)]
+    pub fn fetch_sub_signed(this, val: int, order: MemoryOrder = :SeqCst): ^mut T {
+        unsafe atomic_fetch_sub_explicit(this.val.get(), val, order as u32)
     }
 }
 

@@ -19,7 +19,7 @@ pub trait Foo {
 
 struct NoOverride {}
 
-extension _ for NoOverride {
+extension NoOverride {
     impl Foo {
         fn add(this, x: *mut int) {
             *x += 1;

@@ -7,19 +7,19 @@ trait Foo {}
 trait Bar {}
 trait Baz {}
 
-extension A<T: Baz> for T {
+extension<T: Baz> T {
     impl Foo {}
 
     fn a(this) {}
 }
 
-extension B<T: Bar> for T {
+extension<T: Bar> T {
     impl Baz {}
 
     fn b(this) {}
 }
 
-extension C<T: Foo> for T {
+extension<T: Foo> T {
     impl Bar {}
 
     fn c(this) {}

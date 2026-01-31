@@ -19,13 +19,13 @@ unittest "impl<T>" {
         assert_eq(b, 5);
     }
 
-    extension Wow for int {
+    extension int {
         impl Default {
             fn default(): int => 3;
         }
     }
 
-    extension Wow2 for uint {
+    extension uint {
         impl Default {
             fn default(): uint => 5;
         }

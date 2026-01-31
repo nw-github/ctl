@@ -2,7 +2,7 @@ use std::hash::*;
 use std::ops::*;
 use std::fmt::*;
 
-pub extension VoidImpl for void {
+extension void {
     impl Hash {
         fn hash<H: Hasher>(this, _: *mut H) {}
     }
@@ -17,24 +17,12 @@ pub extension VoidImpl for void {
     }
 }
 
-extension ByteSpanExt<T> for T {
-    pub fn as_byte_span(this): [u8..] {
+extension<T> T {
+    fn as_byte_span(this): [u8..] {
         unsafe Span::new((&raw *this).cast(), std::mem::size_of::<T>())
     }
 
-    pub fn as_byte_span_mut(mut this): [mut u8..] {
+    fn as_byte_span_mut(mut this): [mut u8..] {
         unsafe SpanMut::new((&raw mut *this).cast(), std::mem::size_of::<T>())
     }
-}
-
-pub mod ext {
-    pub use super::boolean::*;
-    pub use super::character::*;
-    pub use super::dynany::*;
-    pub use super::float::*;
-    pub use super::numeric::*;
-    pub use super::integral::*;
-    pub use super::rawptr::*;
-    pub use super::array::*;
-    pub use super::VoidImpl;
 }

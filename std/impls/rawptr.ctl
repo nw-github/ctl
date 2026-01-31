@@ -1,7 +1,7 @@
 use std::fmt::*;
 use std::intrin;
 
-pub extension RawImpl<T> for ^T {
+extension<T> ^T {
     pub fn cast<U>(my this): ^U => this as ^U;
     $[intrinsic(numeric_cast)]
     pub fn addr(my this): uint => this.addr();
@@ -43,7 +43,7 @@ pub extension RawImpl<T> for ^T {
     }
 }
 
-pub extension RawMutImpl<T> for ^mut T {
+extension<T> ^mut T {
     pub fn cast<U>(my this): ^mut U => this as ^mut U;
     $[intrinsic(numeric_cast)]
     pub fn addr(my this): uint => this.addr();

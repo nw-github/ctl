@@ -1,9 +1,8 @@
 use std::hash::*;
 use std::ops::*;
 use std::fmt::*;
-use super::ByteSpanExt;
 
-pub extension BoolImpl for bool {
+extension bool {
     impl Hash {
         fn hash<H: Hasher>(this, h: *mut H) => h.hash(this.as_byte_span());
     }
@@ -38,7 +37,7 @@ pub extension BoolImpl for bool {
     pub fn ^=(mut this, rhs: This) => *this ^= rhs;
 
     impl Debug {
-        fn dbg(this, f: *mut Formatter) { f.write_str(*this then "true" else "false"); }
+        fn dbg(this, f: *mut Formatter) => f.write_str(*this then "true" else "false");
     }
 
     impl Format {

@@ -2,7 +2,7 @@ use std::reflect::Integral;
 use std::reflect::Array;
 use std::range::RangeBounds;
 
-pub extension ArrayImpl<A: Array<T>, T> for A {
+extension<A: Array<T>, T> A {
     $[inline(always)]
     pub fn len(this): uint => std::mem::size_of::<A>() / std::mem::size_of::<T>();
 
@@ -72,19 +72,19 @@ pub extension ArrayImpl<A: Array<T>, T> for A {
     }
 }
 
-pub extension ArrayHash<A: Array<T>, T: std::hash::Hash> for A {
+extension<A: Array<T>, T: std::hash::Hash> A {
     impl std::hash::Hash {
         $[inline(always)]
         fn hash<H: std::hash::Hasher>(this, h: *mut H) => this[..].hash(h);
     }
 }
 
-pub extension ArrayEq<A: Array<T>, T: std::ops::Eq<T>> for A {
+extension<A: Array<T>, T: std::ops::Eq<T>> A {
     $[inline(always)]
     pub fn ==(this, rhs: *A): bool => this[..] == rhs[..];
 }
 
-pub extension ArrayCmp<A: Array<T>, T: std::ops::Cmp<T>> for A {
+extension<A: Array<T>, T: std::ops::Cmp<T>> A {
     $[inline(always)]
     pub fn <=>(this, rhs: *A): std::ops::Ordering => this[..] <=> rhs[..];
 }

@@ -36,28 +36,26 @@ pub union Option<T> {
     }
 }
 
-pub mod ext {
-    pub extension OptionCopied<T /*: Copy */> for ?*T {
-        pub fn copied(my this): ?T => this is ?val then *val;
-    }
+extension<T /*: Copy */> ?*T {
+    pub fn copied(my this): ?T => this is ?val then *val;
+}
 
-    pub extension OptionMutCopied<T /*: Copy */> for ?*mut T {
-        pub fn copied(my this): ?T => this is ?val then *val;
-    }
+extension<T /*: Copy */> ?*mut T {
+    pub fn copied(my this): ?T => this is ?val then *val;
+}
 
-    pub extension OptionEq<T: std::ops::Eq<T>> for ?T {
-        pub fn ==(this, rhs: *?T): bool {
-            match (this, rhs) {
-                (null, null) => true,
-                (?lhs, ?rhs) => lhs == rhs,
-                _ => false,
-            }
+extension<T: std::ops::Eq<T>> ?T {
+    pub fn ==(this, rhs: *?T): bool {
+        match (this, rhs) {
+            (null, null) => true,
+            (?lhs, ?rhs) => lhs == rhs,
+            _ => false,
         }
-
-        pub fn ==(this, rhs: *T): bool => this is ?lhs and lhs == rhs;
     }
 
-    pub extension OptionFlatten<T> for ??T {
-        pub fn flatten(my this): ?T => this is ??val then val;
-    }
+    pub fn ==(this, rhs: *T): bool => this is ?lhs and lhs == rhs;
+}
+
+extension<T> ??T {
+    pub fn flatten(my this): ?T => this is ??val then val;
 }

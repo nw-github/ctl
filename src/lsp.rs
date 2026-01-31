@@ -1146,8 +1146,10 @@ fn get_completion(proj: &Project, item: &LspItem, method: bool) -> Option<Comple
             let mut empty_variant = false;
             if let Some(&id) = owner.kind.as_user_type() {
                 if scopes.get(id).kind.is_extension() && detail.is_none() {
-                    detail =
-                        Some(format!(" (from {})", strings.resolve(&scopes.get(id).name.data)));
+                    let module = scopes
+                        .walk(scopes.get(id).scope)
+                        .fold(None, |prev, scope| scope.1.kind.as_module().or(prev));
+                    detail = Some(format!(" (from {})", strings.resolve(&module.unwrap().data)));
                 }
 
                 empty_variant = scopes.get(id).is_empty_variant(f.name.data);

@@ -33,7 +33,7 @@ sealed trait Float {
     unsafe fn write_to_ryu_buffer(my this, result: ^mut u8): uint;
 }
 
-pub extension Float32Ext for f32 {
+extension f32 {
     impl Float {
         fn is_nonfinite(my this): bool {
             const EXP_MASK: u32 = 0x7f800000;
@@ -59,7 +59,7 @@ pub extension Float32Ext for f32 {
     }
 }
 
-pub extension Float64Ext for f64 {
+extension f64 {
     impl Float {
         fn is_nonfinite(my this): bool {
             const EXP_MASK: u64 = 0x7ff0000000000000;

@@ -96,8 +96,6 @@ pub enum StmtData {
         assoc_types: TypeParams,
     },
     Extension {
-        public: bool,
-        name: Located<StrId>,
         ty: TypeHint,
         type_params: TypeParams,
         impls: Vec<Located<ImplBlock>>,

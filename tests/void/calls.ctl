@@ -1,5 +1,5 @@
 // Output: Passed!
-use std::sync::{Atomic, ext::*};
+use std::sync::Atomic;
 
 trait Foo {
     fn bar(this);

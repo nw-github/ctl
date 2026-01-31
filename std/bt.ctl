@@ -4,7 +4,7 @@ use std::deps::libc;
 use std::panic::SourceLocation;
 use std::str::CStr;
 
-extension Helpers for str {
+extension str {
     fn advance_if_eq(mut this, v: char): bool {
         if this.chars().next() is ?ch and ch == v {
             *this = unsafe this.substr_unchecked(ch.len_utf8()..);
@@ -158,8 +158,6 @@ pub struct MaybeMangledName {
 
     impl std::fmt::Format {
         fn fmt(this, f: *mut std::fmt::Formatter) {
-            use std::str::ext::*;
-
             guard str::from_utf8(this.func) is ?base else {
                 for ch in this.func.iter_chars_lossy() {
                     f.write_char(ch);

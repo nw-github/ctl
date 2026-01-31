@@ -1,8 +1,7 @@
 use std::fmt::{Debug, Format, Formatter};
 use std::reflect::{Integral, Signed, Unsigned};
-use super::ByteSpanExt;
 
-pub extension U8Impl for u8 {
+extension u8 {
     pub fn is_ascii(my this): bool => (this as char).is_ascii();
     pub fn is_ascii_whitespace(my this): bool => (this as char).is_ascii_whitespace();
     pub fn is_ascii_upper(my this): bool => (this as char).is_ascii_upper();
@@ -42,7 +41,7 @@ mod gcc_intrin {
     pub extern fn __builtin_ctzg<T: Unsigned>(u: T): c_int;
 }
 
-pub extension IntegralImpl<Int: Integral> for Int {
+extension<Int: Integral> Int {
     impl std::ops::TotallyOrdered { }
 
     pub fn +(this, rhs: Int): Int {
@@ -353,7 +352,7 @@ pub extension IntegralImpl<Int: Integral> for Int {
     pub fn is_signed(): bool => Int::min_value() < 0.cast();
 }
 
-pub extension SignedImpl<SInt: Signed> for SInt {
+extension<SInt: Signed> SInt {
     // TODO: complain if -this == this (overflow) in debug mode
     pub fn abs(my this): SInt => this < 0.cast() then -this else this;
 
@@ -361,7 +360,7 @@ pub extension SignedImpl<SInt: Signed> for SInt {
     pub fn -(this): SInt => -this;
 }
 
-pub extension UnsignedImpl<UInt: Unsigned> for UInt {
+extension<UInt: Unsigned> UInt {
     // TODO: popcountg and friends only work for unsigned integers/BitInts under 128 bits, and are
     // only supported on later versions of clang & gcc. Generate a fallback for other types.
     //
@@ -384,14 +383,14 @@ pub extension UnsignedImpl<UInt: Unsigned> for UInt {
 
 use std::mem::{size_of, bit_cast};
 
-pub extension U32Impl for u32 {
+extension u32 {
     // TODO: make these a macro
     pub fn from_le_bytes(bytes: [u8; size_of::<This>()]): This => unsafe bit_cast(bytes);
     pub fn from_ne_bytes(bytes: [u8; size_of::<This>()]): This => unsafe bit_cast(bytes);
     pub fn from_be_bytes(bytes: [u8; size_of::<This>()]): This => This::from_le_bytes(bytes).swap_bytes();
 }
 
-pub extension UintImpl for uint {
+extension uint {
     pub fn from_le_bytes(bytes: [u8; size_of::<This>()]): This => unsafe bit_cast(bytes);
     pub fn from_ne_bytes(bytes: [u8; size_of::<This>()]): This => unsafe bit_cast(bytes);
     pub fn from_be_bytes(bytes: [u8; size_of::<This>()]): This => This::from_le_bytes(bytes).swap_bytes();
@@ -403,7 +402,7 @@ pub extension UintImpl for uint {
     pub fn to_raw_mut<T>(my this): ^mut T => This::to_raw_mut(this);
 }
 
-pub extension IntImpl for int {
+extension int {
     pub fn from_le_bytes(bytes: [u8; size_of::<This>()]): This => unsafe bit_cast(bytes);
     pub fn from_ne_bytes(bytes: [u8; size_of::<This>()]): This => unsafe bit_cast(bytes);
     pub fn from_be_bytes(bytes: [u8; size_of::<This>()]): This => This::from_le_bytes(bytes).swap_bytes();
