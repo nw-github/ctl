@@ -989,67 +989,98 @@ fn get_document_symbols(proj: &Project, src: &str, file: FileId) -> Vec<Document
         }
     };
 
+    let dump_functions = |scope: ScopeId, children: &mut Vec<DocumentSymbol>| {
+        for id in proj.scopes[scope].iter_fns() {
+            if !valid_name(proj.scopes.get(id).name) {
+                continue;
+            }
+
+            children.push(func_symbol(proj.scopes.get(id)));
+        }
+    };
+
     let mut result = vec![];
-    /*
-       for (_, ut) in proj.scopes.types() {
-           if !valid_name(ut.name) {
-               continue;
-           }
+    for (_, tr) in proj.scopes.traits() {
+        if !valid_name(tr.name) {
+            continue;
+        }
 
-           let kind = match &ut.kind {
-               UserTypeKind::Template => continue,
-               UserTypeKind::Union(_) => SymbolKind::ENUM,
-               UserTypeKind::Trait { .. } => SymbolKind::INTERFACE,
-               _ => SymbolKind::STRUCT,
-           };
+        let mut children = vec![];
+        dump_functions(tr.body_scope, &mut children);
 
-           let mut children = vec![];
-           for id in ut.fns.iter() {
-               if !valid_name(proj.scopes.get(**id).name) {
-                   continue;
-               }
+        let range = get_range(tr.name.span, tr.full_span);
+        let selection_range = Diagnostics::get_span_range(src, tr.name.span, OffsetMode::Utf16);
+        result.push(DocumentSymbol {
+            name: proj.strings.resolve(&tr.name.data).into(),
+            kind: SymbolKind::INTERFACE,
+            range,
+            selection_range,
+            children: (!children.is_empty()).then_some(children),
+            detail: None,
+            tags: None,
+            #[allow(deprecated)]
+            deprecated: None,
+        });
+    }
 
-               children.push(func_symbol(proj.scopes.get(**id)));
-           }
+    for (_, ut) in proj.scopes.types() {
+        if !valid_name(ut.name) {
+            continue;
+        }
 
-           for (name, member) in ut.members.iter() {
-               if !valid_name(Located::new(member.span, *name)) {
-                   continue;
-               }
+        let kind = match &ut.kind {
+            UserTypeKind::Template => continue,
+            UserTypeKind::Union(_) => SymbolKind::ENUM,
+            _ => SymbolKind::STRUCT,
+        };
 
-               let range = Diagnostics::get_span_range(src, member.span, OffsetMode::Utf16);
-               children.push(DocumentSymbol {
-                   name: proj.strings.resolve(name).into(),
-                   kind: SymbolKind::FIELD,
-                   range,
-                   selection_range: range,
-                   children: None,
-                   detail: None,
-                   tags: None,
-                   #[allow(deprecated)]
-                   deprecated: None,
-               });
-           }
+        let mut children = vec![];
+        dump_functions(ut.body_scope, &mut children);
 
-           let range = get_range(ut.name.span, ut.full_span);
-           let selection_range = Diagnostics::get_span_range(src, ut.name.span, OffsetMode::Utf16);
-           result.push(DocumentSymbol {
-               name: proj.strings.resolve(&ut.name.data).into(),
-               kind,
-               range,
-               selection_range,
-               children: (!children.is_empty()).then_some(children),
-               detail: None,
-               tags: None,
-               #[allow(deprecated)]
-               deprecated: None,
-           });
-       }
-    */
+        for imp in ut.iter_impls(&proj.scopes, false) {
+            if let Some(scope) = imp.scope {
+                dump_functions(scope, &mut children);
+            }
+        }
+
+        for (name, member) in ut.members.iter() {
+            if !valid_name(Located::new(member.span, *name)) {
+                continue;
+            }
+
+            let range = Diagnostics::get_span_range(src, member.span, OffsetMode::Utf16);
+            children.push(DocumentSymbol {
+                name: proj.strings.resolve(name).into(),
+                kind: SymbolKind::FIELD,
+                range,
+                selection_range: range,
+                children: None,
+                detail: None,
+                tags: None,
+                #[allow(deprecated)]
+                deprecated: None,
+            });
+        }
+
+        let range = get_range(ut.name.span, ut.full_span);
+        let selection_range = Diagnostics::get_span_range(src, ut.name.span, OffsetMode::Utf16);
+        result.push(DocumentSymbol {
+            name: proj.strings.resolve(&ut.name.data).into(),
+            kind,
+            range,
+            selection_range,
+            children: (!children.is_empty()).then_some(children),
+            detail: None,
+            tags: None,
+            #[allow(deprecated)]
+            deprecated: None,
+        });
+    }
 
     for (_, func) in proj.scopes.functions() {
         if !valid_name(func.name)
             || proj.scopes[func.scope].kind.is_user_type()
+            || proj.scopes[func.scope].kind.is_trait()
             || proj.scopes[func.scope].kind.is_impl()
             || func.constructor.is_some()
         {
@@ -1120,6 +1151,8 @@ fn get_completion(proj: &Project, item: &LspItem, method: bool) -> Option<Comple
                 }
 
                 empty_variant = scopes.get(id).is_empty_variant(f.name.data);
+            } else if let Some(&id) = owner.kind.as_trait() {
+                detail = Some(format!(" (as {})", proj.str(scopes.get(id).name.data)));
             }
 
             let name = strings.resolve(&f.name.data);

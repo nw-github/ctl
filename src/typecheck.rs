@@ -538,8 +538,6 @@ impl TypeChecker<'_> {
     }
 
     fn check_dot_completions(&mut self, span: Span, ty: TypeId, method: bool) {
-        // TODOX: unpatch this
-        /*
         if self.proj.completions.is_some() || !LspInput::matches(self.lsp_input.completion, span) {
             return;
         }
@@ -550,97 +548,78 @@ impl TypeChecker<'_> {
 
         let mut completions = vec![];
         let mut added = HashSet::new();
-        let mut add_methods = |proj: &Project,
-                               c: &mut Vec<LspItem>,
-                               fns: &[Vis<FunctionId>],
-                               cap: bool,
-                               m: UserTypeId,
-                               dynamic: bool| {
-            for func in fns {
-                let f = proj.scopes.get(func.id);
-                if added.contains(&f.name.data) {
-                    continue;
-                }
+        let mut add_methods =
+            |this: &Self, c: &mut Vec<LspItem>, scope: ScopeId, tr: Option<TraitId>| {
+                let cap = tr.is_some() || this.can_access_privates(scope);
+                for id in this.proj.scopes[scope].iter_fns() {
+                    let f = this.proj.scopes.get(id);
+                    if added.contains(&f.name.data) {
+                        continue;
+                    }
 
-                if dynamic && !f.is_dyn_compatible(&proj.scopes, &proj.types, m) {
-                    continue;
-                }
+                    if let Some(tr) = tr
+                        && !f.is_dyn_compatible(&this.proj.scopes, &this.proj.types, tr)
+                    {
+                        continue;
+                    }
 
-                if proj.str(f.name.data).contains('$') {
-                    continue;
-                }
+                    if this.proj.str(f.name.data).contains('$') {
+                        continue;
+                    }
 
-                if (f.public || cap)
-                    && (!method || f.params.first().is_some_and(|p| p.label == Strings::THIS_PARAM))
-                {
-                    c.push(LspItem::Fn(func.id, Some(m)));
-                    added.insert(f.name.data);
+                    if (f.public || cap)
+                        && (!method
+                            || f.params.first().is_some_and(|p| p.label == Strings::THIS_PARAM))
+                    {
+                        c.push(LspItem::Fn(id));
+                        added.insert(f.name.data);
+                    }
                 }
+            };
+
+        if let Some(tr) = self.proj.types[ty].as_dyn_pointee() {
+            let tr = tr.clone();
+            self.resolve_super_traits(tr.id);
+            for tr in self.proj.scopes.walk_super_traits(&self.proj.types, tr) {
+                add_methods(
+                    self,
+                    &mut completions,
+                    self.proj.scopes.get(tr.id).body_scope,
+                    Some(tr.id),
+                );
             }
-        };
+        }
 
         if let Some(ut_id) = self.proj.types[ty].as_user().map(|ut| ut.id) {
             let data = self.proj.scopes.get(ut_id);
-            let cap = self.can_access_privates(data.scope);
             if method {
+                let cap = self.can_access_privates(data.scope);
                 for (name, _) in data.members.iter().filter(|(_, m)| m.public || cap) {
                     completions.push(LspItem::Property(Some(ty), ut_id, *name))
                 }
             }
 
-            for tr in self.proj.scopes.get(ut_id).impls.iter_checked() {
-                for tr in self.proj.scopes.walk_super_traits(tr.id) {
-                    let data = self.proj.scopes.get(tr);
-                    add_methods(&self.proj, &mut completions, &data.fns, cap, tr, false);
-                }
-            }
-
-            add_methods(&self.proj, &mut completions, &data.fns, cap, ut_id, false);
-        } else if let Some(tr) = self.proj.types[ty].as_dyn_pointee() {
-            let tr_id = tr.id;
-            self.resolve_super_traits(tr_id);
-            for tr in self.proj.scopes.walk_super_traits(tr_id) {
-                add_methods(
-                    &self.proj,
-                    &mut completions,
-                    &self.proj.scopes.get(tr).fns,
-                    true,
-                    tr,
-                    true,
-                );
-            }
+            add_methods(self, &mut completions, data.body_scope, None);
         }
 
         let extensions = self.extensions_in_scope_for(ty);
         for ext in extensions.iter() {
-            for imp in self.proj.scopes.get(ext.id).impls.iter_checked() {
-                for tr in self.proj.scopes.walk_super_traits(imp.id) {
-                    add_methods(
-                        &self.proj,
-                        &mut completions,
-                        &self.proj.scopes.get(tr).fns,
-                        true,
-                        tr,
-                        false,
-                    );
-                }
+            let data = self.proj.scopes.get(ext.id);
+            add_methods(self, &mut completions, data.body_scope, None);
+        }
+
+        for ut in self.proj.types[ty].as_user().into_iter().chain(extensions.iter()) {
+            for imp in self.proj.scopes.get(ut.id).iter_impls(&self.proj.scopes, true) {
+                add_methods(
+                    self,
+                    &mut completions,
+                    self.proj.scopes.get(imp.tr.id).body_scope,
+                    None,
+                );
             }
         }
 
-        for ext in extensions.iter() {
-            let data = self.proj.scopes.get(ext.id);
-            add_methods(
-                &self.proj,
-                &mut completions,
-                &data.fns,
-                self.can_access_privates(data.scope),
-                ext.id,
-                false,
-            );
-        }
-
         self.proj.completions = Some(Completions { items: completions, method });
-         */
     }
 
     fn check_cursor_completions(&mut self, span: Span, ty: bool) {
@@ -1182,6 +1161,7 @@ impl<'a> TypeChecker<'a> {
                         is_sealed,
                         is_unsafe,
                         implementors: vec![],
+                        full_span: stmt.data.span,
                     };
                     (tr, fns, this_id)
                 });

@@ -463,6 +463,7 @@ pub struct Trait {
     pub is_sealed: bool,
     pub is_unsafe: bool,
     pub implementors: Vec<ImplId>,
+    pub full_span: Span,
 }
 
 pub trait HasTypeParams {
@@ -561,6 +562,10 @@ impl Scope {
 
     pub fn find_fn(&self, name: StrId) -> Option<Vis<FunctionId>> {
         self.find_in_vns(name).and_then(|v| v.into_fn().ok().map(|id| Vis::new(id, v.public)))
+    }
+
+    pub fn iter_fns(&self) -> impl Iterator<Item = FunctionId> {
+        self.vns.values().flat_map(|v| v.into_fn().ok())
     }
 }
 
