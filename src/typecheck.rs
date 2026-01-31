@@ -7690,8 +7690,6 @@ pub trait SharedStuff {
     fn proj(&self) -> &Project;
     fn get_tuple(&mut self, ty_args: Vec<TypeId>) -> TypeId;
 
-    // ------
-
     fn lookup_trait_fn(
         &mut self,
         inst: TypeId,
@@ -7720,8 +7718,6 @@ pub trait SharedStuff {
         func.ty_args.copy_args(&args);
         Some(MemberFn { func, trait_fn })
     }
-
-    // ------
 
     fn infer_type_args(&mut self, ty_args: &mut TypeArgs, src: TypeId, target: TypeId) {
         self.do_infer_type_args(ty_args, src, target, |_, _, _| true);
@@ -7824,58 +7820,6 @@ pub trait SharedStuff {
         }
     }
 
-    fn get_default_trait_impls(&mut self, id: TypeId) -> Vec<GenericTrait> {
-        let proj = self.proj();
-        let scopes = &proj.scopes;
-
-        let mut trs = vec![];
-        let mut add_if = |cond: bool, lang: LangTrait| {
-            if cond && let Some(&tr_id) = scopes.lang_traits.get(&lang) {
-                trs.push(GenericTrait::new(tr_id, TypeArgs::default()));
-            }
-        };
-
-        let ty = &proj.types[id];
-        add_if(ty.is_numeric(), LangTrait::Numeric);
-        add_if(ty.as_user().is_some_and(|ut| scopes.get(ut.id).kind.is_tuple()), LangTrait::Tuple);
-
-        if let Some(value) = ty.as_integral(false) {
-            add_if(value.signed, LangTrait::Signed);
-            add_if(!value.signed, LangTrait::Unsigned);
-            add_if(true, LangTrait::Integral);
-        } else if let Type::Array(id, _) = ty
-            && let Some(&tr_id) = scopes.lang_traits.get(&LangTrait::Array)
-        {
-            trs.push(GenericTrait::from_type_args(scopes, tr_id, [*id]));
-        } else if let Some(&tr_id) = scopes.lang_traits.get(&LangTrait::FnPtr) {
-            match ty {
-                Type::Fn(f) => 'out: {
-                    let data = scopes.get(f.id);
-                    if data.is_extern || data.is_unsafe {
-                        break 'out;
-                    }
-
-                    let ret = data.ret.with_templates(&self.proj().types, &f.ty_args);
-                    let args = data
-                        .params
-                        .iter()
-                        .map(|p| p.ty.with_templates(&proj.types, &f.ty_args))
-                        .collect();
-                    let args = self.get_tuple(args);
-                    trs.push(GenericTrait::from_type_args(&self.proj().scopes, tr_id, [args, ret]));
-                }
-                Type::FnPtr(f) if !f.is_extern && !f.is_unsafe => {
-                    let ret = f.ret;
-                    let args = self.get_tuple(f.params.clone());
-                    trs.push(GenericTrait::from_type_args(&self.proj().scopes, tr_id, [args, ret]));
-                }
-                _ => {}
-            }
-        }
-
-        trs
-    }
-
     /// For the source:
     /// ```
     /// trait Bar<I, J, K> {}
@@ -7930,6 +7874,65 @@ pub trait SharedStuff {
         None
     }
 
+    fn compiler_implemented_tr(&mut self, id: TypeId, tr: TraitId) -> Option<GenericTrait> {
+        let proj = self.proj();
+        let scopes = &proj.scopes;
+
+        let default_if = |cond: bool| cond.then(|| GenericTrait::new(tr, TypeArgs::default()));
+        let is_same_tr = |lang: LangTrait| scopes.lang_traits.get(&lang) == Some(&tr);
+
+        let ty = &proj.types[id];
+        if is_same_tr(LangTrait::Tuple) {
+            return default_if(ty.as_user().is_some_and(|ut| scopes.get(ut.id).kind.is_tuple()));
+        } else if is_same_tr(LangTrait::Numeric) {
+            return default_if(ty.is_numeric());
+        } else if is_same_tr(LangTrait::Integral) {
+            return default_if(ty.as_integral(false).is_some());
+        } else if is_same_tr(LangTrait::Signed) {
+            return default_if(ty.as_integral(false).is_some_and(|v| v.signed));
+        } else if is_same_tr(LangTrait::Unsigned) {
+            return default_if(ty.as_integral(false).is_some_and(|v| !v.signed));
+        } else if is_same_tr(LangTrait::Array) {
+            if let Type::Array(id, _) = ty {
+                return Some(GenericTrait::from_type_args(scopes, tr, [*id]));
+            }
+        } else if is_same_tr(LangTrait::FnPtr) {
+            match ty {
+                Type::Fn(f) => 'out: {
+                    let data = scopes.get(f.id);
+                    if data.is_extern || data.is_unsafe {
+                        break 'out;
+                    }
+
+                    let ret = data.ret.with_templates(&proj.types, &f.ty_args);
+                    let args = data
+                        .params
+                        .iter()
+                        .map(|p| p.ty.with_templates(&proj.types, &f.ty_args))
+                        .collect();
+                    let args = self.get_tuple(args);
+                    return Some(GenericTrait::from_type_args(
+                        &self.proj().scopes,
+                        tr,
+                        [args, ret],
+                    ));
+                }
+                Type::FnPtr(f) if !f.is_extern && !f.is_unsafe => {
+                    let ret = f.ret;
+                    let args = self.get_tuple(f.params.clone());
+                    return Some(GenericTrait::from_type_args(
+                        &self.proj().scopes,
+                        tr,
+                        [args, ret],
+                    ));
+                }
+                _ => {}
+            }
+        }
+
+        None
+    }
+
     /// Find impls of `tr` where `ty` is compatible with `imp.ty`
     /// TODOX: return ImplId
     fn find_trait_impls(
@@ -7938,19 +7941,17 @@ pub trait SharedStuff {
         tr: TraitId,
     ) -> Vec<(CheckedImpl, Option<GenericUserType>)> {
         let mut res = vec![];
-        for def in self.get_default_trait_impls(ty) {
-            if def.id == tr {
-                let imp = CheckedImpl {
-                    scope: None,
-                    assoc_types: Default::default(),
-                    type_params: Default::default(),
-                    tr: def,
-                    ty,
-                    span: Span::nowhere(),
-                    super_trait: false,
-                };
-                res.push((imp, None));
-            }
+        if let Some(def) = self.compiler_implemented_tr(ty, tr) {
+            let imp = CheckedImpl {
+                scope: None,
+                assoc_types: Default::default(),
+                type_params: Default::default(),
+                tr: def,
+                ty,
+                span: Span::nowhere(),
+                super_trait: false,
+            };
+            res.push((imp, None));
         }
 
         let implementors = self.proj().scopes.get(tr).implementors.clone();
