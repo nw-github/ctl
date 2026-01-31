@@ -7884,6 +7884,8 @@ pub trait SharedStuff {
         }
 
         let implementors = self.proj().scopes.get(tr).implementors.clone();
+
+        let mut fallback_debug = None;
         for implementor in implementors {
             let Some(imp) = self.proj().scopes.impls.get(implementor).as_checked() else {
                 continue;
@@ -7905,8 +7907,18 @@ pub trait SharedStuff {
 
             let imp = imp.clone();
             if let Some(ut) = self.applies_to(ut, imp.ty, ty) {
-                res.push((imp, Some(ut)));
+                // XXX: HACK! Force the fallback debug impl to be the last one checked so any other
+                // Debug impl will override it
+                if self.proj().scopes.get(ut.id).attrs.lang == Some(LangType::FallbackDebug) {
+                    fallback_debug = Some((imp, Some(ut)));
+                } else {
+                    res.push((imp, Some(ut)));
+                }
             }
+        }
+
+        if let Some(delay) = fallback_debug {
+            res.push(delay);
         }
 
         res
