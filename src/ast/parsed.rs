@@ -220,7 +220,7 @@ pub enum ExprData {
         inclusive: bool,
     },
     Continue(Option<Located<StrId>>),
-    Lambda {
+    Closure {
         policy: Option<DefaultCapturePolicy>,
         captures: Vec<Capture>,
         params: Vec<(Located<Pattern>, Option<TypeHint>)>,

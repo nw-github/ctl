@@ -455,8 +455,8 @@ impl Pretty<'_> {
                 }
             }
             ExprData::Error => {}
-            ExprData::Lambda { policy, captures, params, ret, body } => {
-                self.print_header(&tabs, "Expr::Lambda", &[]);
+            ExprData::Closure { policy, captures, params, ret, body } => {
+                self.print_header(&tabs, "Expr::Closure", &[]);
                 let tabs = INDENT.repeat(indent + 1);
                 eprintln!("{tabs}{}: {policy:?}", "Policy".yellow());
 

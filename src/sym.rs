@@ -123,7 +123,7 @@ pub struct BlockScopeKind {
 pub enum ScopeKind {
     Block(BlockScopeKind),
     Loop(LoopScopeKind),
-    Lambda(Option<TypeId>, DefaultCapturePolicy),
+    Closure(Option<TypeId>, DefaultCapturePolicy),
     Function(FunctionId),
     UserType(UserTypeId),
     Trait(TraitId),

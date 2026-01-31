@@ -122,7 +122,7 @@ pub enum ExprData {
     DynCoerce(Expr),
     VariantInstance(StrId, IndexMap<StrId, Expr>),
     SpanMutCoerce(Expr),
-    ClosureCoerce(Expr),
+    ClosureToFnPtr(Expr),
     Instance(IndexMap<StrId, Expr>),
     Array(Vec<Expr>),
     ArrayWithInit {

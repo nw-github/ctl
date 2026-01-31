@@ -1845,7 +1845,7 @@ impl<'a> Codegen<'a> {
                 self.emit_expr(inner, state);
                 self.buffer.emit(")");
             }
-            &ExprData::ClosureCoerce(inner) => {
+            &ExprData::ClosureToFnPtr(inner) => {
                 hoist!(self, {
                     write_de!(self.buffer, "(void)");
                     self.emit_expr_inline(inner, state);

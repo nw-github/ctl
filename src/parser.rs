@@ -726,7 +726,7 @@ impl<'a> Parser<'a> {
                 self.expect(Token::LBrace);
                 self.csv_expr(Vec::new(), Token::RBrace, span, Self::expression, ExprData::Set)
             }
-            Token::BitOr => self.lambda_expr(span),
+            Token::BitOr => self.closure_expr(span),
             Token::Return => {
                 let (span, expr) = if !self.is_range_end(EvalContext::Normal) {
                     let expr = self.expression();
@@ -1087,7 +1087,7 @@ impl<'a> Parser<'a> {
         self.arena.expr(block.span, ExprData::Block(block.data, label))
     }
 
-    fn lambda_expr(&mut self, head: Span) -> Expr {
+    fn closure_expr(&mut self, head: Span) -> Expr {
         let mut captures = vec![];
         let mut policy = None;
         let mut set_policy = |this: &mut Self, new_policy: DefaultCapturePolicy, span: Span| {
@@ -1178,7 +1178,7 @@ impl<'a> Parser<'a> {
 
         self.arena.expr(
             head.extended_to(body.span),
-            ExprData::Lambda { policy, captures, params, ret, body },
+            ExprData::Closure { policy, captures, params, ret, body },
         )
     }
 

@@ -518,7 +518,7 @@ impl<'a> TypeChecker<'a> {
                 return;
             }
 
-            if let ScopeKind::Lambda(_, policy) = scope.kind {
+            if let ScopeKind::Closure(_, policy) = scope.kind {
                 if !in_closure {
                     closure_policy = Some(policy);
                 } else {
@@ -2378,7 +2378,7 @@ impl TypeChecker<'_> {
         }
     }
 
-    fn check_lambda(
+    fn check_closure(
         &mut self,
         span: Span,
         t: Option<TypeId>,
@@ -2507,7 +2507,7 @@ impl TypeChecker<'_> {
         let span = body.span;
         let (_, body) =
             self.with_safety(Safety::Safe, |this| this.check_expr_no_never_propagation(body, ret));
-        let ret = self.proj.scopes[self.current].kind.as_lambda().unwrap().0.unwrap_or(body.ty);
+        let ret = self.proj.scopes[self.current].kind.as_closure().unwrap().0.unwrap_or(body.ty);
         let body = self.type_check_checked(body, ret, span);
         let args_tuple = self.proj.scopes.get_tuple(names, ty_args, &self.proj.types);
 
@@ -3543,7 +3543,7 @@ impl TypeChecker<'_> {
             }
             &PExprData::Return(expr) => self.check_return(expr, span),
             &PExprData::Tail(expr) => match &self.proj.scopes[self.current].kind {
-                ScopeKind::Function(_) | ScopeKind::Lambda(_, _) => self.check_return(expr, span),
+                ScopeKind::Function(_) | ScopeKind::Closure(_, _) => self.check_return(expr, span),
                 ScopeKind::Loop { .. } => self.type_check(expr, TypeId::VOID),
                 ScopeKind::Block(data) => self.check_yield(Some(expr), *data, self.current, span),
                 _ => self.error(Error::new("yield outside of block", expr.span)),
@@ -3703,12 +3703,12 @@ impl TypeChecker<'_> {
                 self.arena.typed(to_id, CExprData::As(expr))
             }
             PExprData::Error => CExpr::default(),
-            &PExprData::Lambda { policy, ref captures, ref params, ret, body } => {
+            &PExprData::Closure { policy, ref captures, ref params, ret, body } => {
                 let ret = ret
                     .map(|ret| self.resolve_typehint(ret))
                     .or_else(|| target.and_then(|t| self.infer_closure_type(t, None)));
-                self.enter(ScopeKind::Lambda(ret, policy.unwrap_or_default()), |this| {
-                    this.check_lambda(span, target, captures, params, ret, body)
+                self.enter(ScopeKind::Closure(ret, policy.unwrap_or_default()), |this| {
+                    this.check_closure(span, target, captures, params, ret, body)
                 })
             }
             &PExprData::Unsafe(expr) => {
@@ -3974,7 +3974,7 @@ impl TypeChecker<'_> {
 
         for (_, scope) in self.proj.scopes.walk(self.current) {
             match &scope.kind {
-                &ScopeKind::Lambda(target, _) => {
+                &ScopeKind::Closure(target, _) => {
                     if let Some(target) = target
                         && target.as_option_inner(&self.proj).is_none()
                     {
@@ -4017,14 +4017,14 @@ impl TypeChecker<'_> {
     fn check_return(&mut self, expr: PExpr, span: Span) -> CExpr {
         for (id, scope) in self.proj.scopes.walk(self.current) {
             match &scope.kind {
-                &ScopeKind::Lambda(target, policy) => {
+                &ScopeKind::Closure(target, policy) => {
                     let span = expr.span;
                     let mut expr = self.check_expr(expr, target);
                     self.proj.scopes[id].kind = if let Some(target) = target {
                         expr = self.type_check_checked(expr, target, span);
-                        ScopeKind::Lambda(Some(target), policy)
+                        ScopeKind::Closure(Some(target), policy)
                     } else {
-                        ScopeKind::Lambda(Some(expr.ty), policy)
+                        ScopeKind::Closure(Some(expr.ty), policy)
                     };
                     return self.arena.typed(TypeId::NEVER, CExprData::Return(expr));
                 }
@@ -5695,7 +5695,7 @@ impl TypeChecker<'_> {
                 }
             }
             (Type::User(lhs), Type::FnPtr(rhs)) if can_closure_to_fn_ptr(self, lhs, rhs) => {
-                Ok(self.arena.typed(target, CExprData::ClosureCoerce(expr)))
+                Ok(self.arena.typed(target, CExprData::ClosureToFnPtr(expr)))
             }
             (lhs, rhs) if may_ptr_coerce(&self.proj.types, lhs, rhs) => {
                 Ok(CExpr::new(target, expr.data))
