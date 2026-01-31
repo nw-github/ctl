@@ -100,10 +100,7 @@ pub enum Stmt {
     Expr(Expr),
     Let(Pattern, Option<Expr>),
     Defer(Expr),
-    Guard {
-        cond: Expr,
-        body: Expr,
-    },
+    Guard { cond: Expr, body: Expr },
 }
 
 pub type ExprId = arena::Id<ExprData>;
@@ -122,10 +119,10 @@ pub enum ExprData {
     },
     CallDyn(GenericFn, IndexMap<StrId, Expr>),
     CallFnPtr(Expr, Vec<Expr>),
-    DynCoerce(Expr, ScopeId),
+    DynCoerce(Expr),
     VariantInstance(StrId, IndexMap<StrId, Expr>),
     SpanMutCoerce(Expr),
-    ClosureCoerce(Expr, ScopeId),
+    ClosureCoerce(Expr),
     Instance(IndexMap<StrId, Expr>),
     Array(Vec<Expr>),
     ArrayWithInit {
@@ -137,8 +134,8 @@ pub enum ExprData {
         init: Expr,
         count: Expr,
     },
-    Set(Vec<Expr>, ScopeId),
-    Map(Vec<(Expr, Expr)>, ScopeId),
+    Set(Vec<Expr>),
+    Map(Vec<(Expr, Expr)>),
     Int(ComptimeInt),
     Float(f64),
     String(StrId),
@@ -146,12 +143,11 @@ pub enum ExprData {
     StringInterp {
         strings: Vec<StrId>,
         args: Vec<(Expr, FormatOpts)>,
-        scope: ScopeId,
     },
     ByteString(ByteStrId),
     Void,
-    Fn(GenericFn, ScopeId),
-    MemFn(MemberFn, ScopeId),
+    Fn(GenericFn),
+    MemFn(MemberFn),
     Var(VariableId),
     Block(Block),
     AffixOperator {
@@ -340,7 +336,7 @@ impl Expr {
         arena: &mut ExprArena,
     ) -> Self {
         let func = mfn.func.clone();
-        let callee = arena.alloc(ExprData::MemFn(mfn, scope));
+        let callee = arena.alloc(ExprData::MemFn(mfn));
         Self {
             ty: ret,
             data: arena.alloc(ExprData::Call {
@@ -361,7 +357,7 @@ impl Expr {
         span: Span,
         arena: &mut ExprArena,
     ) -> Self {
-        let callee = arena.alloc(ExprData::Fn(func.clone(), scope));
+        let callee = arena.alloc(ExprData::Fn(func.clone()));
         Expr {
             ty: ret,
             data: arena.alloc(ExprData::Call {

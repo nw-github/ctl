@@ -2284,7 +2284,7 @@ impl TypeChecker<'_> {
         let mut typ = None;
         match self.arena.get(inner.data) {
             CExprData::Call { callee, .. } => {
-                if matches!(self.arena.get(callee.data), CExprData::Fn(f, _)
+                if matches!(self.arena.get(callee.data), CExprData::Fn(f)
                     if self.proj.scopes.get(f.id).typ.is_subscript())
                 {
                     self.proj.diag.report(Warning::subscript_addr(span));
@@ -2295,7 +2295,7 @@ impl TypeChecker<'_> {
                     self.proj.diag.report(Warning::bitfield_addr(span));
                 }
             }
-            CExprData::Fn(func, _) | CExprData::MemFn(MemberFn { func, .. }, _) => {
+            CExprData::Fn(func) | CExprData::MemFn(MemberFn { func, .. }) => {
                 if matches!(op, UnaryOp::AddrRaw | UnaryOp::AddrRawMut) {
                     self.proj.diag.report(Error::new("cannot create raw pointer to function", span))
                 } else if matches!(op, UnaryOp::AddrMut) {
@@ -3026,7 +3026,7 @@ impl TypeChecker<'_> {
                 checked.extend(elements.map(|e| self.type_check(e, ty)));
                 CExpr::new(
                     self.make_lang_type(set, [ty], span),
-                    self.arena.alloc(CExprData::Set(checked, self.current)),
+                    self.arena.alloc(CExprData::Set(checked)),
                 )
             }
             PExprData::Map(elements) => {
@@ -3059,7 +3059,7 @@ impl TypeChecker<'_> {
                 );
                 CExpr::new(
                     self.make_lang_type(map, [k, v], span),
-                    self.arena.alloc(CExprData::Map(result, self.current)),
+                    self.arena.alloc(CExprData::Map(result)),
                 )
             }
             &PExprData::Range { start, end, inclusive: incl } => {
@@ -3150,7 +3150,6 @@ impl TypeChecker<'_> {
                         expr.ty,
                         &GenericTrait::from_type_args(&self.proj.scopes, target_tr, []),
                         fmt,
-                        self.current,
                         |proj, id| TypeArgs::in_order(&proj.scopes, id, []),
                     ) else {
                         self.proj.diag.report(Error::doesnt_implement(
@@ -3193,11 +3192,8 @@ impl TypeChecker<'_> {
 
                 CExpr::new(
                     self.make_lang_type_by_name(LangType::FmtArgs, [], span),
-                    self.arena.alloc(CExprData::StringInterp {
-                        strings: strings.clone(),
-                        args: out,
-                        scope: self.current,
-                    }),
+                    self.arena
+                        .alloc(CExprData::StringInterp { strings: strings.clone(), args: out }),
                 )
             }
             &PExprData::ByteString(s) => {
@@ -3313,10 +3309,8 @@ impl TypeChecker<'_> {
                         );
                     }
 
-                    self.arena.typed(
-                        self.proj.types.insert(Type::Fn(func.clone())),
-                        CExprData::Fn(func, self.current),
-                    )
+                    self.arena
+                        .typed(self.proj.types.insert(Type::Fn(func.clone())), CExprData::Fn(func))
                 }
                 ResolvedValue::MemberFn(mut mfn) => {
                     let unknowns: HashSet<_> = mfn
@@ -3351,7 +3345,7 @@ impl TypeChecker<'_> {
 
                     self.arena.typed(
                         self.proj.types.insert(Type::Fn(mfn.func.clone())),
-                        CExprData::MemFn(mfn, self.current),
+                        CExprData::MemFn(mfn),
                     )
                 }
                 ResolvedValue::UnionConstructor(ut) => bail!(
@@ -5666,21 +5660,21 @@ impl TypeChecker<'_> {
             (Type::DynPtr(lhs), Type::DynPtr(rhs))
             | (Type::DynMutPtr(lhs), Type::DynMutPtr(rhs) | Type::DynPtr(rhs)) => {
                 if lhs == rhs || can_upcast(self, lhs, rhs) {
-                    Ok(self.arena.typed(target, CExprData::DynCoerce(expr, self.current)))
+                    Ok(self.arena.typed(target, CExprData::DynCoerce(expr)))
                 } else {
                     Err(expr)
                 }
             }
             (&Type::Ptr(lhs), Type::DynPtr(rhs)) => {
                 if self.implements_trait(lhs, &rhs.clone()) {
-                    Ok(self.arena.typed(target, CExprData::DynCoerce(expr, self.current)))
+                    Ok(self.arena.typed(target, CExprData::DynCoerce(expr)))
                 } else {
                     Err(expr)
                 }
             }
             (Type::MutPtr(lhs), Type::DynPtr(rhs) | Type::DynMutPtr(rhs)) => {
                 if self.implements_trait(*lhs, &rhs.clone()) {
-                    Ok(self.arena.typed(target, CExprData::DynCoerce(expr, self.current)))
+                    Ok(self.arena.typed(target, CExprData::DynCoerce(expr)))
                 } else {
                     Err(expr)
                 }
@@ -5694,7 +5688,7 @@ impl TypeChecker<'_> {
                 }
             }
             (Type::User(lhs), Type::FnPtr(rhs)) if can_closure_to_fn_ptr(self, lhs, rhs) => {
-                Ok(self.arena.typed(target, CExprData::ClosureCoerce(expr, self.current)))
+                Ok(self.arena.typed(target, CExprData::ClosureCoerce(expr)))
             }
             (lhs, rhs) if may_ptr_coerce(&self.proj.types, lhs, rhs) => {
                 Ok(CExpr::new(target, expr.data))
@@ -7559,7 +7553,7 @@ impl TypeChecker<'_> {
                 Some(lhs)
             }
             CExprData::Call { callee, .. } => {
-                let CExprData::Fn(func, _) = self.arena.get(callee.data) else {
+                let CExprData::Fn(func) = self.arena.get(callee.data) else {
                     return self.error(Error::no_consteval(span));
                 };
 
@@ -7696,7 +7690,6 @@ pub trait SharedStuff {
         inst: TypeId,
         tr: &GenericTrait,
         name: StrId,
-        _scope: ScopeId,
         finish: impl FnOnce(&Project, FunctionId) -> TypeArgs + Copy,
     ) -> Option<MemberFn> {
         let (impl_scope, args) = self.do_implements_trait(inst, tr)?;

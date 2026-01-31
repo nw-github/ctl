@@ -358,34 +358,28 @@ impl TypeGen {
 struct State {
     func: GenericFn,
     tmpvar: usize,
-    caller: ScopeId,
     emitted_names: HashMap<StrId, VariableId>,
     uniq: Vec<(UserTypeId, TypeId)>,
 }
 
 impl State {
-    pub fn new(func: GenericFn, caller: ScopeId) -> Self {
+    pub fn new(func: GenericFn) -> Self {
         let mut uniq: Vec<_> = func.ty_args.iter().map(|v| (*v.0, *v.1)).collect();
         uniq.sort_by_key(|k| k.0);
 
-        Self { func, caller, tmpvar: 0, emitted_names: Default::default(), uniq }
-    }
-
-    pub fn in_body_scope(func: GenericFn, scopes: &Scopes) -> Self {
-        let scope = scopes.get(func.id).body_scope;
-        Self::new(func, scope)
+        Self { func, tmpvar: 0, emitted_names: Default::default(), uniq }
     }
 
     pub fn from_non_generic(id: FunctionId, scopes: &Scopes) -> Self {
-        Self::new(GenericFn::from_id(scopes, id), scopes.get(id).body_scope)
+        Self::new(GenericFn::from_id(scopes, id))
     }
 
-    pub fn with_inst(mut func: GenericFn, types: &Types, inst: TypeId, caller: ScopeId) -> Self {
+    pub fn with_inst(mut func: GenericFn, types: &Types, inst: TypeId) -> Self {
         if let Type::User(ut) = &types[inst] {
             func.ty_args.copy_args(&ut.ty_args);
         }
 
-        Self::new(func, caller)
+        Self::new(func)
     }
 
     pub fn tmpvar(&mut self) -> String {
@@ -876,7 +870,6 @@ macro_rules! emit_type {
 struct Vtable {
     tr: GenericTrait,
     ty: TypeId,
-    scope: ScopeId,
 }
 
 pub struct Codegen<'a> {
@@ -934,10 +927,8 @@ impl<'a> Codegen<'a> {
         let mut prototypes = Buffer::new(proj);
         let mut emitted_fns = HashSet::new();
         let mut emitted_statics = HashSet::new();
-        let static_state = &mut State::new(
-            GenericFn::from_id(&this.proj.scopes, FunctionId::RESERVED),
-            ScopeId::ROOT,
-        );
+        let static_state =
+            &mut State::new(GenericFn::from_id(&this.proj.scopes, FunctionId::RESERVED));
 
         while !this.funcs.is_empty() || !this.statics.is_empty() {
             let diff = this.funcs.difference(&emitted_fns).cloned().collect::<Vec<_>>();
@@ -953,7 +944,6 @@ impl<'a> Codegen<'a> {
                 }
 
                 this.proj.static_deps.dfs(var, &mut emitted_statics, |id| {
-                    static_state.caller = this.proj.scopes.get(id).scope;
                     usebuf!(this, &mut static_defs, {
                         this.emit_var_decl(id, static_state);
                         writeln_de!(this.buffer, ";");
@@ -1036,12 +1026,11 @@ impl<'a> Codegen<'a> {
                         vtable.ty,
                         &tr,
                         self.proj.scopes.get(f).name.data,
-                        vtable.scope,
                         |_, _| Default::default(),
                     );
                     self.buffer.emit_fn_name(&func);
                     write_de!(self.buffer, ",");
-                    self.funcs.insert(State::new(func, vtable.scope));
+                    self.funcs.insert(State::new(func));
                 }
             }
             writeln_de!(self.buffer, "}};");
@@ -1303,7 +1292,7 @@ impl<'a> Codegen<'a> {
                     write_de!(self.buffer, ")");
                 }
             },
-            &ExprData::DynCoerce(mut inner, scope) => {
+            &ExprData::DynCoerce(mut inner) => {
                 inner.ty = inner.ty.with_templates(&self.proj.types, &state.func.ty_args);
 
                 let to_tr = self
@@ -1319,7 +1308,7 @@ impl<'a> Codegen<'a> {
                     write_de!(self.buffer, "{{.self=");
                     self.emit_expr(inner, state);
                     write_de!(self.buffer, ",.vtable=");
-                    let vtable = Vtable { tr: to_tr, ty: from, scope };
+                    let vtable = Vtable { tr: to_tr, ty: from };
 
                     self.emit_vtable_name(&vtable);
                     self.emit_vtable(vtable);
@@ -1494,7 +1483,7 @@ impl<'a> Codegen<'a> {
                     });
                 });
             }
-            &ExprData::Set(ref args, scope) => {
+            ExprData::Set(args) => {
                 let ut = self.proj.types[expr.ty].as_user().unwrap();
                 if args.is_empty() {
                     return self.emit_new(ut);
@@ -1514,7 +1503,6 @@ impl<'a> Codegen<'a> {
                         ),
                         &self.proj.types,
                         expr.ty,
-                        scope,
                     );
 
                     for val in args {
@@ -1526,7 +1514,7 @@ impl<'a> Codegen<'a> {
                     self.funcs.insert(insert);
                 });
             }
-            ExprData::Map(args, scope) => {
+            ExprData::Map(args) => {
                 let ut = self.proj.types[expr.ty].as_user().unwrap();
                 if args.is_empty() {
                     return self.emit_new(ut);
@@ -1545,7 +1533,6 @@ impl<'a> Codegen<'a> {
                         ),
                         &self.proj.types,
                         expr.ty,
-                        *scope,
                     );
 
                     self.emit_with_capacity(expr.ty, &tmp, ut, args.len());
@@ -1585,12 +1572,12 @@ impl<'a> Codegen<'a> {
                 write_de!(self.buffer, "&$BSTR{}", expr.data.as_raw());
             }
             ExprData::Void => self.buffer.emit(VOID_INSTANCE),
-            &ExprData::Fn(ref func, scope) => {
+            ExprData::Fn(func) => {
                 let func = func.with_templates(&self.proj.types, &state.func.ty_args);
                 self.buffer.emit_fn_name(&func);
-                self.funcs.insert(State::new(func, scope));
+                self.funcs.insert(State::new(func));
             }
-            ExprData::MemFn(mfn, scope) => self.emit_member_fn(state, mfn.clone(), *scope),
+            ExprData::MemFn(mfn) => self.emit_member_fn(state, mfn.clone()),
             &ExprData::Var(id) => {
                 let var = self.proj.scopes.get(id);
                 match var.kind {
@@ -1803,8 +1790,8 @@ impl<'a> Codegen<'a> {
                 self.emit_cast(expr.ty);
                 write_de!(self.buffer, "{{.ptr={tmp}.ptr,.len={tmp}.len}}");
             }
-            &ExprData::StringInterp { ref strings, ref args, scope } => {
-                self.emit_string_interp(expr.ty, state, strings.clone(), args.clone(), scope)
+            ExprData::StringInterp { strings, args } => {
+                self.emit_string_interp(expr.ty, state, strings.clone(), args.clone())
             }
             &ExprData::AffixOperator { callee, ref mfn, scope, postfix, span } => {
                 let mfn = mfn.clone();
@@ -1858,7 +1845,7 @@ impl<'a> Codegen<'a> {
                 self.emit_expr(inner, state);
                 self.buffer.emit(")");
             }
-            &ExprData::ClosureCoerce(inner, scope) => {
+            &ExprData::ClosureCoerce(inner) => {
                 hoist!(self, {
                     write_de!(self.buffer, "(void)");
                     self.emit_expr_inline(inner, state);
@@ -1880,7 +1867,7 @@ impl<'a> Codegen<'a> {
                 let mut func = GenericFn::new(fid, TypeArgs::default());
                 func.fill_templates(&self.proj.types, &closure.ty_args);
                 self.buffer.emit_fn_name(&func);
-                self.funcs.insert(State::new(func, scope));
+                self.funcs.insert(State::new(func));
             }
             ExprData::Error => panic!("ICE: ExprData::Error in gen_expr"),
         }
@@ -1891,7 +1878,7 @@ impl<'a> Codegen<'a> {
         self.emit_expr_inner(expr, state);
     }
 
-    fn emit_member_fn(&mut self, state: &mut State, mut mfn: MemberFn, scope: ScopeId) {
+    fn emit_member_fn(&mut self, state: &mut State, mut mfn: MemberFn) {
         if let MemberFnType::Trait(mut tr) = mfn.typ {
             let inst = mfn.inst.with_templates(&self.proj.types, &state.func.ty_args);
             tr.fill_templates(&self.proj.types, &state.func.ty_args);
@@ -1899,7 +1886,6 @@ impl<'a> Codegen<'a> {
                 inst,
                 &tr,
                 self.proj.scopes.get(mfn.func.id).name.data,
-                state.caller,
                 |proj, id| {
                     TypeArgs::in_order(&proj.scopes, id, mfn.func.ty_args.0.iter().map(|kv| *kv.1))
                 },
@@ -1908,7 +1894,7 @@ impl<'a> Codegen<'a> {
 
         mfn.func.fill_templates(&self.proj.types, &state.func.ty_args);
         self.buffer.emit_fn_name(&mfn.func);
-        self.funcs.insert(State::new(mfn.func, scope));
+        self.funcs.insert(State::new(mfn.func));
     }
 
     fn emit_instance(&mut self, state: &mut State, ty: TypeId, members: &IndexMap<StrId, Expr>) {
@@ -2196,7 +2182,7 @@ impl<'a> Codegen<'a> {
                 }
 
                 let is_lvalue = match self.arena.get(lhs.data) {
-                    ExprData::Deref { .. } | ExprData::Fn(_, _) | ExprData::MemFn(_, _) => true,
+                    ExprData::Deref { .. } | ExprData::Fn(_) | ExprData::MemFn(_) => true,
                     ExprData::Var(id) => !self.proj.scopes.get(*id).kind.is_const(),
                     ExprData::Member { source, .. } => !source.ty.is_packed_struct(self.proj),
                     _ => false,
@@ -2320,20 +2306,14 @@ impl<'a> Codegen<'a> {
     }
 
     fn emit_new(&mut self, ut: &GenericUserType) {
-        // FIXME: this should technically use the scope that is creating the literal, but since
-        // none of the constructors for literals use trait functions in any way, it doesn't matter
-        // right now
-        let new_state = State::in_body_scope(
-            GenericFn::new(
-                self.proj
-                    .scopes
-                    .get(ut.id)
-                    .find_associated_fn(&self.proj.scopes, Strings::FN_NEW)
-                    .unwrap(),
-                ut.ty_args.clone(),
-            ),
-            &self.proj.scopes,
-        );
+        let new_state = State::new(GenericFn::new(
+            self.proj
+                .scopes
+                .get(ut.id)
+                .find_associated_fn(&self.proj.scopes, Strings::FN_NEW)
+                .unwrap(),
+            ut.ty_args.clone(),
+        ));
 
         self.buffer.emit_fn_name(&new_state.func);
         write_de!(self.buffer, "()");
@@ -2349,20 +2329,14 @@ impl<'a> Codegen<'a> {
     ) {
         self.emit_type(ty);
         write_de!(self.buffer, " {tmp}=");
-        // FIXME: this should technically use the scope that is creating the literal, but since
-        // none of the constructors for literals use trait functions in any way, it doesn't matter
-        // right now
-        let state = State::in_body_scope(
-            GenericFn::new(
-                self.proj
-                    .scopes
-                    .get(ut.id)
-                    .find_associated_fn(&self.proj.scopes, Strings::FN_WITH_CAPACITY)
-                    .unwrap(),
-                ut.ty_args.clone(),
-            ),
-            &self.proj.scopes,
-        );
+        let state = State::new(GenericFn::new(
+            self.proj
+                .scopes
+                .get(ut.id)
+                .find_associated_fn(&self.proj.scopes, Strings::FN_WITH_CAPACITY)
+                .unwrap(),
+            ut.ty_args.clone(),
+        ));
 
         self.buffer.emit_fn_name(&state.func);
         writeln_de!(self.buffer, "({len});");
@@ -2598,7 +2572,7 @@ impl<'a> Codegen<'a> {
                 formatter.ty = formatter.ty.with_templates(&self.proj.types, &state.func.ty_args);
 
                 let real_ty = arg.ty.as_pointee(&self.proj.types).unwrap();
-                let dbg_args = self.dbg_args(formatter.ty, state, scope);
+                let dbg_args = self.dbg_args(formatter.ty, state);
                 hoist!(self, {
                     let arg = self.emit_tmpvar(arg, state);
                     let fmt = self.emit_tmpvar(formatter, state);
@@ -2609,7 +2583,6 @@ impl<'a> Codegen<'a> {
                             &format!("(*{arg})"),
                             &fmt,
                             state,
-                            scope,
                             span,
                             0,
                         );
@@ -2654,16 +2627,15 @@ impl<'a> Codegen<'a> {
         arg: &str,
         fmt: &str,
         state: &mut State,
-        scope: ScopeId,
         span: Span,
         lvl: usize,
     ) {
-        if let Some(mfn) = self
-            .lookup_trait_fn(arg_ty, &args.dbg_tr, args.dbg_fn, scope, |_, _| TypeArgs::default())
+        if let Some(mfn) =
+            self.lookup_trait_fn(arg_ty, &args.dbg_tr, args.dbg_fn, |_, _| TypeArgs::default())
         {
             let owner = self.proj.scopes[self.proj.scopes.get(mfn.func.id).scope].parent.unwrap();
             if self.proj.scopes[owner].kind.as_user_type().copied() != args.fallback_dbg_ext {
-                self.emit_member_fn(state, mfn, scope);
+                self.emit_member_fn(state, mfn);
                 return writeln_de!(self.buffer, "(&{arg},{fmt});");
             }
         }
@@ -2699,12 +2671,12 @@ impl<'a> Codegen<'a> {
                     buf.emit_fn_name(func);
                     write_de!(buf, "}}");
                 });
-                self.emit_builtin_dbg(args, ty, &ptr, fmt, state, scope, span, 0);
+                self.emit_builtin_dbg(args, ty, &ptr, fmt, state, span, 0);
             }
             Type::FnPtr(_) => {
                 let ty = self.proj.types.insert(Type::RawPtr(TypeId::VOID));
                 let ptr = format!("(void const*){{{arg}}}");
-                self.emit_builtin_dbg(args, ty, &ptr, fmt, state, scope, span, 0);
+                self.emit_builtin_dbg(args, ty, &ptr, fmt, state, span, 0);
             }
             Type::User(ut) => {
                 let ut_data = self.proj.scopes.get(ut.id);
@@ -2713,7 +2685,7 @@ impl<'a> Codegen<'a> {
                         write_de!(self.buffer, "if ({arg}) {{");
                         write_str!("Some(");
                         let ty = ut.ty_args[0];
-                        self.emit_builtin_dbg(args, ty, arg, fmt, state, scope, span, lvl + 1);
+                        self.emit_builtin_dbg(args, ty, arg, fmt, state, span, lvl + 1);
                         write_str!(")");
                         write_de!(self.buffer, "}}else{{");
                         write_str!("null");
@@ -2730,7 +2702,7 @@ impl<'a> Codegen<'a> {
                         if let Some(ty) = variant.ty {
                             let ty = ty.with_templates(&self.proj.types, &ut.ty_args);
                             let buf = format!("{arg}.{}", member_name(self.proj, name));
-                            self.emit_builtin_dbg(args, ty, &buf, fmt, state, scope, span, lvl + 1);
+                            self.emit_builtin_dbg(args, ty, &buf, fmt, state, span, lvl + 1);
                         }
                         writeln_de!(self.buffer, "break;}}");
                     }
@@ -2773,7 +2745,7 @@ impl<'a> Codegen<'a> {
                     } else {
                         format!("{arg}.{}", member_name(self.proj, name))
                     };
-                    self.emit_builtin_dbg(args, ty, &buf, fmt, state, scope, span, lvl + 1);
+                    self.emit_builtin_dbg(args, ty, &buf, fmt, state, span, lvl + 1);
                 }
 
                 if !is_tuple && !ut_data.members.is_empty() {
@@ -2796,9 +2768,9 @@ impl<'a> Codegen<'a> {
                 let ty = self.proj.types.insert(Type::RawPtr(TypeId::VOID));
                 let self_ptr = format!("(void const*){{{arg}.self}}");
                 let vtable_ptr = format!("(void const*){{{arg}.vtable}}");
-                self.emit_builtin_dbg(args, ty, &self_ptr, fmt, state, scope, span, 0);
+                self.emit_builtin_dbg(args, ty, &self_ptr, fmt, state, span, 0);
                 write_str!(", vtable: ");
-                self.emit_builtin_dbg(args, ty, &vtable_ptr, fmt, state, scope, span, 0);
+                self.emit_builtin_dbg(args, ty, &vtable_ptr, fmt, state, span, 0);
                 write_str!("}");
             }
             _ => panic!("ICE: attempt to emit_builtin_dbg for '{}'", self.proj.fmt_ty(arg_ty)),
@@ -2830,7 +2802,6 @@ impl<'a> Codegen<'a> {
         }
         self.buffer.emit_trait_name(&vtable.tr);
         self.buffer.emit(if self.proj.conf.build.minify { "v" } else { "_$vtable" });
-        write_de!(self.buffer, "{}", vtable.scope);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3573,7 +3544,6 @@ impl<'a> Codegen<'a> {
         state: &mut State,
         strings: Vec<StrId>,
         args: Vec<(Expr, FormatOpts)>,
-        scope: ScopeId,
     ) {
         self.emit_cast(ty);
         write_de!(self.buffer, "{{.parts={{.len={},.ptr=", strings.len());
@@ -3608,7 +3578,7 @@ impl<'a> Codegen<'a> {
                 write_de!(self.buffer, "{{.value=&");
                 self.emit_tmpvar_ident(expr, state);
                 write_de!(self.buffer, ",.format=");
-                self.emit_member_fn(state, opts.func, scope);
+                self.emit_member_fn(state, opts.func);
                 write_de!(self.buffer, ",.opts=");
                 let inst = ExprData::Instance(
                     [
@@ -3679,13 +3649,11 @@ impl<'a> Codegen<'a> {
         inst: TypeId,
         tr: &GenericTrait,
         method: StrId,
-        scope: ScopeId,
         finish: impl FnOnce(&Project, FunctionId) -> TypeArgs + Copy,
     ) -> GenericFn {
-        let Some(mfn) = self.lookup_trait_fn(inst, tr, method, scope, finish) else {
+        let Some(mfn) = self.lookup_trait_fn(inst, tr, method, finish) else {
             panic!(
-                "searching from scope: '{}', cannot find implementation for method '{}::{}' for type '{}'",
-                full_name_pretty(self.proj, scope, false),
+                "cannot find implementation for method '{}::{}' for type '{}'",
                 self.proj.fmt_tr(tr),
                 self.proj.str(method),
                 self.proj.fmt_ty(inst)
@@ -3695,8 +3663,7 @@ impl<'a> Codegen<'a> {
         let picked = self.proj.scopes.get(mfn.func.id);
         if !picked.has_body {
             panic!(
-                "searching from scope: '{}', get_member_fn_ex picked invalid function for implementation for method '{}::{}' for type '{}' (picked {}::{})",
-                full_name_pretty(self.proj, scope, false),
+                "get_member_fn_ex picked invalid function for implementation for method '{}::{}' for type '{}' (picked {}::{})",
                 self.proj.fmt_tr(tr),
                 self.proj.str(method),
                 self.proj.fmt_ty(inst),
@@ -3751,12 +3718,7 @@ impl<'a> Codegen<'a> {
         self.arena.typed(self.str_interp.string_ty.unwrap(), ExprData::GeneratedString(res))
     }
 
-    fn dbg_args(
-        &mut self,
-        formatter_ty: TypeId,
-        state: &mut State,
-        scope: ScopeId,
-    ) -> BuiltinDbgArgs {
+    fn dbg_args(&mut self, formatter_ty: TypeId, state: &mut State) -> BuiltinDbgArgs {
         let dbg_fn = self.proj.strings.get("dbg").unwrap();
         let dbg = self.proj.scopes.lang_traits[&LangTrait::Debug];
         let dbg_tr = GenericTrait::new(dbg, TypeArgs::default());
@@ -3769,9 +3731,7 @@ impl<'a> Codegen<'a> {
 
         let real_formatter = formatter_ty.as_pointee(&self.proj.types).unwrap();
         let mut formatter_write_str = self
-            .lookup_trait_fn(real_formatter, &write_tr, write_str_fn, scope, |_, _| {
-                TypeArgs::default()
-            })
+            .lookup_trait_fn(real_formatter, &write_tr, write_str_fn, |_, _| TypeArgs::default())
             .unwrap()
             .func;
 
@@ -3779,7 +3739,7 @@ impl<'a> Codegen<'a> {
         let fn_name = Buffer::format(self.proj, |buf| {
             buf.emit_fn_name(&formatter_write_str);
         });
-        self.funcs.insert(State::new(formatter_write_str, scope));
+        self.funcs.insert(State::new(formatter_write_str));
 
         BuiltinDbgArgs { dbg_fn, dbg_tr, formatter_write_str: fn_name, fallback_dbg_ext }
     }
