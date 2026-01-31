@@ -1709,7 +1709,8 @@ impl TypeChecker<'_> {
             }
             DStmt::Alias { id } => {
                 self.enter_id(self.proj.scopes.get(id).body_scope, |this| {
-                    this.resolve_alias(this.proj.scopes.get(id).name.span, id);
+                    this.check_hover(this.proj.scopes.get(id).name.span, id);
+                    this.resolve_alias(id);
                 });
             }
             DStmt::Expr(expr) => return Some(CStmt::Expr(self.check_expr(expr, None))),
@@ -5365,8 +5366,7 @@ impl TypeChecker<'_> {
         self.proj.scopes.get_mut(id).super_traits = trs;
     }
 
-    fn resolve_alias(&mut self, span: Span, id: AliasId) -> TypeId {
-        self.check_hover(span, id);
+    fn resolve_alias(&mut self, id: AliasId) -> TypeId {
         resolve_type!(self, self.proj.scopes.get_mut(id).ty)
     }
 
@@ -6885,9 +6885,9 @@ impl TypeChecker<'_> {
                     );
                 };
 
+                self.check_hover(name.span, item.id);
                 match item.id {
                     TypeItem::Type(id) => {
-                        self.check_hover(name.span, id);
                         let ty_args = self.resolve_type_args(id, ty_args, true, name.span);
                         if rest.is_empty() {
                             if self.proj.scopes.get(id).kind.is_extension() {
@@ -6916,7 +6916,6 @@ impl TypeChecker<'_> {
                         )
                     }
                     TypeItem::Trait(id) => {
-                        self.check_hover(name.span, id);
                         let ty_args = self.resolve_type_args(id, ty_args, true, name.span);
                         if rest.is_empty() {
                             return ResolvedType::Trait(GenericTrait::new(id, ty_args));
@@ -6938,7 +6937,6 @@ impl TypeChecker<'_> {
                             return named_error!(self, Error::no_symbol, name.data, name.span);
                         }
 
-                        self.check_hover(name.span, id);
                         if !ty_args.is_empty() {
                             return self.error(Error::new(
                                 "modules cannot be parameterized with type arguments",
@@ -6949,7 +6947,7 @@ impl TypeChecker<'_> {
                         self.resolve_type_path_in(rest, Default::default(), id, span)
                     }
                     TypeItem::Alias(id) => {
-                        let ty = self.resolve_alias(name.span, id);
+                        let ty = self.resolve_alias(id);
                         let ty_args = self.resolve_type_args(id, ty_args, true, name.span);
                         let ty = ty.with_templates(&self.proj.types, &ty_args);
                         if !rest.is_empty() {
@@ -6991,9 +6989,9 @@ impl TypeChecker<'_> {
                 named_error!(self, Error::private, name.data, name.span)
             }
 
+            self.check_hover(name.span, *item);
             match *item {
                 TypeItem::Type(id) => {
-                    self.check_hover(name.span, id);
                     let ty = self.proj.scopes.get(id);
                     scope = ty.body_scope;
 
@@ -7016,7 +7014,6 @@ impl TypeChecker<'_> {
                     ty_args.copy_args(&args);
                 }
                 TypeItem::Trait(id) => {
-                    self.check_hover(name.span, id);
                     let ty = self.proj.scopes.get(id);
                     scope = ty.body_scope;
 
@@ -7028,7 +7025,6 @@ impl TypeChecker<'_> {
                     ty_args.copy_args(&args);
                 }
                 TypeItem::Module(id) => {
-                    self.check_hover(name.span, id);
                     if done {
                         return named_error!(self, Error::no_symbol, name.data, name.span);
                     }
@@ -7043,7 +7039,7 @@ impl TypeChecker<'_> {
                     scope = id;
                 }
                 TypeItem::Alias(id) => {
-                    let ty = self.resolve_alias(name.span, id);
+                    let ty = self.resolve_alias(id);
                     let args = self.resolve_type_args(id, args, true, name.span);
                     ty_args.copy_args(&args);
 
@@ -7141,23 +7137,30 @@ impl TypeChecker<'_> {
                         ),
                     }
                 } else {
-                    match self.find_in_tns(name.data).map(|t| t.id) {
-                        Some(TypeItem::Type(id)) => {
-                            self.check_hover(name.span, id);
+                    let Some(item) = self.find_in_tns(name.data).map(|t| t.id) else {
+                        return self.resolve_value_path_in(
+                            &path.components,
+                            Default::default(),
+                            ScopeId::ROOT,
+                            span,
+                        );
+                    };
+
+                    self.check_hover(name.span, item);
+                    match item {
+                        TypeItem::Type(id) => {
                             let ty_args = self.resolve_type_args(id, ty_args, false, name.span);
                             let ty = Type::User(GenericUserType::new(id, ty_args));
                             let id = self.proj.types.insert(ty);
                             self.resolve_value_path_from_type(id, rest, span)
                         }
-                        Some(TypeItem::Trait(id)) => {
-                            self.check_hover(name.span, id);
+                        TypeItem::Trait(id) => {
                             let mut ty_args = self.resolve_type_args(id, ty_args, false, name.span);
                             let tr_data = self.proj.scopes.get(id);
                             ty_args.insert(tr_data.this, TypeId::UNKNOWN);
                             self.resolve_value_path_in(rest, ty_args, tr_data.body_scope, span)
                         }
-                        Some(TypeItem::Module(id)) => {
-                            self.check_hover(name.span, id);
+                        TypeItem::Module(id) => {
                             if !ty_args.is_empty() {
                                 return self.error(Error::new(
                                     "modules cannot be parameterized with type arguments",
@@ -7167,18 +7170,12 @@ impl TypeChecker<'_> {
 
                             self.resolve_value_path_in(rest, Default::default(), id, span)
                         }
-                        Some(TypeItem::Alias(id)) => {
-                            let ty = self.resolve_alias(name.span, id);
+                        TypeItem::Alias(id) => {
+                            let ty = self.resolve_alias(id);
                             let ty_args = self.resolve_type_args(id, ty_args, false, name.span);
                             let ty = ty.with_templates(&self.proj.types, &ty_args);
                             self.resolve_value_path_from_type(ty, rest, span)
                         }
-                        None => self.resolve_value_path_in(
-                            &path.components,
-                            Default::default(),
-                            ScopeId::ROOT,
-                            span,
-                        ),
                     }
                 }
             }
@@ -7278,9 +7275,9 @@ impl TypeChecker<'_> {
                 named_error!(self, Error::private, name.data, name.span)
             }
 
+            self.check_hover(name.span, *item);
             match *item {
                 TypeItem::Type(id) => {
-                    self.check_hover(name.span, id);
                     ty_args.copy_args(&self.resolve_type_args(id, args, false, name.span));
 
                     let ty = Type::User(GenericUserType::new(id, ty_args));
@@ -7288,7 +7285,6 @@ impl TypeChecker<'_> {
                     return self.resolve_value_path_from_type(id, &data[i + 1..], total_span);
                 }
                 TypeItem::Trait(id) => {
-                    self.check_hover(name.span, id);
                     ty_args.copy_args(&self.resolve_type_args(id, args, false, name.span));
 
                     let tr_data = self.proj.scopes.get(id);
@@ -7296,7 +7292,6 @@ impl TypeChecker<'_> {
                     ty_args.insert(tr_data.this, TypeId::UNKNOWN);
                 }
                 TypeItem::Module(id) => {
-                    self.check_hover(name.span, id);
                     if !args.is_empty() {
                         return self.error(Error::new(
                             "modules cannot be parameterized with type arguments",
@@ -7307,7 +7302,7 @@ impl TypeChecker<'_> {
                     scope = id;
                 }
                 TypeItem::Alias(id) => {
-                    let ty = self.resolve_alias(name.span, id);
+                    let ty = self.resolve_alias(id);
                     ty_args.copy_args(&self.resolve_type_args(id, args, false, name.span));
                     let ty = ty.with_templates(&self.proj.types, &ty_args);
                     return self.resolve_value_path_from_type(ty, &data[i + 1..], total_span);
