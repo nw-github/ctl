@@ -42,10 +42,10 @@ mod gcc_intrin {
     pub extern fn __builtin_ctzg<T: Unsigned>(u: T): c_int;
 }
 
-pub extension IntegralImpl<T: Integral> for T {
+pub extension IntegralImpl<Int: Integral> for Int {
     impl std::ops::TotallyOrdered { }
 
-    pub fn +(this, rhs: T): T {
+    pub fn +(this, rhs: Int): Int {
         let (val, _overflow) = this.overflowing_add(rhs);
         $[cfg("!ctl:no-overflow-checks")]
         if _overflow {
@@ -54,7 +54,7 @@ pub extension IntegralImpl<T: Integral> for T {
         val
     }
 
-    pub fn -(this, rhs: T): T {
+    pub fn -(this, rhs: Int): Int {
         let (val, _overflow) = this.overflowing_sub(rhs);
         $[cfg("!ctl:no-overflow-checks")]
         if _overflow {
@@ -63,7 +63,7 @@ pub extension IntegralImpl<T: Integral> for T {
         val
     }
 
-    pub fn *(this, rhs: T): T {
+    pub fn *(this, rhs: Int): Int {
         let (val, _overflow) = this.overflowing_mul(rhs);
         $[cfg("!ctl:no-overflow-checks")]
         if _overflow {
@@ -72,7 +72,7 @@ pub extension IntegralImpl<T: Integral> for T {
         val
     }
 
-    pub fn /(this, rhs: T): T {
+    pub fn /(this, rhs: Int): Int {
         let (val, _overflow) = this.overflowing_div(rhs);
         $[cfg("!ctl:no-overflow-checks")]
         if _overflow {
@@ -82,42 +82,42 @@ pub extension IntegralImpl<T: Integral> for T {
     }
 
     $[intrinsic(binary_op)]
-    pub fn %(this, rhs: T): T => this % rhs;
+    pub fn %(this, rhs: Int): Int => this % rhs;
 
-    pub fn +=(mut this, rhs: T) => *this = *this + rhs;
+    pub fn +=(mut this, rhs: Int) => *this = *this + rhs;
 
-    pub fn -=(mut this, rhs: T) => *this = *this - rhs;
+    pub fn -=(mut this, rhs: Int) => *this = *this - rhs;
 
-    pub fn *=(mut this, rhs: T) => *this = *this * rhs;
+    pub fn *=(mut this, rhs: Int) => *this = *this * rhs;
 
-    pub fn /=(mut this, rhs: T) => *this = *this / rhs;
-
-    $[intrinsic(binary_op)]
-    pub fn %=(mut this, rhs: T) => *this %= rhs;
+    pub fn /=(mut this, rhs: Int) => *this = *this / rhs;
 
     $[intrinsic(binary_op)]
-    pub fn &(this, rhs: T): T => this & rhs;
+    pub fn %=(mut this, rhs: Int) => *this %= rhs;
 
     $[intrinsic(binary_op)]
-    pub fn |(this, rhs: T): T => this | rhs;
+    pub fn &(this, rhs: Int): Int => this & rhs;
 
     $[intrinsic(binary_op)]
-    pub fn ^(this, rhs: T): T => this ^ rhs;
+    pub fn |(this, rhs: Int): Int => this | rhs;
 
     $[intrinsic(binary_op)]
-    pub fn <<(this, rhs: u32): T => this << rhs;
+    pub fn ^(this, rhs: Int): Int => this ^ rhs;
 
     $[intrinsic(binary_op)]
-    pub fn >>(this, rhs: u32): T => this >> rhs;
+    pub fn <<(this, rhs: u32): Int => this << rhs;
 
     $[intrinsic(binary_op)]
-    pub fn &=(mut this, rhs: T) => *this &= rhs;
+    pub fn >>(this, rhs: u32): Int => this >> rhs;
 
     $[intrinsic(binary_op)]
-    pub fn |=(mut this, rhs: T) => *this |= rhs;
+    pub fn &=(mut this, rhs: Int) => *this &= rhs;
 
     $[intrinsic(binary_op)]
-    pub fn ^=(mut this, rhs: T) => *this ^= rhs;
+    pub fn |=(mut this, rhs: Int) => *this |= rhs;
+
+    $[intrinsic(binary_op)]
+    pub fn ^=(mut this, rhs: Int) => *this ^= rhs;
 
     $[intrinsic(binary_op)]
     pub fn <<=(mut this, rhs: u32) => *this <<= rhs;
@@ -126,7 +126,7 @@ pub extension IntegralImpl<T: Integral> for T {
     pub fn >>=(mut this, rhs: u32) => *this >>= rhs;
 
     $[intrinsic(unary_op)]
-    pub fn !(this): T => !this;
+    pub fn !(this): Int => !this;
 
     $[intrinsic(unary_op)]
     pub fn ++(mut this) { (*this)++; }
@@ -135,43 +135,43 @@ pub extension IntegralImpl<T: Integral> for T {
     pub fn --(mut this) { (*this)--; }
 
     $[inline]
-    pub fn wrapping_add(this, rhs: T): T => this.overflowing_add(rhs).0;
+    pub fn wrapping_add(this, rhs: Int): Int => this.overflowing_add(rhs).0;
 
     $[inline]
-    pub fn wrapping_sub(this, rhs: T): T => this.overflowing_sub(rhs).0;
+    pub fn wrapping_sub(this, rhs: Int): Int => this.overflowing_sub(rhs).0;
 
     $[inline]
-    pub fn wrapping_mul(this, rhs: T): T => this.overflowing_mul(rhs).0;
+    pub fn wrapping_mul(this, rhs: Int): Int => this.overflowing_mul(rhs).0;
 
     $[inline]
-    pub fn wrapping_div(this, rhs: T): T => this.overflowing_div(rhs).0;
+    pub fn wrapping_div(this, rhs: Int): Int => this.overflowing_div(rhs).0;
 
     $[inline]
-    pub fn overflowing_add(this, rhs: T): (T, bool) {
-        mut out: T;
+    pub fn overflowing_add(this, rhs: Int): (Int, bool) {
+        mut out: Int;
         let res = unsafe gcc_intrin::__builtin_add_overflow(*this, rhs, &raw mut out);
         (out, res)
     }
 
     $[inline]
-    pub fn overflowing_sub(this, rhs: T): (T, bool) {
-        mut out: T;
+    pub fn overflowing_sub(this, rhs: Int): (Int, bool) {
+        mut out: Int;
         let res = unsafe gcc_intrin::__builtin_sub_overflow(*this, rhs, &raw mut out);
         (out, res)
     }
 
     $[inline]
-    pub fn overflowing_mul(this, rhs: T): (T, bool) {
-        mut out: T;
+    pub fn overflowing_mul(this, rhs: Int): (Int, bool) {
+        mut out: Int;
         let res = unsafe gcc_intrin::__builtin_mul_overflow(*this, rhs, &raw mut out);
         (out, res)
     }
 
     $[inline]
-    pub fn overflowing_div(this, rhs: T): (T, bool) {
+    pub fn overflowing_div(this, rhs: Int): (Int, bool) {
         // Only signed division can overflow
-        if T::is_signed() {
-            if this == T::min_value() and rhs == (-1).cast() {
+        if Int::is_signed() {
+            if this == Int::min_value() and rhs == (-1).cast() {
                 return (*this, true);
             }
         }
@@ -179,49 +179,49 @@ pub extension IntegralImpl<T: Integral> for T {
     }
 
     $[inline]
-    pub fn checked_add(this, rhs: T): ?T => this.overflowing_add(rhs) is (out, false) then out;
+    pub fn checked_add(this, rhs: Int): ?Int => this.overflowing_add(rhs) is (out, false) then out;
 
     $[inline]
-    pub fn checked_sub(this, rhs: T): ?T => this.overflowing_sub(rhs) is (out, false) then out;
+    pub fn checked_sub(this, rhs: Int): ?Int => this.overflowing_sub(rhs) is (out, false) then out;
 
     $[inline]
-    pub fn checked_mul(this, rhs: T): ?T => this.overflowing_mul(rhs) is (out, false) then out;
+    pub fn checked_mul(this, rhs: Int): ?Int => this.overflowing_mul(rhs) is (out, false) then out;
 
     $[inline]
-    pub fn checked_div(this, rhs: T): ?T => this.overflowing_div(rhs) is (out, false) then out;
+    pub fn checked_div(this, rhs: Int): ?Int => this.overflowing_div(rhs) is (out, false) then out;
 
     $[intrinsic(binary_op)]
-    pub unsafe fn unchecked_add(this, rhs: T): T => this + rhs;
+    pub unsafe fn unchecked_add(this, rhs: Int): Int => this + rhs;
 
     $[intrinsic(binary_op)]
-    pub unsafe fn unchecked_sub(this, rhs: T): T => this - rhs;
+    pub unsafe fn unchecked_sub(this, rhs: Int): Int => this - rhs;
 
     $[intrinsic(binary_op)]
-    pub unsafe fn unchecked_mul(this, rhs: T): T => this * rhs;
+    pub unsafe fn unchecked_mul(this, rhs: Int): Int => this * rhs;
 
     $[intrinsic(binary_op)]
-    pub unsafe fn unchecked_div(this, rhs: T): T => this / rhs;
+    pub unsafe fn unchecked_div(this, rhs: Int): Int => this / rhs;
 
     $[inline]
-    pub fn saturating_add(this, rhs: T): T {
+    pub fn saturating_add(this, rhs: Int): Int {
         if this.checked_add(rhs) is ?out {
             out
         } else if rhs < 0.cast() {
-            T::min_value()
+            Int::min_value()
         } else {
-            T::max_value()
+            Int::max_value()
         }
     }
 
     $[intrinsic]
-    pub fn max_value(): T => T::max_value();
+    pub fn max_value(): Int => Int::max_value();
 
     $[intrinsic]
-    pub fn min_value(): T => T::min_value();
+    pub fn min_value(): Int => Int::min_value();
 
     /// C-style cast from `from` to This with wraparound/truncation.
     $[intrinsic(numeric_cast)]
-    pub fn from<U: Integral>(from: U): T => T::from(from);
+    pub fn from<U: Integral>(from: U): Int => Int::from(from);
 
     /// Cast `this` to type `U` if the value of this is exactly representable in U
     $[inline]
@@ -231,7 +231,7 @@ pub extension IntegralImpl<T: Integral> for T {
     }
 
     $[inline]
-    pub fn try_from<U: Integral>(val: U): ?T => val.try_cast::<T>();
+    pub fn try_from<U: Integral>(val: U): ?Int => val.try_cast::<Int>();
 
     $[inline]
     pub fn saturating_cast<U: Integral>(my this): U {
@@ -240,7 +240,7 @@ pub extension IntegralImpl<T: Integral> for T {
     }
 
     $[inline]
-    pub fn swap_bytes(my mut this): T {
+    pub fn swap_bytes(my mut this): Int {
         // TODO: make calls to compiler intrinsics when possible
         //  GCC & clang are smart enough to optimize this as-is to a bswap instruction
         //  when possible, other compilers (cough cough MSVC) may not.
@@ -265,8 +265,8 @@ pub extension IntegralImpl<T: Integral> for T {
         mut pos = buf.len();
         loop {
             // TODO: do this at CTL compile time
-            let digit = if std::mem::size_of::<T>() >= std::mem::size_of::<int>() {
-                let radix: T = radix.cast();
+            let digit = if std::mem::size_of::<Int>() >= std::mem::size_of::<int>() {
+                let radix: Int = radix.cast();
                 let digit: int = (this % radix).cast();
                 this /= radix;
                 digit
@@ -295,7 +295,7 @@ pub extension IntegralImpl<T: Integral> for T {
 
     fn format_into(this, f: *mut Formatter, radix: int, prefix: ?str) {
         // TODO: const if
-        if std::mem::size_of::<T>() <= std::mem::size_of::<u128>() {
+        if std::mem::size_of::<Int>() <= std::mem::size_of::<u128>() {
             mut buf: [u8; /* std::mem::size_of::<u128>() * 8 */ 128];
             let start = unsafe this.write_digits(buf.subspan_mut_unchecked(..), radix, f.options().upper);
             let digits = unsafe str::from_utf8_unchecked(buf.subspan_unchecked(start..));
@@ -314,7 +314,7 @@ pub extension IntegralImpl<T: Integral> for T {
         f.pad_integral(negative: this < 0.cast(), digits:, prefix:);
     }
 
-    pub fn from_str_radix(s: str, radix: u32): ?T {
+    pub fn from_str_radix(s: str, radix: u32): ?Int {
         fn parse_digits<T: Integral>(chars: std::str::Chars, radix: u32): ?T {
             mut value: ?T = null;
             for ch in chars {
@@ -329,7 +329,7 @@ pub extension IntegralImpl<T: Integral> for T {
         }
 
         mut chars = s.chars();
-        if T::is_signed() {
+        if Int::is_signed() {
             let negative = match chars.next()? {
                 '-' => true,
                 '+' => false,
@@ -339,7 +339,7 @@ pub extension IntegralImpl<T: Integral> for T {
                 }
             };
 
-            let val = parse_digits::<T>(chars, radix)?;
+            let val = parse_digits::<Int>(chars, radix)?;
             negative then val.checked_mul((-1).cast()) else val
         } else {
             if !(chars.next()? is '+') {
@@ -350,18 +350,18 @@ pub extension IntegralImpl<T: Integral> for T {
         }
     }
 
-    pub fn is_signed(): bool => T::min_value() < 0.cast();
+    pub fn is_signed(): bool => Int::min_value() < 0.cast();
 }
 
-pub extension SignedImpl<T: Signed> for T {
+pub extension SignedImpl<SInt: Signed> for SInt {
     // TODO: complain if -this == this (overflow) in debug mode
-    pub fn abs(my this): T => this < 0.cast() then -this else this;
+    pub fn abs(my this): SInt => this < 0.cast() then -this else this;
 
     $[intrinsic(unary_op)]
-    pub fn -(this): T => -this;
+    pub fn -(this): SInt => -this;
 }
 
-pub extension UnsignedImpl<T: Unsigned> for T {
+pub extension UnsignedImpl<UInt: Unsigned> for UInt {
     // TODO: popcountg and friends only work for unsigned integers/BitInts under 128 bits, and are
     // only supported on later versions of clang & gcc. Generate a fallback for other types.
     //
