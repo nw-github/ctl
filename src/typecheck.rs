@@ -5370,6 +5370,10 @@ impl TypeChecker<'_> {
         resolve_type!(self, self.proj.scopes.get_mut(id).ty)
     }
 
+    fn resolve_ext_type(&mut self, id: ExtensionId) -> TypeId {
+        resolve_type!(self, *self.proj.scopes.get_mut(id).kind.as_extension_mut().unwrap())
+    }
+
     fn resolve_proto(&mut self, id: FunctionId) {
         // disable errors to avoid duplicate errors when the struct and the constructor
         // are typechecked
@@ -7597,9 +7601,52 @@ impl TypeChecker<'_> {
 }
 
 impl TypeChecker<'_> {
+    fn extensions_in_scope(&self, scope: ScopeId) -> Vec<ExtensionId> {
+        fn get_tns_extensions<'a>(
+            scopes: &'a Scopes,
+            tns: &'a HashMap<StrId, Vis<TypeItem>>,
+        ) -> impl Iterator<Item = UserTypeId> + use<'a> {
+            tns.iter().flat_map(|s| {
+                s.1.as_type().filter(|&&id| scopes.get(id).kind.is_extension()).cloned()
+            })
+        }
+
+        let mut exts = vec![];
+        let scopes = &self.proj().scopes;
+        for (_, scope) in scopes.walk(scope) {
+            exts.extend(get_tns_extensions(scopes, &scope.tns));
+            if matches!(scope.kind, ScopeKind::Module(_)) {
+                break;
+            }
+        }
+
+        exts.extend(get_tns_extensions(scopes, &self.proj().autouse_tns));
+        exts.sort();
+        exts
+    }
+
     fn extensions_in_scope_for(&mut self, ty: TypeId) -> Vec<GenericExtension> {
-        let exts = self.extensions_in_scope(self.current);
-        self.do_extensions_in_scope_for(&exts, ty)
+        let in_scope = self.extensions_in_scope(self.current);
+        if ty == TypeId::UNKNOWN {
+            return vec![];
+        }
+
+        let map = self.cache.entry(in_scope.to_vec()).or_default();
+        if let Some(checked) = map.get(&ty) {
+            return checked.clone();
+        }
+
+        map.insert(ty, vec![]);
+
+        let res: Vec<_> = in_scope
+            .iter()
+            .flat_map(|&id| {
+                let for_ty = self.resolve_ext_type(id);
+                self.applies_to(id, for_ty, ty)
+            })
+            .collect();
+        self.cache.get_mut(&in_scope).unwrap().insert(ty, res.clone());
+        res
     }
 
     fn implements_trait(&mut self, ty: TypeId, bound: &GenericTrait) -> bool {
@@ -7633,16 +7680,8 @@ impl TypeChecker<'_> {
 }
 
 impl SharedStuff for TypeChecker<'_> {
-    fn resolve_ext_type(&mut self, id: ExtensionId) -> TypeId {
-        resolve_type!(self, *self.proj.scopes.get_mut(id).kind.as_extension_mut().unwrap())
-    }
-
     fn proj(&self) -> &Project {
         &self.proj
-    }
-
-    fn extension_cache(&mut self) -> &mut ExtensionCache {
-        &mut self.cache
     }
 
     fn get_tuple(&mut self, ty_args: Vec<TypeId>) -> TypeId {
@@ -7652,9 +7691,7 @@ impl SharedStuff for TypeChecker<'_> {
 }
 
 pub trait SharedStuff {
-    fn resolve_ext_type(&mut self, id: ExtensionId) -> TypeId;
     fn proj(&self) -> &Project;
-    fn extension_cache(&mut self) -> &mut ExtensionCache;
     fn get_tuple(&mut self, ty_args: Vec<TypeId>) -> TypeId;
 
     // ------
@@ -7690,81 +7727,6 @@ pub trait SharedStuff {
     }
 
     // ------
-
-    fn extensions_in_scope(&self, scope: ScopeId) -> Vec<ExtensionId> {
-        fn get_tns_extensions<'a>(
-            scopes: &'a Scopes,
-            tns: &'a HashMap<StrId, Vis<TypeItem>>,
-        ) -> impl Iterator<Item = UserTypeId> + use<'a> {
-            tns.iter().flat_map(|s| {
-                s.1.as_type().filter(|&&id| scopes.get(id).kind.is_extension()).cloned()
-            })
-        }
-
-        let mut exts = vec![];
-        let scopes = &self.proj().scopes;
-        for (_, scope) in scopes.walk(scope) {
-            exts.extend(get_tns_extensions(scopes, &scope.tns));
-            if matches!(scope.kind, ScopeKind::Module(_)) {
-                break;
-            }
-        }
-
-        exts.extend(get_tns_extensions(scopes, &self.proj().autouse_tns));
-        exts.sort();
-
-        // TODO: this is a hack. ideally the order of extensions shouldn't matter but for now
-        // process this extension last so any other Debug impl will be recognized first
-        if let Some(dbg_idx) = exts.iter().position(|id| {
-            matches!(self.proj().scopes.get(*id).attrs.lang, Some(LangType::FallbackDebug))
-        }) {
-            let last = exts.len() - 1;
-            exts.swap(dbg_idx, last);
-        }
-
-        exts
-    }
-
-    // ------
-
-    fn do_extensions_in_scope_for(
-        &mut self,
-        in_scope: &[ExtensionId],
-        ty: TypeId,
-    ) -> Vec<GenericExtension> {
-        if ty == TypeId::UNKNOWN {
-            return vec![];
-        }
-
-        let map = self.extension_cache().entry(in_scope.to_vec()).or_default();
-        if let Some(checked) = map.get(&ty) {
-            return checked.clone();
-        }
-
-        map.insert(ty, vec![]);
-
-        let res: Vec<_> = in_scope.iter().flat_map(|id| self.applies_to(ty, *id)).collect();
-        self.extension_cache().get_mut(in_scope).unwrap().insert(ty, res.clone());
-        res
-    }
-
-    fn applies_to(&mut self, ty: TypeId, ext: ExtensionId) -> Option<GenericExtension> {
-        let for_ty = self.resolve_ext_type(ext);
-
-        let mut ext = GenericExtension::from_id_unknown(&self.proj().scopes, ext);
-        self.infer_type_args(&mut ext.ty_args, for_ty, ty);
-        if for_ty.with_templates(&self.proj().types, &ext.ty_args) != ty {
-            return None;
-        }
-
-        for (&id, &arg) in ext.ty_args.iter() {
-            if arg == TypeId::UNKNOWN || !self.satisfies_bounds(&ext.ty_args, id, arg) {
-                return None;
-            }
-        }
-
-        Some(ext)
-    }
 
     fn infer_type_args(&mut self, ty_args: &mut TypeArgs, src: TypeId, target: TypeId) {
         self.do_infer_type_args(ty_args, src, target, |_, _, _| true);
@@ -8017,7 +7979,7 @@ pub trait SharedStuff {
             };
 
             let imp = imp.clone();
-            if let Some(ut) = self.applies_to_2(ut, imp.ty, ty) {
+            if let Some(ut) = self.applies_to(ut, imp.ty, ty) {
                 res.push((imp, Some(ut)));
             }
         }
@@ -8040,7 +8002,7 @@ pub trait SharedStuff {
         Some((imp, ut))
     }
 
-    fn applies_to_2(
+    fn applies_to(
         &mut self,
         owner: UserTypeId,
         src_ty: TypeId,

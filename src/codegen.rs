@@ -8,7 +8,7 @@ use crate::{
     nearest_pow_of_two,
     project::Project,
     sym::*,
-    typecheck::{ExtensionCache, MemberFn, MemberFnType, SharedStuff},
+    typecheck::{MemberFn, MemberFnType, SharedStuff},
     typeid::{
         BitSizeResult, FnPtr, GenericFn, GenericTrait, GenericUserType, Integer, LayoutItemKind,
         Type, TypeArgs, TypeId, Types,
@@ -895,7 +895,6 @@ pub struct Codegen<'a> {
     tg: TypeGen,
     str_interp: StrInterp,
     source: CachingSourceProvider,
-    ext_cache: ExtensionCache,
     arena: ExprArena,
 }
 
@@ -927,7 +926,6 @@ impl<'a> Codegen<'a> {
             emitted_vtables: Default::default(),
             defers: Default::default(),
             tg: Default::default(),
-            ext_cache: Default::default(),
             source: CachingSourceProvider::new(),
         };
         let main = this.gen_c_main();
@@ -3854,16 +3852,8 @@ impl<'a> Codegen<'a> {
 }
 
 impl SharedStuff for Codegen<'_> {
-    fn resolve_ext_type(&mut self, id: ExtensionId) -> TypeId {
-        *self.proj.scopes.get(id).kind.as_extension().unwrap()
-    }
-
     fn proj(&self) -> &Project {
         self.proj
-    }
-
-    fn extension_cache(&mut self) -> &mut crate::typecheck::ExtensionCache {
-        &mut self.ext_cache
     }
 
     fn get_tuple(&mut self, ty_args: Vec<TypeId>) -> TypeId {
