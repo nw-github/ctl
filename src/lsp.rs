@@ -1037,7 +1037,7 @@ fn get_document_symbols(proj: &Project, src: &str, file: FileId) -> Vec<Document
         let mut children = vec![];
         dump_functions(ut.body_scope, &mut children);
 
-        for imp in ut.iter_impls(&proj.scopes, false) {
+        for imp in ut.iter_impls(proj, false) {
             if let Some(scope) = imp.scope {
                 dump_functions(scope, &mut children);
             }
@@ -1138,7 +1138,7 @@ fn get_completion(proj: &Project, item: &LspItem, method: bool) -> Option<Comple
             if let Some(imp_id) = owner.kind.as_impl() {
                 owner = &scopes[owner.parent.unwrap()];
 
-                if let Some(imp) = scopes.impls.get(*imp_id).as_checked() {
+                if let Some(imp) = proj.impls.get(*imp_id).as_checked() {
                     detail = Some(format!(" (as {})", proj.fmt_tr(&imp.tr)));
                 }
             }
@@ -1521,7 +1521,7 @@ fn visualize_type(id: UserTypeId, proj: &Project) -> String {
         }
         UserTypeKind::Template => {
             res += proj.strings.resolve(&ut.name.data);
-            for (i, imp) in ut.iter_impls(&proj.scopes, false).enumerate() {
+            for (i, imp) in ut.iter_impls(proj, false).enumerate() {
                 if i > 0 {
                     res += " + ";
                 } else {
@@ -1532,9 +1532,9 @@ fn visualize_type(id: UserTypeId, proj: &Project) -> String {
             }
         }
         &UserTypeKind::Extension(ty) => {
-            write_de!(res, "extension {}", proj.strings.resolve(&ut.name.data));
+            write_de!(res, "extension");
             visualize_type_params(&mut res, &ut.type_params, proj);
-            write_de!(res, " for {}", proj.fmt_ty(ty));
+            write_de!(res, " {}", proj.fmt_ty(ty));
         }
         UserTypeKind::Closure | UserTypeKind::Tuple => {}
     }

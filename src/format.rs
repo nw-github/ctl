@@ -100,7 +100,7 @@ impl std::fmt::Display for FmtUt<'_, '_> {
             }
             crate::sym::UserTypeKind::Closure => {
                 let imp = ut_data
-                    .iter_impls(&p.scopes, false)
+                    .iter_impls(p, false)
                     .find(|imp| p.scopes.get(imp.tr.id).attrs.lang == Some(LangTrait::OpFn))
                     .unwrap();
                 write!(f, "{{closure {}}}", p.fmt_tr(&imp.tr))

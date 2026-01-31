@@ -2,14 +2,16 @@ use std::collections::HashSet;
 
 use crate::{
     Diagnostics, Span,
-    ds::{DependencyGraph, HashMap},
+    ds::{DependencyGraph, HashMap, arena::Arena},
     format::{FmtTr, FmtTy, FmtUt, FmtWta},
     intern::{StrId, Strings},
     package::ConstraintArgs,
-    sym::{FunctionId, ScopeId, Scopes, TypeItem, ValueItem, VariableId, Vis},
+    sym::{FunctionId, ScopeId, Scopes, TraitImpl, TypeItem, ValueItem, VariableId, Vis},
     typecheck::{Completions, LspItem},
     typeid::{GenericTrait, GenericUserType, TypeId, Types, WithTypeArgs},
 };
+
+pub type ImplId = crate::ds::arena::Id<TraitImpl>;
 
 pub struct Project {
     pub scopes: Scopes,
@@ -27,6 +29,7 @@ pub struct Project {
     pub strings: Strings,
     pub autouse_tns: HashMap<StrId, Vis<TypeItem>>,
     pub autouse_vns: HashMap<StrId, Vis<ValueItem>>,
+    pub impls: Arena<TraitImpl>,
 }
 
 impl Project {
@@ -47,6 +50,7 @@ impl Project {
             static_deps: Default::default(),
             autouse_tns: Default::default(),
             autouse_vns: Default::default(),
+            impls: Default::default(),
         }
     }
 

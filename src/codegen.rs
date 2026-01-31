@@ -646,7 +646,7 @@ impl<'a> Buffer<'a> {
                 }
                 ScopeKind::UserType(id) => parts.push(self.raw_get_mangled_name(id, ty_args)),
                 ScopeKind::Impl(id) => {
-                    let imp = &self.1.scopes.impls.get(id).as_checked().unwrap().tr;
+                    let imp = &self.1.impls.get(id).as_checked().unwrap().tr;
                     let name = Buffer::format(self.1, |name| {
                         name.emit_trait_name(&imp.with_templates(&self.1.types, ty_args));
                     });

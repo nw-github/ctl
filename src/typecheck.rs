@@ -19,7 +19,7 @@ use crate::{
     error::Error,
     intern::{StrId, Strings, THIS_TYPE},
     lexer::{Located, Span},
-    project::Project,
+    project::{ImplId, Project},
     sym::*,
     typeid::{
         BitSizeResult, FnPtr, GenericExtension, GenericFn, GenericTrait, GenericUserType, Type,
@@ -602,7 +602,7 @@ impl TypeChecker<'_> {
         }
 
         for ut in self.proj.types[ty].as_user().into_iter().chain(extensions.iter()) {
-            for imp in self.proj.scopes.get(ut.id).iter_impls(&self.proj.scopes, true) {
+            for imp in self.proj.scopes.get(ut.id).iter_impls(&self.proj, true) {
                 add_methods(
                     self,
                     &mut completions,
@@ -1169,7 +1169,7 @@ impl<'a> TypeChecker<'a> {
                     .proj
                     .types
                     .insert(Type::User(GenericUserType::new(this_id, TypeArgs::default())));
-                let impl_id = self.proj.scopes.impls.alloc(TraitImpl::Unchecked(
+                let impl_id = self.proj.impls.alloc(TraitImpl::Unchecked(
                     this_ty,
                     UncheckedImpl::type_param(
                         UncheckedImplTrait::Known(GenericTrait::from_type_params(
@@ -1364,7 +1364,7 @@ impl<'a> TypeChecker<'a> {
     fn declare_template_impls(&mut self, id: UserTypeId, paths: &[Path]) {
         let ty = self.proj.types.insert(Type::User(GenericUserType::new(id, Default::default())));
         let v = paths.iter().map(|path| {
-            self.proj.scopes.impls.alloc(TraitImpl::Unchecked(
+            self.proj.impls.alloc(TraitImpl::Unchecked(
                 ty,
                 UncheckedImpl::type_param(UncheckedImplTrait::Path(path.clone()), id, self.current),
             ))
@@ -1406,7 +1406,7 @@ impl<'a> TypeChecker<'a> {
                 continue;
             }
 
-            let impl_id = self.proj.scopes.impls.alloc(TraitImpl::None);
+            let impl_id = self.proj.impls.alloc(TraitImpl::None);
             self.enter(ScopeKind::Impl(impl_id), |this| {
                 let mut atypes = HashMap::with_capacity(assoc_types.len());
                 for (name, hint) in assoc_types {
@@ -1445,7 +1445,7 @@ impl<'a> TypeChecker<'a> {
 
             let full_span = f.span;
             let mut f = Fn::from_operator_fn(fn_name, f.data.clone());
-            let impl_id = self.proj.scopes.impls.alloc(TraitImpl::None);
+            let impl_id = self.proj.impls.alloc(TraitImpl::None);
             self.enter(ScopeKind::Impl(impl_id), |this| {
                 let mut block_type_params =
                     this.declare_type_params(&std::mem::take(&mut f.type_params));
@@ -1557,7 +1557,7 @@ impl<'a> TypeChecker<'a> {
         impls
             .into_iter()
             .map(|(id, unchecked)| {
-                *self.proj.scopes.impls.get_mut(id) = TraitImpl::Unchecked(ty, unchecked);
+                *self.proj.impls.get_mut(id) = TraitImpl::Unchecked(ty, unchecked);
                 id
             })
             .collect()
@@ -2099,7 +2099,7 @@ impl TypeChecker<'_> {
     fn check_impl_blocks(&mut self, this_ty: TypeId, id: UserTypeId) {
         let mut seen = HashSet::new();
         for id in self.proj.scopes.get(id).impls.clone() {
-            let Some(imp) = self.proj.scopes.impls.get(id).as_checked() else {
+            let Some(imp) = self.proj.impls.get(id).as_checked() else {
                 continue;
             };
             let scope = imp.scope.unwrap();
@@ -2319,7 +2319,7 @@ impl TypeChecker<'_> {
                     .proj
                     .scopes
                     .get(ut_id)
-                    .iter_impls(&self.proj.scopes, true)
+                    .iter_impls(&self.proj, true)
                     .find(|imp| imp.tr.id == op_fn_tr)
                     .map(|imp| imp.tr.clone())?;
                 if let Some(ty_args) = &self.current_call_ty_args
@@ -2485,7 +2485,7 @@ impl TypeChecker<'_> {
 
         let (closure_id, closure_ty) = self.enter_id(closure_ut_scope, |this| {
             let no_captures = members.is_empty();
-            let impl_id = this.proj.scopes.impls.alloc(TraitImpl::None);
+            let impl_id = this.proj.impls.alloc(TraitImpl::None);
             let closure_id = this.insert::<UserTypeId>(
                 UserType {
                     attrs: Default::default(),
@@ -2641,7 +2641,7 @@ impl TypeChecker<'_> {
                 let invoke_id = this.insert::<FunctionId>(func, true, false);
                 this.proj.scopes[invoke_scope].kind = ScopeKind::Function(invoke_id);
 
-                *this.proj.scopes.impls.get_mut(impl_id) = TraitImpl::Checked(CheckedImpl {
+                *this.proj.impls.get_mut(impl_id) = TraitImpl::Checked(CheckedImpl {
                     scope: Some(this.current),
                     assoc_types: Default::default(),
                     type_params: Default::default(),
@@ -4723,7 +4723,7 @@ impl TypeChecker<'_> {
         span: Span,
     ) -> bool {
         let mut failed = false;
-        for mut bound in self.proj.scopes.get(id).iter_impls_owned(&self.proj.scopes, false) {
+        for mut bound in self.proj.scopes.get(id).iter_impls_owned(&self.proj, false) {
             bound.fill_templates(&self.proj.types, ty_args);
             if !self.implements_trait(ty, &bound) {
                 failed = true;
@@ -5210,7 +5210,7 @@ impl TypeChecker<'_> {
                     }
 
                     let sup_id = sup.id;
-                    let imp = this.proj.scopes.impls.alloc(TraitImpl::Checked(CheckedImpl {
+                    let imp = this.proj.impls.alloc(TraitImpl::Checked(CheckedImpl {
                         scope: None,
                         tr: sup,
                         ty,
@@ -5259,18 +5259,18 @@ impl TypeChecker<'_> {
         }
 
         self.impl_resolve_phase = true;
-        for i in self.checked_impls..self.proj.scopes.impls.len() {
+        for i in self.checked_impls..self.proj.impls.len() {
             let id = ImplId::new(i);
-            let imp = match std::mem::replace(self.proj.scopes.impls.get_mut(id), TraitImpl::None) {
+            let imp = match std::mem::replace(self.proj.impls.get_mut(id), TraitImpl::None) {
                 TraitImpl::Unchecked(ty, imp) => {
                     resolve_impl(self, id, ty, imp).unwrap_or_default()
                 }
                 imp => imp,
             };
-            *self.proj.scopes.impls.get_mut(id) = imp;
+            *self.proj.impls.get_mut(id) = imp;
         }
 
-        self.checked_impls = self.proj.scopes.impls.len();
+        self.checked_impls = self.proj.impls.len();
         self.impl_resolve_phase = false;
         self.cache.clear();
     }
@@ -5390,7 +5390,7 @@ impl TypeChecker<'_> {
 
         for ut in ut.as_ref().into_iter().chain(exts.iter()) {
             for &impl_id in self.proj.scopes.get(ut.id).impls.iter() {
-                let Some(imp) = self.proj.scopes.impls.get(impl_id).as_checked() else {
+                let Some(imp) = self.proj.impls.get(impl_id).as_checked() else {
                     continue;
                 };
 
@@ -5583,7 +5583,7 @@ impl TypeChecker<'_> {
             }
 
             let tr = ut_data
-                .iter_impls(&this.proj.scopes, true)
+                .iter_impls(&this.proj, true)
                 .map(|imp| &imp.tr)
                 .find(|tr| this.proj.scopes.get(tr.id).attrs.lang == Some(LangTrait::OpFn))
                 .unwrap();
@@ -7394,7 +7394,7 @@ impl TypeChecker<'_> {
         }
 
         let mut candidates = HashSet::new();
-        for tr in self.proj.scopes.get(ut).iter_impls(&self.proj.scopes, false) {
+        for tr in self.proj.scopes.get(ut).iter_impls(&self.proj, false) {
             for (&type_param, _value) in tr.assoc_types.iter() {
                 if self.proj.scopes.get(type_param).name.data == name.data {
                     // TODO: return _value
@@ -7653,7 +7653,7 @@ pub trait SharedStuff {
     }
 
     fn satisfies_bounds(&mut self, ty_args: &TypeArgs, id: TypeParamId, ty: TypeId) -> bool {
-        for mut bound in self.proj().scopes.get(id).iter_impls_owned(&self.proj().scopes, false) {
+        for mut bound in self.proj().scopes.get(id).iter_impls_owned(self.proj(), false) {
             bound.fill_templates(&self.proj().types, ty_args);
             if self.do_implements_trait(ty, &bound).is_none() {
                 return false;
@@ -7736,7 +7736,7 @@ pub trait SharedStuff {
 
     fn do_insert_ty_arg(&mut self, ty_args: &mut TypeArgs, key: TypeParamId, val: TypeId) {
         ty_args.insert(key, val);
-        for tr in self.proj().scopes.get(key).iter_impls_owned(&self.proj().scopes, false) {
+        for tr in self.proj().scopes.get(key).iter_impls_owned(self.proj(), false) {
             if tr.ty_args.is_empty() {
                 continue;
             }
@@ -7887,7 +7887,7 @@ pub trait SharedStuff {
 
         let mut fallback_debug = None;
         for implementor in implementors {
-            let Some(imp) = self.proj().scopes.impls.get(implementor).as_checked() else {
+            let Some(imp) = self.proj().impls.get(implementor).as_checked() else {
                 continue;
             };
 

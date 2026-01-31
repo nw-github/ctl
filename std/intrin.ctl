@@ -1,4 +1,4 @@
-use std::reflect::*;
+use std::reflect::{Tuple, TypeId};
 
 $[intrinsic]
 pub extern fn size_of<T>(): uint;

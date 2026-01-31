@@ -8,9 +8,10 @@ use crate::{
         declared::UsePath,
         parsed::{Expr, FunctionType, Path, Pattern, TypeHint},
     },
-    ds::{ComptimeInt, HashMap, HashSet, IndexMap, arena::Arena},
+    ds::{ComptimeInt, HashMap, HashSet, IndexMap},
     intern::{StrId, Strings},
     lexer::{Located, Span},
+    project::{ImplId, Project},
     typeid::{GenericTrait, GenericUserType, Type, TypeId, Types},
 };
 pub use attrs::*;
@@ -93,8 +94,6 @@ id!(TraitId => Trait, traits, tns);
 
 pub type ExtensionId = UserTypeId;
 pub type TypeParamId = UserTypeId;
-
-pub type ImplId = crate::ds::arena::Id<TraitImpl>;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum LoopBreak {
@@ -406,16 +405,16 @@ impl UserType {
 
     pub fn iter_impls<'a>(
         &'a self,
-        scopes: &'a Scopes,
+        proj: &'a Project,
         super_traits: bool,
     ) -> impl Iterator<Item = &'a CheckedImpl> {
         self.impls.iter().flat_map(move |imp| {
-            scopes.impls.get(*imp).as_checked().filter(|imp| super_traits || !imp.super_trait)
+            proj.impls.get(*imp).as_checked().filter(|imp| super_traits || !imp.super_trait)
         })
     }
 
-    pub fn iter_impls_owned(&self, scopes: &Scopes, super_traits: bool) -> Vec<GenericTrait> {
-        self.iter_impls(scopes, super_traits).map(|s| s.tr.clone()).collect::<Vec<_>>()
+    pub fn iter_impls_owned(&self, proj: &Project, super_traits: bool) -> Vec<GenericTrait> {
+        self.iter_impls(proj, super_traits).map(|s| s.tr.clone()).collect::<Vec<_>>()
     }
 }
 
@@ -578,7 +577,6 @@ pub struct Scopes {
     traits: Vec<Scoped<Trait>>,
     vars: Vec<Scoped<Variable>>,
     tuples: HashMap<Vec<StrId>, UserTypeId>,
-    pub impls: Arena<TraitImpl>,
     pub lang_types: HashMap<LangType, UserTypeId>,
     pub lang_traits: HashMap<LangTrait, TraitId>,
 }
@@ -593,7 +591,6 @@ impl Scopes {
             traits: Vec::new(),
             aliases: Vec::new(),
             tuples: HashMap::new(),
-            impls: Default::default(),
             lang_types: HashMap::new(),
             lang_traits: HashMap::new(),
         }
