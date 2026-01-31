@@ -578,15 +578,10 @@ impl TypeChecker<'_> {
             };
 
         if let Some(tr) = self.proj.types[ty].as_dyn_pointee() {
-            let tr = tr.clone();
-            self.resolve_super_traits(tr.id);
-            for tr in self.proj.scopes.walk_super_traits(&self.proj.types, tr) {
-                add_methods(
-                    self,
-                    &mut completions,
-                    self.proj.scopes.get(tr.id).body_scope,
-                    Some(tr.id),
-                );
+            let tr_id = tr.id;
+            self.resolve_super_traits(tr_id);
+            for tr in self.proj.scopes.walk_super_trait_ids(tr_id) {
+                add_methods(self, &mut completions, self.proj.scopes.get(tr).body_scope, Some(tr));
             }
         }
 
@@ -1665,13 +1660,7 @@ impl TypeChecker<'_> {
             }
             DStmt::Trait { id, fns } => {
                 self.enter_id(self.proj.scopes.get(id).body_scope, |this| {
-                    if this.check_trait_dependencies(id) {
-                        // FIXME: this error also shows for traits that have a recursive trait in
-                        // their impls
-                        this.proj
-                            .diag
-                            .report(Error::recursive_trait(this.proj.scopes.get(id).name.span));
-                    }
+                    this.resolve_super_traits(id);
                     for f in fns {
                         this.check_fn(f);
                     }
@@ -2109,7 +2098,9 @@ impl TypeChecker<'_> {
     fn check_impl_blocks(&mut self, this_ty: TypeId, id: UserTypeId) {
         let mut seen = HashSet::new();
         for id in self.proj.scopes.get(id).impls.clone() {
-            let imp = self.proj.scopes.impls.get(id).as_checked().unwrap();
+            let Some(imp) = self.proj.scopes.impls.get(id).as_checked() else {
+                continue;
+            };
             let scope = imp.scope.unwrap();
             let imp = imp.clone();
             self.enter_id(scope, |this| {
@@ -5190,39 +5181,6 @@ impl TypeChecker<'_> {
         false
     }
 
-    fn check_trait_dependencies(&mut self, id: TraitId) -> bool {
-        self.resolve_super_traits(id);
-        match self.proj.trait_deps.get(&id) {
-            Some(Dependencies::Resolved(_)) => return false,
-            Some(_) => return true,
-            None => {}
-        }
-
-        self.proj.trait_deps.insert(id, Dependencies::Resolving);
-
-        let mut deps = Vec::new();
-        let mut failed = false;
-        let ids: Vec<_> =
-            self.proj.scopes.get(id).super_traits.iter_checked().map(|i| i.id).collect();
-        for id in ids {
-            deps.push(id);
-            if self.check_trait_dependencies(id) {
-                failed = true;
-            }
-            if let Some(Dependencies::Resolved(res)) = self.proj.trait_deps.get(&id) {
-                deps.extend(res.iter());
-            }
-        }
-
-        if failed {
-            self.proj.trait_deps.insert(id, Dependencies::Recursive);
-            true
-        } else {
-            self.proj.trait_deps.insert(id, Dependencies::Resolved(deps));
-            false
-        }
-    }
-
     fn resolve_impls(&mut self) {
         fn resolve_impl(
             this: &mut TypeChecker,
@@ -5319,26 +5277,39 @@ impl TypeChecker<'_> {
         self.impl_resolve_phase = false;
     }
 
-    fn resolve_super_traits(&mut self, id: TraitId) {
+    fn resolve_super_traits(&mut self, id: TraitId) -> bool {
         let tr = self.proj.scopes.get_mut(id);
         let scope = tr.body_scope;
         // Replace with checked in case `id` is recursive
-        let trs = match std::mem::replace(&mut tr.super_traits, SuperTraits::Checked(vec![])) {
+        let mut failed = false;
+        let trs = match std::mem::replace(&mut tr.super_traits, SuperTraits::Checking) {
+            traits @ SuperTraits::Checking => {
+                failed = true;
+                traits
+            }
             traits @ SuperTraits::Checked(_) => traits,
             // TODOX: this will result in duplicate errors as the `This` type also checks these paths
             SuperTraits::Unchecked(paths) => self.enter_id(scope, |this| {
-                SuperTraits::Checked(
-                    paths
-                        .iter()
-                        .flat_map(|path| {
-                            this.resolve_trait_path(path)
-                                .inspect(|tr| this.resolve_super_traits(tr.id))
-                        })
-                        .collect(),
-                )
+                let mut res_paths = Vec::with_capacity(paths.len());
+                for path in paths.iter() {
+                    let Some(dep) = this.resolve_trait_path(path) else {
+                        continue;
+                    };
+
+                    if this.resolve_super_traits(dep.id) {
+                        this.proj
+                            .diag
+                            .report(Error::recursive_trait(this.proj.scopes.get(id).name.span));
+                        failed = true;
+                    }
+
+                    res_paths.push(dep);
+                }
+                SuperTraits::Checked(res_paths)
             }),
         };
         self.proj.scopes.get_mut(id).super_traits = trs;
+        failed
     }
 
     fn resolve_alias(&mut self, id: AliasId) -> TypeId {

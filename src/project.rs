@@ -2,11 +2,11 @@ use std::collections::HashSet;
 
 use crate::{
     Diagnostics, Span,
-    ds::{DependencyGraph, HashMap, OrderedDependencyGraph},
+    ds::{DependencyGraph, HashMap},
     format::{FmtTr, FmtTy, FmtUt, FmtWta},
     intern::{StrId, Strings},
     package::ConstraintArgs,
-    sym::{FunctionId, ScopeId, Scopes, TraitId, TypeItem, ValueItem, VariableId, Vis},
+    sym::{FunctionId, ScopeId, Scopes, TypeItem, ValueItem, VariableId, Vis},
     typecheck::{Completions, LspItem},
     typeid::{GenericTrait, GenericUserType, TypeId, Types, WithTypeArgs},
 };
@@ -23,7 +23,6 @@ pub struct Project {
     pub test_runner: Option<FunctionId>,
     pub deps: DependencyGraph<TypeId>,
     pub static_deps: DependencyGraph<VariableId>,
-    pub trait_deps: OrderedDependencyGraph<TraitId>,
     pub conf: Configuration,
     pub strings: Strings,
     pub autouse_tns: HashMap<StrId, Vis<TypeItem>>,
@@ -46,7 +45,6 @@ impl Project {
             test_runner: Default::default(),
             deps: Default::default(),
             static_deps: Default::default(),
-            trait_deps: Default::default(),
             autouse_tns: Default::default(),
             autouse_vns: Default::default(),
         }

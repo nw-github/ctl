@@ -113,28 +113,28 @@ impl TypeGen {
     }
 
     fn gen_vtable_info(buf: &mut Buffer, tr: TraitId) {
-        let Some(Dependencies::Resolved(deps)) = buf.1.trait_deps.get(&tr) else {
-            panic!(
-                "ICE: Dyn pointer for trait '{}' has invalid dependencies",
-                buf.1.str(tr.name(&buf.1.scopes).data),
-            );
-        };
+        fn walk(proj: &Project, tr: TraitId, func: &mut impl FnMut(TraitId)) {
+            func(tr);
+            for dep in proj.scopes.get(tr).super_traits.iter_checked() {
+                walk(proj, dep.id, func);
+            }
+        }
 
         write_de!(buf, "enum {{");
 
         let mut offset = 0;
-        for id in std::iter::once(tr).chain(deps.iter().cloned()) {
+        walk(buf.1, tr, &mut |dep| {
             buf.emit_vtable_prefix(tr);
-            buf.emit_vtable_prefix(id);
+            buf.emit_vtable_prefix(dep);
             write_de!(buf, "{VTABLE_TRAIT_START}={offset},");
 
-            for f in vtable_methods(&buf.1.scopes, &buf.1.types, id) {
+            for f in vtable_methods(&buf.1.scopes, &buf.1.types, dep) {
                 buf.emit_vtable_prefix(tr);
                 buf.emit_vtable_fn_name(f);
                 write_de!(buf, "={offset},");
                 offset += 1;
             }
-        }
+        });
 
         buf.emit_vtable_prefix(tr);
         writeln_de!(buf, "{VTABLE_TRAIT_LEN}={offset}}};");
