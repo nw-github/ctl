@@ -1028,7 +1028,7 @@ impl<'a> Codegen<'a> {
             write_de!(self.buffer, "[");
             self.buffer.emit_vtable_prefix(vtable.tr.id);
             write_de!(self.buffer, "{VTABLE_TRAIT_LEN}]={{");
-            for tr in self.proj.scopes.walk_super_traits_ex(&self.proj.types, vtable.tr.clone()) {
+            for tr in self.proj.scopes.walk_super_traits(&self.proj.types, vtable.tr.clone()) {
                 for f in vtable_methods(&self.proj.scopes, &self.proj.types, tr.id) {
                     write_de!(self.buffer, "[");
                     self.buffer.emit_vtable_prefix(vtable.tr.id);

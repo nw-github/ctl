@@ -5270,7 +5270,7 @@ impl TypeChecker<'_> {
             })?;
             let scope = if let Some(id) = is_template {
                 this.resolve_super_traits(tr.id);
-                for sup in this.proj.scopes.walk_super_traits_ex(&this.proj.types, tr.clone()) {
+                for sup in this.proj.scopes.walk_super_traits(&this.proj.types, tr.clone()) {
                     if tr.id == sup.id {
                         continue;
                     }
@@ -5404,7 +5404,7 @@ impl TypeChecker<'_> {
         if let Some(tr) = self.proj.types[inst].as_dyn_pointee() {
             let tr = tr.clone();
             self.resolve_super_traits(tr.id);
-            for imp in self.proj.scopes.walk_super_traits_ex(&self.proj.types, tr) {
+            for imp in self.proj.scopes.walk_super_traits(&self.proj.types, tr) {
                 let body = self.proj.scopes.get(imp.id).body_scope;
                 if let Some(f) = self.proj.scopes[body].find_fn(name) {
                     let mut func = finish(self, f.id);
@@ -5647,7 +5647,7 @@ impl TypeChecker<'_> {
         fn can_upcast(this: &TypeChecker, lhs: &GenericTrait, rhs: &GenericTrait) -> bool {
             this.proj
                 .scopes
-                .walk_super_traits_ex(&this.proj.types, lhs.clone())
+                .walk_super_traits(&this.proj.types, lhs.clone())
                 .iter()
                 .any(|lhs| lhs == rhs)
         }

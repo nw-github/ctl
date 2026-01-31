@@ -288,8 +288,11 @@ fn display_diagnostics(diag: &Diagnostics) {
         id: FileId,
         errors: impl IntoIterator<Item = &'a Error>,
         mut format: impl FnMut(&str, Range),
-    ) {
-        for err in errors.into_iter().filter(|err| err.span.file == id) {
+    ) -> usize {
+        let mut vec: Vec<_> = errors.into_iter().filter(|err| err.span.file == id).collect();
+        vec.sort_by_key(|item| item.span.pos);
+        let count = vec.len();
+        for err in vec {
             // TODO: do something with the errors
             _ = provider.get_source(diag.file_path(err.span.file), |data| {
                 format(
@@ -298,13 +301,15 @@ fn display_diagnostics(diag: &Diagnostics) {
                 );
             });
         }
+        count
     }
 
     let cwd = std::env::current_dir().ok();
     let mut provider = CachingSourceProvider::new();
+    let mut errors = 0;
     for (id, path) in diag.paths() {
         let path = cwd.as_ref().and_then(|cwd| path.strip_prefix(cwd).ok()).unwrap_or(path);
-        format(
+        errors += format(
             &mut provider,
             diag,
             id,
@@ -321,9 +326,10 @@ fn display_diagnostics(diag: &Diagnostics) {
         );
     }
 
+    let mut warnings = 0;
     for (id, path) in diag.paths() {
         let path = cwd.as_ref().and_then(|cwd| path.strip_prefix(cwd).ok()).unwrap_or(path);
-        format(
+        warnings += format(
             &mut provider,
             diag,
             id,
@@ -338,6 +344,10 @@ fn display_diagnostics(diag: &Diagnostics) {
                 );
             },
         );
+    }
+
+    if errors != 0 || warnings != 0 {
+        eprintln!("{errors} error(s), {warnings} warning(s)");
     }
 }
 

@@ -701,23 +701,7 @@ impl Scopes {
         self.tuples.get(names).copied()
     }
 
-    pub fn walk_super_traits(&self, tr: TraitId) -> HashSet<TraitId> {
-        fn inner(this: &Scopes, tr: TraitId, results: &mut HashSet<TraitId>) {
-            if !results.insert(tr) {
-                return;
-            }
-
-            for tr in this.get(tr).super_traits.iter_checked() {
-                inner(this, tr.id, results);
-            }
-        }
-
-        let mut result = HashSet::new();
-        inner(self, tr, &mut result);
-        result
-    }
-
-    pub fn walk_super_traits_ex(&self, types: &Types, tr: GenericTrait) -> HashSet<GenericTrait> {
+    pub fn walk_super_traits(&self, types: &Types, tr: GenericTrait) -> HashSet<GenericTrait> {
         fn inner(
             this: &Scopes,
             types: &Types,
