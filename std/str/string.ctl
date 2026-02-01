@@ -53,22 +53,7 @@ pub struct str {
         str(span:)
     }
 
-    pub fn find(this, rhs: str): ?uint {
-        guard this.len() >= rhs.len() else {
-            return null;
-        }
-
-        // TODO: use something standard or add an intrinsic
-        let cmp = unsafe std::deps::libc::memmem(
-            haystack: this.span.as_raw().cast(),
-            hlen: this.span.len(),
-            needle: rhs.span.as_raw().cast(),
-            nlen: rhs.span.len(),
-        );
-        if cmp is ?val {
-            this.span.as_raw().cast::<void>().sub_ptr(val)
-        }
-    }
+    pub fn find(this, rhs: str): ?uint => this.span.find(rhs.span);
 
     pub unsafe fn substr_unchecked<R: RangeBounds<uint>>(this, range: R): str {
         str(span: unsafe this.span.subspan_unchecked(range))
@@ -293,8 +278,25 @@ unittest "from_utf8_lossy" {
     assert_eq(str::from_utf8_lossy(b"AB\xc0\xafC\xc1\x81D"[..]), "AB�C�D");
 }
 
-extension [u8..] {
+extension<Span: std::span::AsSpan<u8>> Span {
     pub fn iter_chars_lossy(this, replacement: char = char::replacement_marker()): LossyChars {
         LossyChars(iter: this.iter(), replacement:)
+    }
+
+    pub fn find(my this, rhs: [u8..]): ?uint {
+        guard this.len() >= rhs.len() else {
+            return null;
+        }
+
+        // TODO: use something standard or add an intrinsic
+        let cmp = unsafe std::deps::libc::memmem(
+            haystack: this.as_raw().cast(),
+            hlen: this.len(),
+            needle: rhs.as_raw().cast(),
+            nlen: rhs.len(),
+        );
+        if cmp is ?val {
+            val.sub_ptr(this.as_raw().cast())
+        }
     }
 }

@@ -301,3 +301,11 @@ pub unsafe fn backtrace<F: Fn(uint) => bool>(f: F, kw ctx: ?Context = null): boo
 
     true
 }
+
+$[feature(alloc)]
+pub fn demangle_name(name: [u8..]): ?str {
+    mut name = str::from_utf8(name)?.strip_prefix("CTL$")?;
+    mut builder = std::fmt::StringBuilder::new();
+    MaybeMangledName::demangle_name(&mut name, &mut std::fmt::Formatter::new(&mut builder))?;
+    builder.into_str()
+}
