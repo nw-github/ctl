@@ -5399,7 +5399,7 @@ impl TypeChecker<'_> {
                         .entry(type_param)
                         .or_insert(ut.ty_args.get(&type_param).copied().unwrap_or(TypeId::UNKNOWN));
                 }
-                return Some(LookupFnResult { func, trait_fn,  dynamic: false });
+                return Some(LookupFnResult { func, trait_fn, dynamic: false });
             }
         }
 
@@ -7770,6 +7770,8 @@ pub trait SharedStuff {
             if let Type::Array(id, _) = ty {
                 return Some(GenericTrait::from_type_args(scopes, tr, [*id]));
             }
+        } else if is_same_tr(LangTrait::DynPtr) {
+            return default_if(matches!(ty, Type::DynPtr(_) | Type::DynMutPtr(_)));
         } else if is_same_tr(LangTrait::FnPtr) {
             match ty {
                 Type::Fn(f) => 'out: {

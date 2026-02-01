@@ -2601,6 +2601,22 @@ impl<'a> Codegen<'a> {
                 }
                 write_de!(self.buffer, ")");
             }
+            Intrinsic::InstancePtrOf => {
+                self.emit_expr_inline(args.into_iter().next().unwrap().1, state);
+                write_de!(self.buffer, ".self");
+            }
+            Intrinsic::VTableOf => {
+                self.emit_cast(ret);
+                write_de!(self.buffer, "{{.ptr=");
+                self.emit_expr_inline(args.into_iter().next().unwrap().1, state);
+                write_de!(self.buffer, ".vtable,.len=");
+                let tr = self.proj.types[func.first_type_arg(&self.proj.scopes).unwrap()]
+                    .as_dyn_pointee()
+                    .unwrap()
+                    .id;
+                self.buffer.emit_vtable_prefix(tr);
+                write_de!(self.buffer, "{VTABLE_TRAIT_LEN}}}");
+            }
         }
     }
 
@@ -2740,21 +2756,6 @@ impl<'a> Codegen<'a> {
                 } else {
                     write_str!(")");
                 }
-            }
-            Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
-                if self.proj.types[arg_ty].is_dyn_mut_ptr() {
-                    write_str_fmt!("*dyn mut {} {{self: ", self.proj.fmt_tr(tr));
-                } else {
-                    write_str_fmt!("*dyn {} {{self: ", self.proj.fmt_tr(tr));
-                }
-
-                let ty = self.proj.types.insert(Type::RawPtr(TypeId::VOID));
-                let self_ptr = format!("(void const*){{{arg}.self}}");
-                let vtable_ptr = format!("(void const*){{{arg}.vtable}}");
-                self.emit_builtin_dbg(args, ty, &self_ptr, fmt, state, 0);
-                write_str!(", vtable: ");
-                self.emit_builtin_dbg(args, ty, &vtable_ptr, fmt, state, 0);
-                write_str!("}");
             }
             _ => panic!("ICE: attempt to emit_builtin_dbg for '{}'", self.proj.fmt_ty(arg_ty)),
         }

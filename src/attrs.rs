@@ -360,6 +360,7 @@ pub enum LangTrait {
     Iterator,
     Tuple,
     FnPtr,
+    DynPtr,
 
     OpCmp,
     OpEq,
@@ -401,6 +402,7 @@ impl LangTrait {
             "array" => Some(Self::Array),
             "tuple" => Some(Self::Tuple),
             "fn_ptr" => Some(Self::FnPtr),
+            "dyn_ptr" => Some(Self::DynPtr),
             "fmt_debug" => Some(Self::Debug),
             "fmt_format" => Some(Self::Format),
             "fmt_pointer" => Some(Self::Pointer),
@@ -468,6 +470,8 @@ pub enum Intrinsic {
     PtrDiff,
     BuiltinDbg,
     InvokeWithTuple,
+    VTableOf,
+    InstancePtrOf,
 }
 
 impl Intrinsic {
@@ -494,6 +498,8 @@ impl Intrinsic {
             "ptr_diff" => Some(Self::PtrDiff),
             "builtin_dbg" => Some(Self::BuiltinDbg),
             "invoke_with_tuple" => Some(Self::InvokeWithTuple),
+            "vtable_of" => Some(Self::VTableOf),
+            "instance_ptr_of" => Some(Self::InstancePtrOf),
             _ => None,
         }
     }

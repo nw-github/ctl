@@ -1,7 +1,7 @@
 use std::hash::*;
 use std::ops::*;
 use std::fmt::*;
-use std::reflect::{Tuple, SafeFnPtr};
+use std::reflect::{Tuple, SafeFnPtr, DynPtr, type_name_of_val};
 
 extension void {
     impl Hash {
@@ -45,5 +45,15 @@ extension<Args: Tuple, R> *dyn Fn<Args, R> {
 extension<Args: Tuple, R> *dyn mut Fn<Args, R> {
     impl Fn<Args, R> {
         fn invoke(this, args: Args): R => (*this).invoke(args);
+    }
+}
+
+extension<T: DynPtr> T {
+    impl std::fmt::Debug {
+        fn dbg(this, f: *mut std::fmt::Formatter) {
+            let self = std::intrin::instance_ptr_of(*this);
+            let vtable = std::intrin::vtable_of(*this);
+            write(f, "{type_name_of_val(this)} \{self: {self:?}, vtable: {vtable.as_raw():?}\}");
+        }
     }
 }
