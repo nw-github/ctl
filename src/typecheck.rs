@@ -127,8 +127,6 @@ impl From<LookupFnResult> for MemberFn {
 pub struct LookupFnResult {
     pub func: GenericFn,
     pub trait_fn: Option<(TypeId, GenericTrait)>,
-    pub owner: ScopeId,
-    pub public: bool,
     pub dynamic: bool,
 }
 
@@ -4332,16 +4330,6 @@ impl TypeChecker<'_> {
                 }
 
                 let f = self.proj.scopes.get(res.func.id);
-                if !res.public && !self.can_access_privates(res.owner) {
-                    report_error!(
-                        self,
-                        span,
-                        "cannot access private method '{}' of type '{}'",
-                        strdata!(self, self.proj.scopes.get(res.func.id).name.data),
-                        self.proj.fmt_ty(id),
-                    )
-                }
-
                 let Some(this_param) = f.params.first().filter(|p| p.label == Strings::THIS_PARAM)
                 else {
                     return report_error!(
@@ -5361,13 +5349,7 @@ impl TypeChecker<'_> {
                 if let Some(f) = self.proj.scopes[body].find_fn(name) {
                     let mut func = finish(self, f.id);
                     func.ty_args.copy_args(&imp.ty_args);
-                    return Some(LookupFnResult {
-                        func,
-                        trait_fn: None,
-                        dynamic: true,
-                        owner: body,
-                        public: f.public,
-                    });
+                    return Some(LookupFnResult { func, trait_fn: None, dynamic: true });
                 }
             }
         }
@@ -5377,15 +5359,13 @@ impl TypeChecker<'_> {
         for ut in ut.as_ref().into_iter().chain(exts.iter()) {
             let body = self.proj.scopes.get(ut.id).body_scope;
             if let Some(f) = self.proj.scopes[body].find_fn(name) {
+                if !f.public && !self.can_access_privates(body) {
+                    continue;
+                }
+
                 let mut func = finish(self, f.id);
                 func.ty_args.copy_args(&ut.ty_args);
-                return Some(LookupFnResult {
-                    func,
-                    trait_fn: None,
-                    owner: body,
-                    public: f.public,
-                    dynamic: false,
-                });
+                return Some(LookupFnResult { func, trait_fn: None, dynamic: false });
             }
         }
 
@@ -5399,7 +5379,6 @@ impl TypeChecker<'_> {
                 // somewhere
 
                 let tr_data = self.proj.scopes.get(imp.tr.id);
-                let scope = imp.scope.unwrap_or(tr_data.body_scope);
                 let Some((f, trait_fn)) = imp
                     .scope
                     .and_then(|scope| self.proj.scopes[scope].find_fn(name).map(|f| (f, false)))
@@ -5428,13 +5407,7 @@ impl TypeChecker<'_> {
                         .entry(type_param)
                         .or_insert(ut.ty_args.get(&type_param).copied().unwrap_or(TypeId::UNKNOWN));
                 }
-                return Some(LookupFnResult {
-                    func,
-                    trait_fn,
-                    owner: scope,
-                    public: f.public,
-                    dynamic: false,
-                });
+                return Some(LookupFnResult { func, trait_fn,  dynamic: false });
             }
         }
 
@@ -7319,16 +7292,6 @@ impl TypeChecker<'_> {
         self.check_hover(name.span, res.func.id);
         if let Some((name, _)) = rest.first() {
             return ResolvedValue::NotFound(*name);
-        }
-
-        if !res.public && !self.can_access_privates(res.owner) {
-            report_error!(
-                self,
-                name.span,
-                "cannot access private method '{}' of type '{}'",
-                strdata!(self, self.proj.scopes.get(res.func.id).name.data),
-                self.proj.fmt_ty(ty)
-            )
         }
         ResolvedValue::MemberFn(res.into())
     }

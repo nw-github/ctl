@@ -169,25 +169,3 @@ $[lang(op_fn)]
 pub trait Fn<Args: std::reflect::Tuple, R> {
     fn invoke(this, args: Args): R;
 }
-
-use std::reflect::{Tuple, SafeFnPtr};
-
-extension<Args: Tuple, R, F: SafeFnPtr<Args, R>> F {
-    impl Fn<Args, R> {
-        fn invoke(this, args: Args): R => std::intrin::invoke_with_tuple(this, args);
-    }
-}
-
-extension<Args: Tuple, R> *dyn Fn<Args, R> {
-    impl Fn<Args, R> {
-        // TODO: This call is not recursive because the . operator will check dynamic calls
-        // before checking extensions, but this syntax seems ambiguous
-        fn invoke(this, args: Args): R => (*this).invoke(args);
-    }
-}
-
-extension<Args: Tuple, R> *dyn mut Fn<Args, R> {
-    impl Fn<Args, R> {
-        fn invoke(this, args: Args): R => (*this).invoke(args);
-    }
-}
