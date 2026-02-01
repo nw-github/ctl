@@ -107,7 +107,7 @@ fn panic_handler(info: *PanicInfo): never {
     }
 
     eprintln(info);
-    unsafe std::bt::backtrace(|mut i = 0u,| (pc) {
+    unsafe std::bt::backtrace(|=mut i = 0u, pc| {
         if i != 0 {
             print_bt_line(i, std::bt::Call(addr: pc));
         }

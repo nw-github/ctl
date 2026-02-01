@@ -6,7 +6,7 @@ fn baz(): int {
     let x = || => panic("oh no");
 
     let v = ?0;
-    let x = |v| ([z]: [int; 1]) => v is ?val and val > z;
+    let x = |=v, [z]: [int; 1]| => v is ?val and val > z;
 
     let _ = z;
     let _ = val;

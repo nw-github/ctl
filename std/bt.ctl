@@ -228,7 +228,7 @@ pub struct Backtrace {
     $[inline(never)]
     pub fn capture(): This {
         mut addrs: [Call] = @[];
-        unsafe backtrace(|&mut addrs, mut i = 0,| (pc) {
+        unsafe backtrace(|&mut addrs, =mut i = 0, pc| {
             if i++ >= 2 {
                 // TODO: allow this to fail
                 addrs.push(Call(addr: pc));

@@ -66,7 +66,7 @@ fn install_fault_handler() {
     unsafe {
         mut sa: sigaction = std::mem::zeroed();
         sa.sa_flags = SA_SIGINFO;
-        sa.__sigaction_handler.sa_sigaction = ?|| (sig, info, ctx) => unsafe {
+        sa.__sigaction_handler.sa_sigaction = ?|sig, info, ctx| unsafe {
             let name = sig == SIGSEGV then "SIGSEGV"
                 else sig == SIGFPE then "SIGFPE"
                 else sig == SIGILL then "SIGILL"
@@ -96,7 +96,7 @@ fn install_fault_handler() {
                 let bp: uint = std::mem::bit_cast(regs[linux::REG_RBP as c_int]);
                 let sp: uint = std::mem::bit_cast(regs[linux::REG_RSP as c_int]);
                 let ctx = std::bt::Context(pc:, bp:, sp:, signal: true);
-                std::bt::backtrace(ctx:, |mut i = 0u,| (pc) {
+                std::bt::backtrace(ctx:, |=mut i = 0u, pc| {
                     std::panic::print_bt_line(i++, std::bt::Call(addr: pc));
                     true
                 });
