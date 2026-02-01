@@ -13,38 +13,41 @@ pub struct Span<T> {
     pub fn from_ptr(ptr: *T): This => unsafe Span::new(ptr, 1);
     pub fn empty(): This => Span(ptr: std::ptr::raw_dangling(), len: 0);
 
-    pub fn len(my this): uint => this.len;
-    pub fn is_empty(my this): bool => this.len == 0;
+    impl AsSpan<T> {
+        fn as_span(this): [T..] => *this;
 
-    pub fn get(my this, idx: uint): ?*T {
-        if idx < this.len {
-            unsafe this.get_unchecked(idx)
+        fn len(this): uint => this.len;
+        fn is_empty(this): bool => this.len == 0;
+
+        fn get(this, idx: uint): ?*T {
+            if idx < this.len {
+                unsafe this.get_unchecked(idx)
+            }
         }
-    }
 
-    pub unsafe fn get_unchecked(my this, idx: uint): *T => unsafe &*this.ptr.add(idx);
+        unsafe fn get_unchecked(this, idx: uint): *T => unsafe &*this.ptr.add(idx);
 
-    pub fn as_raw(my this): ^T => this.ptr;
+        fn as_raw(this): ^T => this.ptr;
+        fn iter(this): Iter<T> => Iter(ptr: this.ptr, end: this.ptr.add(this.len));
 
-    pub fn iter(my this): Iter<T> => Iter(ptr: this.ptr, end: this.ptr.add(this.len));
+        fn subspan<R: RangeBounds<uint>>(this, range: R): ?This {
+            let (start, end) = range_bounds(range, this.len);
+            if start <= end and end <= this.len {
+                unsafe Span::new(this.ptr.add(start), end - start)
+            }
+        }
 
-    pub fn subspan<R: RangeBounds<uint>>(my this, range: R): ?This {
-        let (start, end) = range_bounds(range, this.len);
-        if start <= end and end <= this.len {
+        unsafe fn subspan_unchecked<R: RangeBounds<uint>>(this, range: R): [T..] {
+            let (start, end) = range_bounds(range, this.len);
             unsafe Span::new(this.ptr.add(start), end - start)
         }
-    }
 
-    pub unsafe fn subspan_unchecked<R: RangeBounds<uint>>(my this, range: R): This {
-        let (start, end) = range_bounds(range, this.len);
-        unsafe Span::new(this.ptr.add(start), end - start)
-    }
+        fn first(this): ?*T => this.get(0);
 
-    pub fn first(my this): ?*T => this.get(0);
-
-    pub fn last(my this): ?*T {
-        if !this.is_empty() {
-            unsafe this.get_unchecked(this.len() - 1)
+        fn last(this): ?*T {
+            if !this.is_empty() {
+                unsafe this.get_unchecked(this.len() - 1)
+            }
         }
     }
 
@@ -86,13 +89,8 @@ pub struct SpanMut<T> {
     pub fn from_ptr(ptr: *mut T): This => unsafe SpanMut::new(ptr, 1);
     pub fn empty(): This => SpanMut(ptr: std::ptr::raw_dangling(), len: 0);
 
-    pub fn len(my this): uint => this.len;
-    pub fn is_empty(my this): bool => this.len == 0;
-
-    pub fn get(my this, idx: uint): ?*T {
-        if idx < this.len {
-            unsafe this.get_unchecked(idx)
-        }
+    impl AsSpan<T> {
+        fn as_span(this): [T..] => *this;
     }
 
     pub fn get_mut(my this, idx: uint): ?*mut T {
@@ -101,24 +99,20 @@ pub struct SpanMut<T> {
         }
     }
 
-    pub unsafe fn get_unchecked(my this, idx: uint): *T => unsafe &*this.ptr.add(idx);
     pub unsafe fn get_mut_unchecked(my this, idx: uint): *mut T => unsafe &mut *this.ptr.add(idx);
 
-    pub fn as_span(my this): Span<T> => this;
-    pub fn as_raw(my this): ^T => this.ptr;
     pub fn as_raw_mut(my this): ^mut T => this.ptr;
 
-    pub fn iter(this): Iter<T> => Iter(ptr: this.ptr, end: this.ptr.add(this.len));
     pub fn iter_mut(my this): IterMut<T> => IterMut(ptr: this.ptr, end: this.ptr.add(this.len));
 
-    pub fn subspan<R: RangeBounds<uint>>(my this, range: R): ?This {
+    pub fn subspan_mut<R: RangeBounds<uint>>(my this, range: R): ?This {
         let (start, end) = range_bounds(range, this.len);
         if start <= end and end <= this.len {
             unsafe SpanMut::new(this.ptr.add(start), end - start)
         }
     }
 
-    pub unsafe fn subspan_unchecked<R: RangeBounds<uint>>(my this, range: R): This {
+    pub unsafe fn subspan_mut_unchecked<R: RangeBounds<uint>>(my this, range: R): This {
         let (start, end) = range_bounds(range, this.len);
         unsafe SpanMut::new(this.ptr.add(start), end - start)
     }
@@ -132,14 +126,7 @@ pub struct SpanMut<T> {
 
     pub fn swap(my this, a: uint, b: uint) => std::mem::swap(&mut this[a], &mut this[b]);
 
-    pub fn first(my this): ?*T => this.get(0);
     pub fn first_mut(my this): ?*mut T => this.get_mut(0);
-
-    pub fn last(my this): ?*T {
-        if !this.is_empty() {
-            unsafe this.get_unchecked(this.len() - 1)
-        }
-    }
 
     pub fn last_mut(my this): ?*mut T {
         if !this.is_empty() {
@@ -161,7 +148,7 @@ pub struct SpanMut<T> {
 
     $[inline(always)]
     pub fn []<R: RangeBounds<uint>>(my this, range: R): This {
-        if this.subspan(range) is ?span {
+        if this.subspan_mut(range) is ?span {
             span
         } else {
             let (start, end) = range_bounds(range, this.len);
@@ -239,6 +226,39 @@ fn range_bounds<R: RangeBounds<uint>>(range: R, len: uint): (uint, uint) {
     };
 
     (start, end)
+}
+
+pub trait AsSpan<T> {
+    fn as_span(this): [T..];
+
+    fn len(this): uint => this.as_span().len();
+    fn is_empty(this): bool => this.len() == 0;
+
+    fn get(this, idx: uint): ?*T => this.as_span().get(idx);
+    fn subspan<R: RangeBounds<uint>>(this, r: R): ?[T..] => this.as_span().subspan(r);
+    fn as_raw(this): ^T => this.as_span().as_raw();
+    fn iter(this): Iter<T> => this.as_span().iter();
+    fn first(this): ?*T => this.as_span().first();
+    fn last(this): ?*T => this.as_span().last();
+
+    unsafe fn get_unchecked(this, idx: uint): *T => unsafe this.as_span().get_unchecked(idx);
+    unsafe fn subspan_unchecked<R: RangeBounds<uint>>(this, r: R): [T..] => unsafe this.as_span().subspan_unchecked(r);
+}
+
+pub trait AsSpanMut<T>: AsSpan<T> {
+    fn as_span_mut(mut this): [mut T..];
+
+    fn get_mut(mut this, idx: uint): ?*mut T => this.as_span_mut().get_mut(idx);
+    fn as_raw_mut(mut this): ^mut T => this.as_span_mut().as_raw_mut();
+    fn iter_mut(mut this): IterMut<T> => this.as_span_mut().iter_mut();
+    fn first_mut(mut this): ?*mut T => this.as_span_mut().first_mut();
+    fn last_mut(mut this): ?*mut T => this.as_span_mut().last_mut();
+
+    fn fill(mut this, t: T) => this.as_span_mut().fill(t);
+    fn swap(mut this, a: uint, b: uint) => this.as_span_mut().swap(a, b);
+
+    unsafe fn get_mut_unchecked(mut this, idx: uint): ?*mut T => unsafe this.as_span_mut().get_mut_unchecked(idx);
+    unsafe fn subspan_mut_unchecked<R: RangeBounds<uint>>(mut this, r: R): [mut T..] => unsafe this.as_span_mut().subspan_mut_unchecked(r);
 }
 
 // TODO: make these member functions/impls when the syntax allows for it

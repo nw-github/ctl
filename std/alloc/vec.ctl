@@ -42,15 +42,7 @@ pub struct Vec<T> {
         }
     }
 
-    pub fn len(this): uint => this.len;
-    pub fn is_empty(this): bool => this.len == 0;
     pub fn capacity(this): uint => this.cap;
-    pub fn as_span(this): [T..] => unsafe Span::new(this.ptr, this.len);
-    pub fn as_span_mut(mut this): [mut T..] => unsafe SpanMut::new(this.ptr, this.len);
-    pub fn as_raw(this): ^T => this.ptr;
-    pub fn as_raw_mut(this): ^mut T => this.ptr;
-    pub fn iter(this): std::span::Iter<T> => this[..].iter();
-    pub fn iter_mut(mut this): std::span::IterMut<T> => this[..].iter_mut();
 
     pub fn push(mut this, val: T) {
         if !this.can_insert(1) {
@@ -157,18 +149,6 @@ pub struct Vec<T> {
 
     pub fn reserve(mut this, kw add: uint) => this.do_reserve(this.len + add);
 
-    pub fn get(this, idx: uint): ?*T {
-        if idx < this.len {
-            unsafe &*this.ptr.add(idx)
-        }
-    }
-
-    pub fn get_mut(mut this, idx: uint): ?*mut T {
-        if idx < this.len {
-            unsafe &mut *this.ptr.add(idx)
-        }
-    }
-
     pub unsafe fn set_len(mut this, len: uint) {
         this.len = len;
     }
@@ -207,6 +187,27 @@ pub struct Vec<T> {
         }
     }
 
+    impl std::span::AsSpan<T> {
+        fn as_span(this): [T..] => unsafe Span::new(this.ptr, this.len);
+        fn len(this): uint => this.len;
+        fn as_raw(this): ^T => this.ptr;
+        fn get(this, idx: uint): ?*T {
+            if idx < this.len {
+                unsafe &*this.ptr.add(idx)
+            }
+        }
+    }
+
+    impl std::span::AsSpanMut<T> {
+        fn as_span_mut(mut this): [mut T..] => unsafe SpanMut::new(this.ptr, this.len);
+        fn as_raw_mut(mut this): ^mut T => this.ptr;
+        fn get_mut(mut this, idx: uint): ?*mut T {
+            if idx < this.len {
+                unsafe &mut *this.ptr.add(idx)
+            }
+        }
+    }
+
     impl std::iter::FromIter<T> {
         fn from_iter<I: Iterator<T>>(iter: I): This {
             mut self: [T] = @[]; // TODO: size hint
@@ -222,13 +223,13 @@ pub struct Vec<T> {
     }
 
     $[inline(always)]
-    pub fn []<I: Integral>(this, idx: I): *T => &this[..][idx];
+    pub fn []<I: Integral>(this, idx: I): *T => &this.as_span()[idx];
 
     $[inline(always)]
-    pub fn []<I: Integral>(mut this, idx: I): *mut T => &mut this[..][idx];
+    pub fn []<I: Integral>(mut this, idx: I): *mut T => &mut this.as_span_mut()[idx];
 
     $[inline(always)]
-    pub fn []=<I: Integral>(mut this, idx: I, val: T) => this[..][idx] = val;
+    pub fn []=<I: Integral>(mut this, idx: I, val: T) => this.as_span_mut()[idx] = val;
 
     $[inline(always)]
     pub fn []<R: RangeBounds<uint>>(this, r: R): [T..] => this.as_span()[r];
