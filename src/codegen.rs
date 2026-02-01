@@ -359,15 +359,11 @@ struct State {
     func: GenericFn,
     tmpvar: usize,
     emitted_names: HashMap<StrId, VariableId>,
-    uniq: Vec<(UserTypeId, TypeId)>,
 }
 
 impl State {
     pub fn new(func: GenericFn) -> Self {
-        let mut uniq: Vec<_> = func.ty_args.iter().map(|v| (*v.0, *v.1)).collect();
-        uniq.sort_by_key(|k| k.0);
-
-        Self { func, tmpvar: 0, emitted_names: Default::default(), uniq }
+        Self { func, tmpvar: 0, emitted_names: Default::default() }
     }
 
     pub fn from_non_generic(id: FunctionId, scopes: &Scopes) -> Self {
@@ -391,14 +387,13 @@ impl State {
 
 impl std::hash::Hash for State {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.func.id.hash(state);
-        self.uniq.hash(state);
+        self.func.hash(state);
     }
 }
 
 impl PartialEq for State {
     fn eq(&self, other: &Self) -> bool {
-        self.func.id == other.func.id && self.uniq == other.uniq
+        self.func == other.func
     }
 }
 
@@ -1476,7 +1471,7 @@ impl<'a> Codegen<'a> {
                     write_de!(self.buffer, "for(usize i=0;i<{len};i++){{");
                     hoist_point!(self, {
                         write_de!(self.buffer, "((");
-                        self.emit_type(ut.first_type_arg().unwrap());
+                        self.emit_type(ut.first_type_arg(&self.proj.scopes).unwrap());
                         write_de!(self.buffer, "*){tmp}.ptr)[i]=");
                         self.emit_expr_inline(init, state);
                         writeln_de!(self.buffer, ";}}{tmp}.len={len};");
@@ -1887,7 +1882,7 @@ impl<'a> Codegen<'a> {
                 &tr,
                 self.proj.scopes.get(mfn.func.id).name.data,
                 |proj, id| {
-                    TypeArgs::in_order(&proj.scopes, id, mfn.func.ty_args.0.iter().map(|kv| *kv.1))
+                    TypeArgs::in_order(&proj.scopes, id, mfn.func.ordered_iter(&self.proj.scopes))
                 },
             );
         }
@@ -2363,7 +2358,7 @@ impl<'a> Codegen<'a> {
                 write_de!(
                     self.buffer,
                     "(usize){}",
-                    func.first_type_arg()
+                    func.first_type_arg(&self.proj.scopes)
                         .unwrap()
                         .size_and_align(&self.proj.scopes, &self.proj.types)
                         .0
@@ -2373,7 +2368,7 @@ impl<'a> Codegen<'a> {
                 write_de!(
                     self.buffer,
                     "(usize){}",
-                    func.first_type_arg()
+                    func.first_type_arg(&self.proj.scopes)
                         .unwrap()
                         .size_and_align(&self.proj.scopes, &self.proj.types)
                         .1
@@ -2479,10 +2474,15 @@ impl<'a> Codegen<'a> {
             }
             Intrinsic::TypeId => {
                 self.emit_cast(ret);
-                write_de!(self.buffer, "{{.tag={}}}", func.first_type_arg().unwrap().as_raw());
+                write_de!(
+                    self.buffer,
+                    "{{.tag={}}}",
+                    func.first_type_arg(&self.proj.scopes).unwrap().as_raw()
+                );
             }
             Intrinsic::TypeName => {
-                let name = self.proj.fmt_ty(func.first_type_arg().unwrap()).to_string();
+                let name =
+                    self.proj.fmt_ty(func.first_type_arg(&self.proj.scopes).unwrap()).to_string();
                 write_de!(self.buffer, "{}", StringLiteral(&name))
             }
             Intrinsic::ReadVolatile => {
@@ -2676,7 +2676,7 @@ impl<'a> Codegen<'a> {
                     if ut.can_omit_tag(&self.proj.scopes, &self.proj.types).is_some() {
                         write_de!(self.buffer, "if ({arg}) {{");
                         write_str!("Some(");
-                        let ty = ut.ty_args[0];
+                        let ty = ut.get_type_arg(0, &self.proj.scopes).unwrap();
                         self.emit_builtin_dbg(args, ty, arg, fmt, state, lvl + 1);
                         write_str!(")");
                         write_de!(self.buffer, "}}else{{");

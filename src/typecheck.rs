@@ -2335,12 +2335,12 @@ impl TypeChecker<'_> {
 
                 // tr = Fn<Tuple, Ret>
                 let ty = if let Some(i) = i {
-                    let args = self.proj.types[*tr.ty_args.get_index(0)?.1].as_user()?;
-                    args.ty_args
-                        .get_index(i)
-                        .map(|v| v.1.with_templates(&self.proj.types, &tr.ty_args))?
+                    let args = self.proj.types[tr.get_type_arg(0, &self.proj.scopes)?].as_user()?;
+                    args.get_type_arg(i, &self.proj.scopes)
+                        .map(|ty| ty.with_templates(&self.proj.types, &tr.ty_args))?
                 } else {
-                    tr.ty_args.get_index(1)?.1.with_templates(&self.proj.types, &tr.ty_args)
+                    tr.get_type_arg(1, &self.proj.scopes)?
+                        .with_templates(&self.proj.types, &tr.ty_args)
                 };
 
                 if let Some(ty_args) = &self.current_call_ty_args
@@ -2904,7 +2904,7 @@ impl TypeChecker<'_> {
                 let (init, ty) = if let Some(ty) = target
                     .and_then(|target| self.proj.types[target].as_user())
                     .filter(|ut| ut.id == vec)
-                    .and_then(|ut| ut.first_type_arg())
+                    .and_then(|ut| ut.first_type_arg(&self.proj.scopes))
                 {
                     (self.type_check(init, ty), ty)
                 } else {
@@ -2963,7 +2963,7 @@ impl TypeChecker<'_> {
                 let ty = if let Some(ty) = target
                     .and_then(|target| self.proj.types[target].as_user())
                     .filter(|ut| ut.id == vec)
-                    .and_then(|ut| ut.first_type_arg())
+                    .and_then(|ut| ut.first_type_arg(&self.proj.scopes))
                 {
                     ty
                 } else if let Some(expr) = elements.next() {
@@ -2991,7 +2991,7 @@ impl TypeChecker<'_> {
                 let ty = if let Some(ty) = target
                     .and_then(|target| self.proj.types[target].as_user())
                     .filter(|ut| ut.id == set)
-                    .and_then(|ut| ut.first_type_arg())
+                    .and_then(|ut| ut.first_type_arg(&self.proj.scopes))
                 {
                     ty
                 } else if let Some(expr) = elements.next() {
@@ -3066,11 +3066,7 @@ impl TypeChecker<'_> {
                 .collect();
 
                 let mut func = GenericFn::from_id_unknown(&self.proj.scopes, constructor);
-                func.ty_args.copy_args(&TypeArgs::in_order(
-                    &self.proj.scopes,
-                    ut_id,
-                    std::iter::repeat(TypeId::UNKNOWN),
-                ));
+                func.ty_args.copy_args(&TypeArgs::unknown(&self.proj.scopes.get(ut_id).item));
 
                 let (_, args, ret, _failed) =
                     self.check_fn_args(func, None, &call_args, target, span);
@@ -5465,8 +5461,7 @@ impl TypeChecker<'_> {
         }
 
         {
-            let mut ty_args =
-                TypeArgs(imp.type_params.iter().map(|&t| (t, TypeId::UNKNOWN)).collect());
+            let mut ty_args = TypeArgs::unknown(&imp.type_params[..]);
             self.infer_type_args(&mut ty_args, imp.ty, inst);
             if let Some(ut) = my_ut {
                 ty_args.copy_args(&ut.ty_args);
@@ -5537,7 +5532,7 @@ impl TypeChecker<'_> {
             target
                 .and_then(|t| self.proj.types[t].as_user())
                 .filter(|t| Some(t.id) == self.proj.scopes.get_option_id())
-                .and_then(|target| target.first_type_arg())
+                .and_then(|target| target.first_type_arg(&self.proj.scopes))
         }
     }
 
@@ -5593,8 +5588,12 @@ impl TypeChecker<'_> {
                 .find(|tr| this.proj.scopes.get(tr.id).attrs.lang == Some(LangTrait::OpFn))
                 .unwrap();
 
-            let args = this.proj.types[tr.ty_args[0]].as_user().unwrap();
-            let ret = tr.ty_args[1].with_templates(&this.proj.types, &ut.ty_args);
+            let args =
+                this.proj.types[tr.get_type_arg(0, &this.proj.scopes).unwrap()].as_user().unwrap();
+            let ret = tr
+                .get_type_arg(1, &this.proj.scopes)
+                .unwrap()
+                .with_templates(&this.proj.types, &ut.ty_args);
             if args.ty_args.len() != f.params.len() || ret != f.ret {
                 return false;
             }
@@ -5684,7 +5683,7 @@ impl TypeChecker<'_> {
         let rhs = self.proj.types[rhs].as_user()?;
         if lhs.id == span_mut
             && rhs.id == span
-            && lhs.ty_args.get_index(0)?.1 == rhs.ty_args.get_index(0)?.1
+            && lhs.get_type_arg(0, &self.proj.scopes) == rhs.get_type_arg(0, &self.proj.scopes)
         {
             Some(())
         } else {
@@ -6010,12 +6009,12 @@ impl TypeChecker<'_> {
             match self.proj.types.get(target.strip_references(&self.proj.types)) {
                 &Type::Array(ty, len) => (ty, len),
                 Type::User(ut) if Some(ut.id) == span_id => {
-                    let inner = ut.first_type_arg().unwrap();
+                    let inner = ut.first_type_arg(&self.proj.scopes).unwrap();
                     let ptr = self.proj.types.insert(Type::Ptr(inner));
                     return self.check_slice_pattern(ptr, inner, patterns, span_id.unwrap(), typ);
                 }
                 Type::User(ut) if Some(ut.id) == span_mut_id => {
-                    let inner = ut.first_type_arg().unwrap();
+                    let inner = ut.first_type_arg(&self.proj.scopes).unwrap();
                     if matches!(self.proj.types[target], Type::Ptr(_) | Type::MutPtr(_)) {
                         let ptr = target.matched_inner_type(&self.proj.types, inner);
                         let id = if self.proj.types[ptr].is_ptr() {
@@ -7050,11 +7049,8 @@ impl TypeChecker<'_> {
                             self.check_hover(name.span, id);
                             let mut ty_args = self.resolve_type_args(id, ty_args, false, name.span);
                             if let Some(id) = self.proj.scopes.get(id).constructor {
-                                ty_args.copy_args(&TypeArgs::in_order(
-                                    &self.proj.scopes,
-                                    id,
-                                    std::iter::repeat(TypeId::UNKNOWN),
-                                ));
+                                ty_args
+                                    .copy_args(&TypeArgs::unknown(&self.proj.scopes.get(id).item));
                             }
 
                             ResolvedValue::Fn(GenericFn::new(id, ty_args))
@@ -7166,11 +7162,7 @@ impl TypeChecker<'_> {
                     if self.proj.scopes.get(id).kind.is_union() {
                         good = true;
                     }
-                    func.ty_args.copy_args(&TypeArgs::in_order(
-                        &self.proj.scopes,
-                        id,
-                        std::iter::repeat(TypeId::UNKNOWN),
-                    ));
+                    func.ty_args.copy_args(&TypeArgs::unknown(&self.proj.scopes.get(id).item));
                 }
 
                 if !good {
@@ -7519,14 +7511,14 @@ impl TypeChecker<'_> {
                 let f = self.proj.scopes.get(func.id);
                 match f.attrs.intrinsic {
                     Some(Intrinsic::SizeOf) => {
-                        let ty = func.first_type_arg().unwrap();
+                        let ty = func.first_type_arg(&self.proj.scopes).unwrap();
                         // TODO: make sure the ty has had resolve_members()
                         // and resolve_dependencies() called on it and doesn't have any template args
                         let (sz, _) = ty.size_and_align(&self.proj.scopes, &self.proj.types);
                         Some(ConstValue { ty: TypeId::USIZE, val: ComptimeInt::from(sz) })
                     }
                     Some(Intrinsic::AlignOf) => {
-                        let ty = func.first_type_arg().unwrap();
+                        let ty = func.first_type_arg(&self.proj.scopes).unwrap();
                         // TODO: make sure the ty has had resolve_members()
                         // and resolve_dependencies() called on it and doesn't have any template args
                         let (_, align) = ty.size_and_align(&self.proj.scopes, &self.proj.types);
@@ -7672,7 +7664,7 @@ pub trait SharedStuff {
         mut target: TypeId,
         mut is_valid: impl FnMut(&Self, &TypeArgs, TypeId) -> bool + Copy,
     ) {
-        use indexmap::map::Entry;
+        use std::collections::btree_map::Entry;
 
         loop {
             match (&self.proj().types[src], &self.proj().types[target]) {
@@ -7775,8 +7767,7 @@ pub trait SharedStuff {
             // ty     = Foo<T = int>
             // bound  = Bar<I = int, J = str, K = int>
             // imp.tr = Bar<I = T  , J = U  , K = int>
-            let mut ty_args =
-                TypeArgs(imp.type_params.iter().map(|&t| (t, TypeId::UNKNOWN)).collect());
+            let mut ty_args = TypeArgs::unknown(&imp.type_params[..]);
             // println!("  imp.ty: {}", self.proj().fmt_ty(imp.ty));
             // println!("  imp.tr: {}", self.proj().fmt_tr(&imp.tr));
             self.infer_type_args(&mut ty_args, imp.ty, ty);

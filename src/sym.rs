@@ -494,6 +494,12 @@ impl HasTypeParams for Alias {
     }
 }
 
+impl HasTypeParams for [UserTypeId] {
+    fn get_type_params(&self) -> &[UserTypeId] {
+        self
+    }
+}
+
 #[derive(Deref, DerefMut, Constructor, Clone)]
 pub struct Scoped<T> {
     #[deref]

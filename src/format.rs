@@ -107,16 +107,18 @@ impl std::fmt::Display for FmtUt<'_, '_> {
             }
             _ => {
                 let args = &ut.ty_args;
+                let arg0 = ut.get_type_arg(0, &p.scopes);
                 match ut_data.attrs.lang {
-                    Some(LangType::Option) => return write!(f, "?{}", p.fmt_ty(args[0])),
-                    Some(LangType::Span) => return write!(f, "[{}..]", p.fmt_ty(args[0])),
+                    Some(LangType::Option) => return write!(f, "?{}", p.fmt_ty(arg0.unwrap())),
+                    Some(LangType::Span) => return write!(f, "[{}..]", p.fmt_ty(arg0.unwrap())),
                     Some(LangType::SpanMut) => {
-                        return write!(f, "[mut {}..]", p.fmt_ty(args[0]));
+                        return write!(f, "[mut {}..]", p.fmt_ty(arg0.unwrap()));
                     }
-                    Some(LangType::Vec) => return write!(f, "[{}]", p.fmt_ty(args[0])),
-                    Some(LangType::Set) => return write!(f, "#[{}]", p.fmt_ty(args[0])),
+                    Some(LangType::Vec) => return write!(f, "[{}]", p.fmt_ty(arg0.unwrap())),
+                    Some(LangType::Set) => return write!(f, "#[{}]", p.fmt_ty(arg0.unwrap())),
                     Some(LangType::Map) => {
-                        return write!(f, "[{}: {}]", p.fmt_ty(args[0]), p.fmt_ty(args[1]));
+                        let arg1 = ut.get_type_arg(1, &p.scopes).unwrap();
+                        return write!(f, "[{}: {}]", p.fmt_ty(arg0.unwrap()), p.fmt_ty(arg1));
                     }
                     _ => {}
                 }
@@ -152,9 +154,11 @@ impl std::fmt::Display for FmtTr<'_, '_> {
 
         write!(f, "{}", p.strings.resolve(&tr_data.name.data))?;
         if tr_data.attrs.lang == Some(LangTrait::OpFn)
-            && p.types[args[0]].as_user().is_some_and(|ut| p.scopes.get(ut.id).kind.is_tuple())
+            && let Some(arg0) = self.tr.get_type_arg(0, &p.scopes)
+            && let Some(arg1) = self.tr.get_type_arg(1, &p.scopes)
+            && p.types[arg0].as_user().is_some_and(|ut| p.scopes.get(ut.id).kind.is_tuple())
         {
-            return write!(f, "{} => {}", p.fmt_ty(args[0]), p.fmt_ty(args[1]));
+            return write!(f, "{} => {}", p.fmt_ty(arg0), p.fmt_ty(arg1));
         }
 
         if !args.is_empty() {
