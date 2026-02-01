@@ -1912,10 +1912,6 @@ impl<'a> Codegen<'a> {
 
         self.emit_cast(ty);
         write_de!(self.buffer, "{{");
-        if members.is_empty() {
-            write_de!(self.buffer, "CTL_DUMMY_INIT");
-        }
-
         for (&name, value) in members {
             let mut value = *value;
             value.ty = value.ty.with_templates(&self.proj.types, &state.func.ty_args);

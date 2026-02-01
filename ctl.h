@@ -51,7 +51,6 @@
 
 #  define CTL_NONNULL(...)
 #  define CTL_NONSTR
-#  define CTL_DUMMY_INIT   0
 #  define CTL_DUMMY_MEMBER CTL_ZST char dummy
 #  define CTL_NORETURN     __declspec(noreturn)
 #  define CTL_FORCEINLINE  __forceinline inline
@@ -87,7 +86,6 @@
 #else
 #  define CTL_NONNULL(...) __attribute__((nonnull(__VA_ARGS__)))
 #  define CTL_NONSTR       __attribute__((nonstring))
-#  define CTL_DUMMY_INIT
 #  define CTL_DUMMY_MEMBER
 #  define CTL_ZST
 #  define CTL_NORETURN       _Noreturn
@@ -132,6 +130,8 @@
 
 #define CTL_COERCE(ty, expr) (expr, *(ty *)0)
 #define CTL_VOID(expr)       (expr, CTL_VOID_INST)
+#define CTL_VOID_INST \
+  ($void) { }
 
 #define CTL_STATIC_ASSERT(cond, msg) _Static_assert(cond, msg)
 
@@ -173,11 +173,6 @@ typedef double f64;
 typedef struct {
   CTL_DUMMY_MEMBER;
 } $void;
-
-#define CTL_VOID_INST \
-  ($void) {           \
-    CTL_DUMMY_INIT    \
-  }
 
 typedef void (*VirtualFn)(void);
 typedef struct {
