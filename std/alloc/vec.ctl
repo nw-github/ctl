@@ -49,12 +49,16 @@ pub struct Vec<T> {
             this.grow();
         }
 
+        unsafe this.push_unchecked(val);
+    }
+
+    pub unsafe fn push_unchecked(mut this, val: T) {
         unsafe this.ptr.add(this.len++).write(val);
     }
 
     pub fn push_within_capacity(mut this, val: T): ?T {
         if this.can_insert(1) {
-            unsafe this.ptr.add(this.len++).write(val);
+            unsafe this.push_unchecked(val);
             null
         } else {
             val
@@ -69,7 +73,7 @@ pub struct Vec<T> {
 
     pub fn append(mut this, rhs: *mut This) {
         if !this.can_insert(rhs.len) {
-            this.grow();
+            this.reserve(add: rhs.len);
         }
 
         unsafe mem::copy(
