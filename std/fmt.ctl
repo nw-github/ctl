@@ -216,7 +216,7 @@ pub struct StringBuilder {
 
             this.buffer.reserve(add: len);
             unsafe {
-                std::mem::copy(
+                std::mem::copy_no_overlap(
                     dst: this.buffer.as_raw_mut().add(this.buffer.len()),
                     src: data.as_raw(),
                     num: len,

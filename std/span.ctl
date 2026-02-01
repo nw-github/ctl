@@ -164,7 +164,7 @@ pub struct SpanMut<T> {
         }
 
         // copy_overlapping?
-        unsafe std::mem::copy(
+        unsafe std::mem::copy_no_overlap(
             dst: subspan.as_raw_mut(),
             src: rhs.as_raw(),
             num: subspan.len(),

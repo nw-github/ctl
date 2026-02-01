@@ -26,14 +26,12 @@ extern fn init(argc: c_int, argv: ?^mut ^mut c_char) {
 
 $[export, link_name("$ctl_stdlib_deinit"), feature(hosted)]
 extern fn deinit() {
-    unsafe {
-        $[cfg("!ctl:no-gc")]
-        libgc::GC_deinit();
+    $[cfg("!ctl:no-gc")]
+    unsafe libgc::GC_deinit();
 
-        $[feature(backtrace)]
-        if DWFL.take() is ?dwfl {
-            dwfl_end(dwfl);
-        }
+    $[feature(backtrace)]
+    unsafe if DWFL.take() is ?dwfl {
+        dwfl_end(dwfl);
     }
 }
 

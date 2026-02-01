@@ -16,7 +16,7 @@ extension<T> ^T {
     pub unsafe fn read_volatile(my this): T => unsafe std::ptr::read_volatile(this);
     pub unsafe fn read_unaligned(my this): T {
         mut buf: T;
-        unsafe std::mem::copy(dst: &raw mut buf, src: this, num: 1);
+        unsafe std::mem::copy_no_overlap(dst: &raw mut buf, src: this, num: 1);
         buf
     }
 
@@ -60,7 +60,7 @@ extension<T> ^mut T {
     pub unsafe fn write(my this, val: T) => unsafe *this = val;
     pub unsafe fn write_volatile(my this, val: T) => unsafe std::ptr::write_volatile(this, val);
     pub unsafe fn write_unaligned(my this, val: T) {
-        unsafe std::mem::copy(dst: this, src: &raw val, num: 1);
+        unsafe std::mem::copy_no_overlap(dst: this, src: &raw val, num: 1);
     }
 
     pub unsafe fn replace(my this, val: T): T {

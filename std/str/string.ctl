@@ -91,7 +91,7 @@ pub struct str {
         let num = this.len();
         mut buf: [u8] = Vec::with_capacity(num * n);
         for i in 0u..n {
-            unsafe std::mem::copy(
+            unsafe std::mem::copy_no_overlap(
                 dst: buf.as_raw_mut().add(num * i),
                 src: this.as_raw(),
                 num:,
@@ -109,8 +109,8 @@ pub struct str {
         let rlen = rhs.len();
         mut buf: [u8] = Vec::with_capacity(llen + rlen);
         unsafe {
-            std::mem::copy(dst: buf.as_raw_mut(), src: this.as_raw(), num: llen);
-            std::mem::copy(dst: buf.as_raw_mut().add(llen), src: rhs.as_raw(), num: rlen);
+            std::mem::copy_no_overlap(dst: buf.as_raw_mut(), src: this.as_raw(), num: llen);
+            std::mem::copy_no_overlap(dst: buf.as_raw_mut().add(llen), src: rhs.as_raw(), num: rlen);
             buf.set_len(llen + rlen);
             str::from_utf8_unchecked(buf[..])
         }

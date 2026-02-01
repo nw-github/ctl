@@ -24,11 +24,7 @@ pub struct Vec<T> {
     pub fn from_span(span: [T..]): This {
         mut self: This = Vec::with_capacity(span.len());
         unsafe {
-            mem::copy(
-                dst: self.ptr,
-                src: span.as_raw(),
-                num: span.len(),
-            );
+            mem::copy_no_overlap(dst: self.ptr, src: span.as_raw(), num: span.len());
             self.set_len(span.len());
         }
         self
@@ -76,7 +72,7 @@ pub struct Vec<T> {
             this.reserve(add: rhs.len);
         }
 
-        unsafe mem::copy(
+        unsafe mem::copy_no_overlap(
             dst: this.ptr.add(this.len),
             src: rhs.ptr,
             num: rhs.len,
@@ -106,7 +102,7 @@ pub struct Vec<T> {
 
         let src = this.ptr.add(idx);
         if idx < this.len {
-            unsafe mem::copy_overlapping(dst: src.add(1), src:, num: this.len - idx);
+            unsafe mem::copy(dst: src.add(1), src:, num: this.len - idx);
         }
 
         unsafe src.write(val);
@@ -122,7 +118,7 @@ pub struct Vec<T> {
             let dst = this.ptr.add(idx);
             let res = dst.read();
             if idx + 1 < this.len {
-                mem::copy_overlapping(dst:, src: dst.add(1), num: this.len - idx);
+                mem::copy(dst:, src: dst.add(1), num: this.len - idx);
             }
 
             this.len--;
