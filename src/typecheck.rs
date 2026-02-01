@@ -6843,10 +6843,6 @@ impl TypeChecker<'_> {
                             return ResolvedType::Trait(GenericTrait::new(id, ty_args));
                         }
 
-                        // if rest.len() == 1 {
-                        //     return self.find_associated_type(id, rest[0].0, &rest[0].1);
-                        // }
-
                         self.resolve_type_path_in(
                             rest,
                             ty_args,

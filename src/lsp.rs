@@ -912,6 +912,7 @@ fn get_semantic_token(
             }
         }
         LspItem::Type(_) => token::TYPE,
+        LspItem::Trait(_) => token::TYPE,
         LspItem::Alias(_) => token::TYPE,
         LspItem::BuiltinType(_) => token::TYPE,
         LspItem::Fn(id) => {
@@ -929,7 +930,7 @@ fn get_semantic_token(
                 token::FUNCTION
             }
         }
-        _ => return None,
+        LspItem::Literal(_) | LspItem::Attribute(_) => return None,
     };
 
     let r = Diagnostics::get_span_range(src, *span, OffsetMode::Utf16);
