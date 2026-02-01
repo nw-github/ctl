@@ -2583,7 +2583,6 @@ impl<'a> Codegen<'a> {
                             &format!("(*{arg})"),
                             &fmt,
                             state,
-                            span,
                             0,
                         );
                     });
@@ -2618,8 +2617,6 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::only_used_in_recursion)]
     fn emit_builtin_dbg(
         &mut self,
         args: &BuiltinDbgArgs,
@@ -2627,7 +2624,6 @@ impl<'a> Codegen<'a> {
         arg: &str,
         fmt: &str,
         state: &mut State,
-        span: Span,
         lvl: usize,
     ) {
         if let Some(mfn) =
@@ -2671,12 +2667,12 @@ impl<'a> Codegen<'a> {
                     buf.emit_fn_name(func);
                     write_de!(buf, "}}");
                 });
-                self.emit_builtin_dbg(args, ty, &ptr, fmt, state, span, 0);
+                self.emit_builtin_dbg(args, ty, &ptr, fmt, state, 0);
             }
             Type::FnPtr(_) => {
                 let ty = self.proj.types.insert(Type::RawPtr(TypeId::VOID));
                 let ptr = format!("(void const*){{{arg}}}");
-                self.emit_builtin_dbg(args, ty, &ptr, fmt, state, span, 0);
+                self.emit_builtin_dbg(args, ty, &ptr, fmt, state, 0);
             }
             Type::User(ut) => {
                 let ut_data = self.proj.scopes.get(ut.id);
@@ -2685,7 +2681,7 @@ impl<'a> Codegen<'a> {
                         write_de!(self.buffer, "if ({arg}) {{");
                         write_str!("Some(");
                         let ty = ut.ty_args[0];
-                        self.emit_builtin_dbg(args, ty, arg, fmt, state, span, lvl + 1);
+                        self.emit_builtin_dbg(args, ty, arg, fmt, state, lvl + 1);
                         write_str!(")");
                         write_de!(self.buffer, "}}else{{");
                         write_str!("null");
@@ -2702,7 +2698,7 @@ impl<'a> Codegen<'a> {
                         if let Some(ty) = variant.ty {
                             let ty = ty.with_templates(&self.proj.types, &ut.ty_args);
                             let buf = format!("{arg}.{}", member_name(self.proj, name));
-                            self.emit_builtin_dbg(args, ty, &buf, fmt, state, span, lvl + 1);
+                            self.emit_builtin_dbg(args, ty, &buf, fmt, state, lvl + 1);
                         }
                         writeln_de!(self.buffer, "break;}}");
                     }
@@ -2745,7 +2741,7 @@ impl<'a> Codegen<'a> {
                     } else {
                         format!("{arg}.{}", member_name(self.proj, name))
                     };
-                    self.emit_builtin_dbg(args, ty, &buf, fmt, state, span, lvl + 1);
+                    self.emit_builtin_dbg(args, ty, &buf, fmt, state, lvl + 1);
                 }
 
                 if !is_tuple && !ut_data.members.is_empty() {
@@ -2768,9 +2764,9 @@ impl<'a> Codegen<'a> {
                 let ty = self.proj.types.insert(Type::RawPtr(TypeId::VOID));
                 let self_ptr = format!("(void const*){{{arg}.self}}");
                 let vtable_ptr = format!("(void const*){{{arg}.vtable}}");
-                self.emit_builtin_dbg(args, ty, &self_ptr, fmt, state, span, 0);
+                self.emit_builtin_dbg(args, ty, &self_ptr, fmt, state, 0);
                 write_str!(", vtable: ");
-                self.emit_builtin_dbg(args, ty, &vtable_ptr, fmt, state, span, 0);
+                self.emit_builtin_dbg(args, ty, &vtable_ptr, fmt, state, 0);
                 write_str!("}");
             }
             _ => panic!("ICE: attempt to emit_builtin_dbg for '{}'", self.proj.fmt_ty(arg_ty)),

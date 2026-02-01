@@ -134,11 +134,16 @@ pub struct LookupFnResult {
 
 #[derive(Default)]
 pub enum ResolvedType {
-    UserType(GenericUserType),
+    Type(TypeId),
     Trait(GenericTrait),
-    Builtin(TypeId),
     #[default]
     Error,
+}
+
+impl ResolvedType {
+    pub fn user(types: &Types, ut: GenericUserType) -> Self {
+        ResolvedType::Type(types.insert(Type::User(ut)))
+    }
 }
 
 #[derive(Default)]
@@ -4859,12 +4864,7 @@ impl TypeChecker<'_> {
                 }
                 Some(tr)
             }
-            ResolvedType::UserType(ut) => self.error(Error::expected_found(
-                "trait",
-                format_args!("type '{}'", self.proj.fmt_ut(&ut)),
-                path.span(),
-            )),
-            ResolvedType::Builtin(ty) => self.error(Error::expected_found(
+            ResolvedType::Type(ty) => self.error(Error::expected_found(
                 "trait",
                 format_args!("type '{}'", self.proj.fmt_ty(ty)),
                 path.span(),
@@ -4886,8 +4886,7 @@ impl TypeChecker<'_> {
         let span = hint.span;
         match &self.parsed.hints.cget(hint.data) {
             TypeHintData::Path(path) => match self.resolve_type_path(path) {
-                ResolvedType::Builtin(ty) => ty,
-                ResolvedType::UserType(ut) => self.proj.types.insert(Type::User(ut)),
+                ResolvedType::Type(ty) => ty,
                 ResolvedType::Trait(tr) => bail!(
                     self,
                     Error::expected_found(
@@ -5243,7 +5242,13 @@ impl TypeChecker<'_> {
                     continue;
                 };
 
-                res_assoc_types.insert(id, ty);
+                res_assoc_types.insert(
+                    id,
+                    ty.map(|mut ty| {
+                        resolve_type!(this, ty);
+                        ty
+                    }),
+                );
             }
 
             this.proj.scopes.get_mut(tr.id).implementors.push(id);
@@ -6803,7 +6808,7 @@ impl TypeChecker<'_> {
                 };
 
                 if path.components.is_empty() {
-                    ResolvedType::Builtin(ty)
+                    ResolvedType::Type(ty)
                 } else if path.components.len() == 1
                     && let Type::User(ut) = &self.proj.types[ty]
                 {
@@ -6823,7 +6828,7 @@ impl TypeChecker<'_> {
                     if let Some((name, _)) = rest.first() {
                         return named_error!(self, Error::no_symbol, name.data, name.span);
                     }
-                    return ResolvedType::Builtin(self.proj.types.insert(builtin));
+                    return ResolvedType::Type(self.proj.types.insert(builtin));
                 }
 
                 let Some(item) = self.find_in_tns(name.data) else {
@@ -6851,7 +6856,10 @@ impl TypeChecker<'_> {
                                 ));
                             }
 
-                            return ResolvedType::UserType(GenericUserType::new(id, ty_args));
+                            return ResolvedType::user(
+                                &self.proj.types,
+                                GenericUserType::new(id, ty_args),
+                            );
                         }
 
                         if rest.len() == 1 {
@@ -6905,10 +6913,8 @@ impl TypeChecker<'_> {
                                 "this operation is not yet supported with type aliases",
                                 span,
                             ))
-                        } else if let Some(ut) = self.proj.types[ty].as_user() {
-                            ResolvedType::UserType(ut.clone())
                         } else {
-                            ResolvedType::Builtin(ty)
+                            ResolvedType::Type(ty)
                         }
                     }
                 }
@@ -6958,7 +6964,10 @@ impl TypeChecker<'_> {
                             ));
                         }
 
-                        return ResolvedType::UserType(GenericUserType::new(id, args));
+                        return ResolvedType::user(
+                            &self.proj.types,
+                            GenericUserType::new(id, args),
+                        );
                     }
 
                     ty_args.copy_args(&args);
@@ -6999,10 +7008,8 @@ impl TypeChecker<'_> {
                             "this operation is not yet supported with type aliases",
                             name.span,
                         ))
-                    } else if let Some(ut) = self.proj.types[ty].as_user() {
-                        return ResolvedType::UserType(ut.clone());
                     } else {
-                        return ResolvedType::Builtin(ty);
+                        return ResolvedType::Type(ty);
                     }
                 }
             }
@@ -7394,12 +7401,9 @@ impl TypeChecker<'_> {
         }
 
         let mut candidates = HashSet::new();
-        for tr in self.proj.scopes.get(ut).iter_impls(&self.proj, false) {
-            for (&type_param, _value) in tr.assoc_types.iter() {
-                if self.proj.scopes.get(type_param).name.data == name.data {
-                    // TODO: return _value
-                    candidates.insert(type_param);
-                }
+        for imp in self.proj.scopes.get(ut).iter_impls(&self.proj, true) {
+            if let Some(id) = self.proj.scopes.get(imp.tr.id).assoc_types.get(&name.data) {
+                candidates.insert(*id);
             }
         }
 
@@ -7416,10 +7420,9 @@ impl TypeChecker<'_> {
 
         let id = candidates.into_iter().next().unwrap();
         self.check_hover(name.span, LspItem::Type(id));
-        ResolvedType::UserType(GenericUserType::new(
-            id,
-            self.resolve_type_args(id, args, true, name.span),
-        ))
+
+        let ut = GenericUserType::new(id, self.resolve_type_args(id, args, true, name.span));
+        ResolvedType::user(&self.proj.types, ut)
     }
 
     fn resolve_this_type(&mut self, span: Span) -> Option<TypeId> {
@@ -7934,7 +7937,7 @@ pub trait SharedStuff {
     ) -> Option<(CheckedImpl, Option<GenericUserType>)> {
         let (mut imp, ut) = self.find_trait_impls(ty, tr).into_iter().next()?;
         if let Some(ut) = &ut {
-            imp.tr = imp.tr.with_templates(&self.proj().types, &ut.ty_args)
+            imp.tr.fill_templates(&self.proj().types, &ut.ty_args);
         }
         Some((imp, ut))
     }
