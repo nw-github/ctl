@@ -2467,7 +2467,7 @@ impl<'a> Codegen<'a> {
                 self.emit_cast(ret);
                 write_de!(
                     self.buffer,
-                    "{{.tag={}}}",
+                    "{{.tag={}ull}}",
                     func.first_type_arg(&self.proj.scopes).unwrap().as_raw()
                 );
             }
