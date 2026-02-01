@@ -769,6 +769,7 @@ impl LspBackend {
                     if lhs == rhs && (!is_super || !rename) => {}
 
                 (LspItem::Type(lhs), LspItem::Type(rhs)) if lhs == rhs => {}
+                (LspItem::Trait(lhs), LspItem::Trait(rhs)) if lhs == rhs => {}
                 (LspItem::Fn(lhs), LspItem::Fn(rhs)) if lhs == rhs => {}
                 (LspItem::Type(lhs), LspItem::Fn(rhs)) if is_constructor_for(rhs, lhs) => {}
                 (LspItem::Fn(lhs), LspItem::Type(rhs)) if is_constructor_for(lhs, rhs) => {}
