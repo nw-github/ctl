@@ -261,6 +261,7 @@ impl LanguageServer for LspBackend {
             let span = match *hover {
                 LspItem::Var(id) => scopes.get(id).name.span,
                 LspItem::Type(id) => scopes.get(id).name.span,
+                LspItem::Trait(id) => scopes.get(id).name.span,
                 LspItem::Module(id, _) => scopes[id].kind.name(scopes).unwrap().span,
                 LspItem::Fn(id) => scopes.get(id).name.span,
                 LspItem::Alias(id) => scopes.get(id).name.span,
