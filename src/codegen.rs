@@ -1045,18 +1045,9 @@ impl<'a> Codegen<'a> {
         }
 
         let main = State::from_non_generic(self.proj.main?, &self.proj.scopes);
-        let returns = self.proj.types[self.proj.scopes.get(main.func.id).ret].is_integral();
-
         self.buffer.emit(MAIN);
-        if returns {
-            self.buffer.emit("return ");
-        }
         self.buffer.emit_fn_name(&main.func);
-        if returns {
-            self.buffer.emit("();$ctl_stdlib_deinit();}\n");
-        } else {
-            self.buffer.emit("();$ctl_stdlib_deinit();return 0;}\n");
-        }
+        self.buffer.emit("();$ctl_stdlib_deinit();return 0;}\n");
         self.funcs.insert(main);
         Some(self.buffer.take().finish())
     }

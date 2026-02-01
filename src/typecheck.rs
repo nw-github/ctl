@@ -407,17 +407,9 @@ impl<'a> TypeChecker<'a> {
                     ));
                 }
 
-                if !matches!(
-                    this.proj.types[func.ret],
-                    Type::Void
-                        | Type::Never
-                        | Type::Int(_)
-                        | Type::Uint(_)
-                        | Type::Isize
-                        | Type::Usize
-                ) {
+                if !matches!(func.ret, TypeId::NEVER | TypeId::VOID) {
                     this.proj.diag.report(Error::new(
-                        "main function must return void, never, or an integer type",
+                        "main function must return type void or never",
                         func.name.span,
                     ));
                 }
