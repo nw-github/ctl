@@ -1343,6 +1343,8 @@ fn visualize_func(id: FunctionId, small: bool, proj: &Project) -> String {
         && !small
     {
         return visualize_type(id, proj);
+    } else if func.typ.is_test() {
+        return format!("unittest \"{}\"", proj.str(func.name.data));
     }
 
     let mut res = if small { String::new() } else { visualize_location(func.scope, proj) };
