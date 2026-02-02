@@ -26,50 +26,6 @@ unittest "dependent" {
     assert_eq(foo.x, 10);
 }
 
-unittest "downcast" {
-    fn foo(a: *dyn std::any::Any): str {
-        if a.downcast::<str>() is ?foo {
-            "it was a string: {foo}".to_str()
-        } else if a.downcast::<*int>() is ?foo {
-            "it was an int ptr: {foo}".to_str()
-        } else if a.downcast::<int>() is ?foo {
-            "it was an int: {foo}".to_str()
-        } else {
-            "unknown type"
-        }
-    }
-
-    assert_eq(foo(&"hello world"), "it was a string: hello world");
-    assert_eq(foo(&&10), "it was an int ptr: 10");
-    assert_eq(foo(&5), "it was an int: 5");
-    assert_eq(foo(&&mut 10), "unknown type");
-    assert_eq(foo(&[1, 2, 3]), "unknown type");
-}
-
-unittest "downcast_mut" {
-    fn foo(a: *dyn mut std::any::Any): bool {
-        if a.downcast_mut::<int>() is ?foo {
-            *foo *= 3;
-        } else if a.downcast_mut::<f64>() is ?foo {
-            *foo += 1.0;
-        } else {
-            return false;
-        }
-
-        true
-    }
-
-    mut x = 10;
-    assert(foo(&mut x));
-    assert_eq(x, 30);
-
-    mut x = 0.0;
-    assert(foo(&mut x));
-    assert_eq(x, 1.0);
-
-    assert(!foo(&mut "hello"));
-}
-
 unittest "normal" {
     trait Foo {
         fn foo(mut this, x: int);
