@@ -8,7 +8,7 @@ pub struct SourceLocation {
     pub func: ?str,
 
     $[intrinsic(source_location)]
-    pub fn here(): This => SourceLocation::here();
+    pub fn here(): *This => This::here();
 
     impl Format {
         fn fmt(this, f: *mut Formatter) {
@@ -17,17 +17,19 @@ pub struct SourceLocation {
     }
 }
 
-pub fn unreachable(loc: SourceLocation = SourceLocation::here()): never {
+type SL = SourceLocation;
+
+pub fn unreachable(loc: *SL = SL::here()): never {
     panic("entered unreachable code", loc:);
 }
 
 $[cold]
-pub fn panic<T: Format>(args: T, loc: SourceLocation = SourceLocation::here()): never {
+pub fn panic<T: Format>(args: T, loc: *SL = SL::here()): never {
     std::intrin::panic(&PanicInfo(args: "{args}", loc:))
 }
 
 // TODO: this should take <T: Format>, but there is currently no way to default that
-pub fn assert(cond: bool, msg: ?Arguments = null, loc: SourceLocation = SourceLocation::here()) {
+pub fn assert(cond: bool, msg: ?Arguments = null, loc: *SL = SL::here()) {
     if !cond {
         if msg is ?msg {
             panic("assertion failed: {msg}", loc:);
@@ -37,32 +39,20 @@ pub fn assert(cond: bool, msg: ?Arguments = null, loc: SourceLocation = SourceLo
     }
 }
 
-pub fn assert_eq<Lhs: Debug + std::ops::Eq<Rhs>, Rhs: Debug>(
-    lhs: Lhs,
-    rhs: Rhs,
-    loc: SourceLocation = SourceLocation::here(),
-) {
+pub fn assert_eq<Lhs: std::ops::Eq<Rhs>, Rhs>(lhs: Lhs, rhs: Rhs, loc: *SL = SL::here()) {
     if lhs != rhs {
         panic("assertion failed: '{lhs:?}' != '{rhs:?}'", loc:);
     }
 }
 
-pub fn assert_ne<Lhs: Debug + std::ops::Eq<Rhs>, Rhs: Debug>(
-    lhs: Lhs,
-    rhs: Rhs,
-    loc: SourceLocation = SourceLocation::here(),
-) {
+pub fn assert_ne<Lhs: std::ops::Eq<Rhs>, Rhs>(lhs: Lhs, rhs: Rhs, loc: *SL = SL::here()) {
     if lhs == rhs {
         panic("assertion failed: '{lhs:?}' == '{rhs:?}'", loc:);
     }
 }
 
 $[inline(always)]
-pub fn debug_assert(
-    _cond: bool,
-    _msg: ?Arguments = null,
-    _loc: SourceLocation = SourceLocation::here(),
-) {
+pub fn debug_assert(_cond: bool, _msg: ?Arguments = null, _loc: *SL = SL::here()) {
     $[cfg("ctl:debug")]
     assert(_cond, _msg, _loc);
 }
@@ -78,7 +68,7 @@ static mut IS_PANICKING: bool = false;
 
 pub struct PanicInfo {
     args: Arguments,
-    loc: SourceLocation,
+    loc: *SL,
 
     impl Format {
         fn fmt(this, f: *mut Formatter) {

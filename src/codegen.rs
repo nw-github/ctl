@@ -1562,7 +1562,7 @@ impl<'a> Codegen<'a> {
                 for byte in self.proj.strings.resolve_byte_str(*value) {
                     write_de!(self.arrays, "\\x{byte:x}");
                 }
-                write_de!(self.arrays, "\"}};");
+                writeln_de!(self.arrays, "\"}};");
 
                 write_de!(self.buffer, "&$BSTR{}", expr.data.as_raw());
             }
@@ -2515,12 +2515,10 @@ impl<'a> Codegen<'a> {
             Intrinsic::SourceLocation => {
                 let func =
                     self.proj.scopes.walk(scope).find_map(|s| s.1.kind.as_function().copied());
-                let sl_typ = self.proj.types[ret].as_user().unwrap().id;
+                let sl_typ = ret.as_pointee(&self.proj.types).unwrap();
+                let sl_utid = self.proj.types[sl_typ].as_user().unwrap().id;
                 let func_strid = self.proj.strings.get("func").unwrap();
-                let option_typ = self.proj.scopes.get(sl_typ).members.get(&func_strid).unwrap().ty;
-
-                self.buffer.emit("(");
-                self.emit_cast(ret);
+                let option_typ = self.proj.scopes.get(sl_utid).members.get(&func_strid).unwrap().ty;
 
                 let range = self
                     .source
@@ -2531,21 +2529,43 @@ impl<'a> Codegen<'a> {
 
                 // TODO: Compiler options like --remap-path-prefix & flag to omit source information
                 let path = self.proj.diag.file_path(span.file).to_string_lossy().to_string();
-                write_de!(
-                    self.buffer,
-                    "{{.file={},.line={},.col={},.func=",
-                    StringLiteral(&path),
-                    range.map(|s| s.start.line).unwrap_or_default() + 1,
-                    range.map(|s| s.start.character).unwrap_or_default() + 1,
-                );
-                let opt = if let Some(func) = func {
-                    let str = self.function_name(func, state);
-                    Expr::option_some(option_typ, str, &mut self.arena)
-                } else {
-                    Expr::option_null(option_typ, &mut self.arena)
-                };
-                self.emit_expr_inline(opt, state);
-                self.buffer.emit("})");
+                let name = tmpbuf!(self, state, |tmp| {
+                    write_de!(self.buffer, "static const ");
+                    self.emit_type(sl_typ);
+                    write_de!(
+                        self.buffer,
+                        " {tmp}={{.file={},.line={},.col={},.func=",
+                        StringLiteral(&path),
+                        range.map(|s| s.start.line).unwrap_or_default() + 1,
+                        range.map(|s| s.start.character).unwrap_or_default() + 1,
+                    );
+                    self.emit_cast(option_typ);
+                    let ut =
+                        self.proj.scopes.get(self.proj.types[option_typ].as_user().unwrap().id);
+                    let union = ut.kind.as_union().unwrap();
+                    // TODO: when the enum variant optimization eventually optimizes ?str, this
+                    // will need to change
+                    if let Some(func) = func {
+                        let str = self.function_name(func, state);
+                        write_de!(self.buffer, "{{.{UNION_TAG_NAME}=");
+                        self.emit_literal(
+                            union.discriminant(Strings::SOME).unwrap().clone(),
+                            union.tag,
+                        );
+                        write_de!(self.buffer, ",.Some={}}}", StringLiteral(&str));
+                    } else {
+                        write_de!(self.buffer, "{{.{UNION_TAG_NAME}=");
+                        self.emit_literal(
+                            union.discriminant(Strings::NULL).unwrap().clone(),
+                            union.tag,
+                        );
+                        write_de!(self.buffer, "}}");
+                    };
+                    writeln_de!(self.buffer, "}};");
+                    tmp
+                });
+
+                write_de!(self.buffer, "&{name}");
             }
             Intrinsic::PtrAddSigned
             | Intrinsic::PtrAddUnsigned
@@ -3687,7 +3707,7 @@ impl<'a> Codegen<'a> {
         if ind != 0 { format!("({:*<1$}{src})", "", ind) } else { src.into() }
     }
 
-    fn function_name(&mut self, id: FunctionId, state: &State) -> Expr {
+    fn function_name(&self, id: FunctionId, state: &State) -> String {
         let print_type_params = |result: &mut String, params: &[UserTypeId]| {
             if !params.is_empty() {
                 result.push('<');
@@ -3718,7 +3738,7 @@ impl<'a> Codegen<'a> {
 
         res += self.proj.str(func.name.data);
         print_type_params(&mut res, &func.type_params);
-        self.arena.typed(self.str_interp.string_ty.unwrap(), ExprData::GeneratedString(res))
+        res
     }
 
     fn dbg_args(&mut self, formatter_ty: TypeId, state: &mut State) -> BuiltinDbgArgs {
