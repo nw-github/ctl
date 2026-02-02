@@ -10,10 +10,12 @@ pub mod env;
 $[feature(alloc)]
 pub mod alloc;
 
+$[cfg(test)]
+pub mod test;
+
 mod deps;
 mod runtime;
 mod ryu;
-mod test;
 
 $[autouse]
 mod prelude {

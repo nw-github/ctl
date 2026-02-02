@@ -105,10 +105,12 @@ impl Project {
                 deps,
             });
 
-            (
-                config,
-                Some(if args.release { Build::default_release() } else { Build::default_debug() }),
-            )
+            let mut build =
+                if args.release { Build::default_release() } else { Build::default_debug() };
+            build.no_gc = args.no_gc.get();
+            build.overflow_checks = !args.no_overflow_checks.get();
+
+            (config, Some(build))
         } else {
             match loaded.get_mut(&path) {
                 Some(config) => (config, None),
@@ -123,17 +125,15 @@ impl Project {
                         }
                     }
 
+                    if main {
+                        args.no_gc.set(build.no_gc);
+                        args.no_overflow_checks.set(!build.overflow_checks);
+                    }
+
                     (config, Some(build))
                 }
             }
         };
-
-        if let Some(build) = &build
-            && main
-        {
-            args.no_gc.set(build.no_gc);
-            args.no_overflow_checks.set(!build.overflow_checks);
-        }
 
         let mut deps = match graph.insert(path.clone(), Dependencies::Resolving) {
             Some(Dependencies::Resolved(deps)) => deps,

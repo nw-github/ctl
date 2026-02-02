@@ -26,7 +26,7 @@ struct Arguments {
     /// Compile without libgc. By default, all memory allocations in this mode will use the libc
     /// allocator and will not be freed until the program exits.
     #[clap(action, short = 'g', long, global = true)]
-    leak: bool,
+    no_gc: bool,
 
     /// Compile without using _BitInt/_ExtInt. All integer types will use the type with the nearest
     /// power of two bit count. TODO: proper arithmetic wrapping in this mode
@@ -416,16 +416,16 @@ fn main() -> Result<()> {
         args: ctl::package::ConstraintArgs {
             release: args.command.as_build_args().is_some_and(|b| b.release),
             no_std: args.no_std,
+            no_gc: args.no_gc.into(),
             ..Default::default()
         },
     };
 
     let path = path.as_deref().unwrap_or(Path::new("."));
     let compiler = Compiler::new().parse(path, input)?.modify_conf(|conf| {
-        conf.build.no_bit_int = args.no_bit_int;
         conf.is_library = args.shared.unwrap_or(conf.is_library);
+        conf.build.no_bit_int = args.no_bit_int;
         conf.build.minify = matches!(args.command, SubCommand::Print { minify: true, .. });
-        conf.build.no_gc = args.leak;
         if let SubCommand::Test { test, modules, .. } = &args.command {
             conf.test_args = Some(TestArgs {
                 test: test.clone(),
