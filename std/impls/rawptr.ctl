@@ -1,5 +1,6 @@
 use std::fmt::*;
 use std::intrin;
+use std::ops::Eq;
 
 extension<T> ^T {
     pub fn cast<U>(my this): ^U => this as ^U;
@@ -40,6 +41,22 @@ extension<T> ^T {
 
     impl Pointer {
         fn ptr(this, f: *mut Formatter) => this.dbg(f);
+    }
+
+    impl Eq<^T> {
+        $[intrinsic(binary_op)]
+        fn eq(this, rhs: *^T): bool => this == rhs;
+
+        $[intrinsic(binary_op)]
+        fn ne(this, rhs: *^T): bool => this != rhs;
+    }
+
+    impl Eq<^mut T> {
+        $[intrinsic(binary_op)]
+        fn eq(this, rhs: *^mut T): bool => this == rhs;
+
+        $[intrinsic(binary_op)]
+        fn ne(this, rhs: *^mut T): bool => this != rhs;
     }
 }
 
@@ -92,5 +109,20 @@ extension<T> ^mut T {
     impl Pointer {
         fn ptr(this, f: *mut Formatter) => (*this as ^T).ptr(f);
     }
-}
 
+    impl Eq<^T> {
+        $[intrinsic(binary_op)]
+        fn eq(this, rhs: *^T): bool => this == rhs;
+
+        $[intrinsic(binary_op)]
+        fn ne(this, rhs: *^T): bool => this != rhs;
+    }
+
+    impl Eq<^mut T> {
+        $[intrinsic(binary_op)]
+        fn eq(this, rhs: *^mut T): bool => this == rhs;
+
+        $[intrinsic(binary_op)]
+        fn ne(this, rhs: *^mut T): bool => this != rhs;
+    }
+}

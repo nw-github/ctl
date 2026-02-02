@@ -106,6 +106,7 @@ pub mod posix {
     pub type uid_t = c_uint;
     pub type clock_t = c_long;
     pub type __SI_BAND_TYPE = c_long;
+    pub type off_t = c_long;
 
     pub extern fn write(fd: c_int, buf: ^void, count: uint): int;
     pub extern fn clock_gettime(clockid: c_int, tp: *mut Timespec): c_int;
@@ -223,7 +224,15 @@ pub mod posix {
         _sigsys: _sifields_sigsys,
     }
 
+    $[layout(C)]
+    pub struct stack_t {
+        pub ss_sp: ?^mut void,
+        pub ss_flags: c_int,
+        pub ss_size: size_t,
+    }
+
     pub const SA_SIGINFO: c_int = 4;
+    pub const SA_ONSTACK: c_int = 0x08000000;
 
     pub const SIGILL: c_int = 4;
     pub const SIGBUS: c_int = 7;
@@ -231,6 +240,8 @@ pub mod posix {
     pub const SIGSEGV: c_int = 11;
 
     pub extern fn sigemptyset(set: ^mut sigset_t): c_int;
+    /// ss and old_ss are restrict (may not overlap)
+    pub extern fn sigaltstack(ss: ?^stack_t, old_ss: ?^mut stack_t): c_int;
 
     // XXX: Link name is set to avoid the conflict with our constructor for the sigaction type.
     $[link_name("sigaction")]
@@ -240,6 +251,17 @@ pub mod posix {
 
     pub extern fn fork(): pid_t;
     pub extern fn waitpid(pid: pid_t, wstatus: ?^mut c_int, options: c_int): pid_t;
+
+    pub extern fn mmap(addr: ?^mut void, len: uint, prot: c_int, flags: c_int, fd: c_int, off: off_t): ?^mut void;
+
+    pub const MAP_PRIVATE: c_int = 0x2;
+    pub const MAP_ANONYMOUS: c_int = 0x20;
+    pub const MAP_STACK: c_int = 0x20000;
+
+    pub const PROT_READ: c_int = 0x1;
+    pub const PROT_WRITE: c_int = 0x2;
+
+    pub const MAP_FAILED: ^mut void = (-1).to_raw_mut();
 }
 
 pub mod linux {
@@ -250,17 +272,10 @@ pub mod linux {
     pub type fpregset_t = ?^mut _libc_fpstate;
 
     $[layout(C)]
-    pub struct stack_t {
-        pub ss_sp: ?^mut void,
-        pub ss_flags: c_int,
-        pub ss_size: size_t,
-    }
-
-    $[layout(C)]
     pub struct ucontext_t {
         pub uc_flags: c_ulong,
         pub uc_link: ?^mut ucontext_t,
-        pub uc_stack: stack_t,
+        pub uc_stack: posix::stack_t,
         pub uc_mcontext: mcontext_t,
         pub uc_sigmask: posix::sigset_t,
         pub __fpregs_mem: _libc_fpstate,

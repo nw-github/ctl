@@ -192,17 +192,43 @@ pub struct SymbolInfo {
     pub offs: uint, // Offset from the function start
 }
 
-pub struct Call {
-    pub addr: uint,
+$[feature(dw)]
+struct DwflResolver {
+    dwfl: ?*mut Dwfl,
 
-    pub fn addr(my this): uint => this.addr;
+    pub fn new(): ?This {
+        static CALLBACKS: Dwfl_Callbacks = Dwfl_Callbacks(
+            find_elf: dwfl_linux_proc_find_elf,
+            find_debuginfo: dwfl_standard_find_debuginfo,
+            section_address: null,
+            debuginfo_path: null,
+        );
 
-    $[feature(backtrace)]
-    pub fn symbolicate(my this): ?SymbolInfo {
-        let dwfl = unsafe DWFL?;
+        unsafe {
+            let dwfl = dwfl_begin(&CALLBACKS)?;
+            dwfl_report_begin(dwfl);
+            guard dwfl_linux_proc_report(dwfl, libc::posix::getpid()) == 0 else {
+                dwfl_end(dwfl);
+                return null;
+            }
+            guard dwfl_report_end(dwfl, null, null) == 0 else {
+                dwfl_end(dwfl);
+                return null;
+            }
+            This(dwfl:)
+        }
+    }
+
+    pub fn deinit(mut this) {
+        if this.dwfl.take() is ?dwfl {
+            unsafe dwfl_end(dwfl);
+        }
+    }
+
+    pub fn resolve(this, mut addr: uint): ?SymbolInfo {
+        let dwfl = this.dwfl?;
 
         mut [lineno, colno] = [0 as c_int; 2];
-        mut addr = this.addr;
         unsafe {
             let line = dwfl_getsrc(dwfl, addr)?;
             let file = dwfl_lineinfo(line, &mut addr, &mut lineno, &mut colno, null, null)?;
@@ -225,21 +251,30 @@ pub struct Call {
             )
         }
     }
-
-    $[feature(not(backtrace))]
-    pub fn symbolicate(my this): ?SymbolInfo => null;
 }
 
+struct NoOpResolver {
+    pub fn new(): ?This { null }
+    pub fn deinit(mut this) { }
+    pub fn resolve(this, _addr: uint): ?SymbolInfo { null }
+}
+
+$[feature(dw)]
+pub type Resolver = DwflResolver;
+
+$[feature(not(dw))]
+pub type Resolver = NoOpResolver;
+
 pub struct Backtrace {
-    addrs: [Call],
+    addrs: [uint],
 
     $[inline(never)]
     pub fn capture(): This {
-        mut addrs: [Call] = @[];
+        mut addrs: [uint] = @[];
         unsafe backtrace(|&mut addrs, =mut i = 0, pc| {
             if i++ >= 2 {
                 // TODO: allow this to fail
-                addrs.push(Call(addr: pc));
+                addrs.push(pc);
             }
 
             true
@@ -252,10 +287,10 @@ pub struct Backtrace {
 }
 
 pub struct BacktraceIter {
-    addrs: std::span::Iter<Call>,
+    addrs: std::span::Iter<uint>,
 
-    impl Iterator<Call> {
-        fn next(mut this): ?Call => this.addrs.next().copied();
+    impl Iterator<uint> {
+        fn next(mut this): ?uint => this.addrs.next().copied();
     }
 }
 
