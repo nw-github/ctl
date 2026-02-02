@@ -1,28 +1,26 @@
-$[layout(C)]
-pub struct unw_context_t {
-    _pad: [u8; 0x3c8],
+pub union _Unwind_Context {}
+
+pub union _Unwind_Reason_Code : c_int {
+    _URC_NO_REASON = 0,
+    // _URC_OK = 0, /* used by ARM EHABI */
+    _URC_FOREIGN_EXCEPTION_CAUGHT = 1,
+
+    _URC_FATAL_PHASE2_ERROR = 2,
+    _URC_FATAL_PHASE1_ERROR = 3,
+    _URC_NORMAL_STOP = 4,
+
+    _URC_END_OF_STACK = 5,
+    _URC_HANDLER_FOUND = 6,
+    _URC_INSTALL_CONTEXT = 7,
+    _URC_CONTINUE_UNWIND = 8,
+    // _URC_FAILURE = 9, /* used by ARM EHABI */
 }
 
-$[layout(C)]
-pub struct unw_cursor_t {
-    _pad: [u8; 0x3f8],
-}
+pub type _Unwind_Word = uint;
+pub type _Unwind_Trace_Fn = extern unsafe fn (^mut _Unwind_Context, ?^mut void) => _Unwind_Reason_Code;
 
-pub extern fn _Ux86_64_getcontext(ctx: ^mut unw_context_t): c_int;
-pub extern fn _Ux86_64_init_local(cursor: ^mut unw_cursor_t, ctx: ^mut unw_context_t): c_int;
-pub extern fn _Ux86_64_init_local2(
-    cursor: ^mut unw_cursor_t,
-    ctx: ^mut unw_context_t,
-    flags: c_int,
-): c_int;
-
-pub extern fn _Ux86_64_set_reg(cursor: ^mut unw_cursor_t, regnum: c_int, val: uint): c_int;
-pub extern fn _Ux86_64_get_reg(cursor: ^mut unw_cursor_t, regnum: c_int, val: *mut uint): c_int;
-
-pub extern fn _Ux86_64_step(cursor: ^mut unw_cursor_t): c_int;
-
-pub const UNW_INIT_SIGNAL_FRAME: c_int = 1;
-
-pub const UNW_REG_BP: c_int = 6;
-pub const UNW_REG_SP: c_int = 7;
-pub const UNW_REG_IP: c_int = 16;
+pub extern fn _Unwind_GetIP(ctx: ^mut _Unwind_Context): _Unwind_Word;
+pub extern fn _Unwind_SetIP(ctx: ^mut _Unwind_Context, ip: _Unwind_Word);
+pub extern fn _Unwind_GetGR(ctx: ^mut _Unwind_Context, gr: c_int): _Unwind_Word;
+pub extern fn _Unwind_SetGR(ctx: ^mut _Unwind_Context, gr: c_int, ip: _Unwind_Word);
+pub extern fn _Unwind_Backtrace(trace: _Unwind_Trace_Fn, ctx: ?^mut void): _Unwind_Reason_Code;

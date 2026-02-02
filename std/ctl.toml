@@ -17,5 +17,3 @@ io = { default = true, requires = ["hosted"] }
 c = { requires = ["hosted"] }
 dw = { requires = ["backtrace"], available = "os:linux+arch:x86-64" }
 gc = { available = "!ctl:no-gc" }
-unwind = { requires = ["backtrace"] }
-unwind-x86_64 = { requires = ["backtrace"], available = "arch:x86-64" }

@@ -259,52 +259,46 @@ pub struct BacktraceIter {
     }
 }
 
-pub struct Context {
-    pub pc: uint,
-    pub bp: uint,
-    pub sp: uint,
-    pub signal: bool,
-}
-
 $[inline(never)]
-pub unsafe fn backtrace<F: Fn(uint) => bool>(f: F, kw ctx: ?Context = null): bool {
+pub unsafe fn backtrace<F: Fn(uint) => bool>(f: F, kw start_pc: ?uint = null): bool {
     $[feature(backtrace)]
     unsafe {
         use std::deps::libunwind::*;
 
-        mut context: unw_context_t;
-        mut cursor: unw_cursor_t;
-        if ctx is ?{pc, bp, sp, signal} {
-            if _Ux86_64_init_local2(
-                &mut cursor,
-                &mut context,
-                signal then UNW_INIT_SIGNAL_FRAME else 0
-            ) != 0
-            {
-                return false;
-            }
-
-            _Ux86_64_set_reg(&mut cursor, UNW_REG_SP, sp);
-            _Ux86_64_set_reg(&mut cursor, UNW_REG_BP, bp);
-            _Ux86_64_set_reg(&mut cursor, UNW_REG_IP, pc);
-        } else {
-            if _Ux86_64_getcontext(&mut context) != 0 {
-                return false;
-            } else if _Ux86_64_init_local(&mut cursor, &mut context) != 0 {
-                return false;
-            }
+        struct State<F> {
+            ignore_until: ?uint,
+            callback: F,
         }
 
-        loop {
-            mut ip = 0u;
-            if _Ux86_64_get_reg(&mut cursor, UNW_REG_IP, &mut ip) != 0 {
-                return false;
+        extern fn callback<F: Fn(uint) => bool>(
+            ctx: ^mut _Unwind_Context,
+            user: ?^mut void,
+        ): _Unwind_Reason_Code
+        {
+            let state: ^mut State<F> = unsafe std::mem::bit_cast(user);
+            let pc = unsafe _Unwind_GetIP(ctx);
+            if pc == 0 {
+                return :_URC_NO_REASON;
             }
 
-            if !f(ip) {
-                break;
+            let state = unsafe &mut *state;
+            if state.ignore_until is ?start_pc {
+                if start_pc != pc {
+                    return :_URC_NO_REASON;
+                }
+
+                state.ignore_until = null;
             }
-        } while _Ux86_64_step(&mut cursor) > 0;
+
+            if !(state.callback)(pc) {
+                return :_URC_END_OF_STACK;
+            }
+
+            :_URC_NO_REASON
+        }
+
+        mut state = State(ignore_until: start_pc, callback: f);
+        _Unwind_Backtrace(callback::<F>, ?(&raw mut state).cast());
     }
 
     true

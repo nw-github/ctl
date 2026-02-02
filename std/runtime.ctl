@@ -90,11 +90,8 @@ fn install_fault_handler() {
 
             if ctx is ?ctx {
                 let regs = &(*ctx.cast::<linux::ucontext_t>()).uc_mcontext.gregs;
-                let pc: uint = std::mem::bit_cast(regs[linux::REG_RIP as c_int]);
-                let bp: uint = std::mem::bit_cast(regs[linux::REG_RBP as c_int]);
-                let sp: uint = std::mem::bit_cast(regs[linux::REG_RSP as c_int]);
-                let ctx = std::bt::Context(pc:, bp:, sp:, signal: true);
-                std::bt::backtrace(ctx:, |=mut i = 0u, pc| {
+                let start_pc: uint = std::mem::bit_cast(regs[linux::REG_RIP as c_int]);
+                std::bt::backtrace(start_pc:, |=mut i = 0u, pc| {
                     std::panic::print_bt_line(i++, std::bt::Call(addr: pc));
                     true
                 });
