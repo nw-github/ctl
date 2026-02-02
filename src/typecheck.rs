@@ -1573,8 +1573,18 @@ impl<'a> TypeChecker<'a> {
         type_params: Vec<UserTypeId>,
         full_span: Span,
     ) -> UserType {
+        let attrs = UserTypeAttrs::relevant(attrs, &mut self.proj);
+        if attrs.layout == Layout::Transparent
+            && (!matches!(kind, UserTypeKind::Struct(_, false)) || members.len() != 1)
+        {
+            self.error(Error::new(
+                "'transparent' layout attribute is only valid for structs with a single member",
+                name.span,
+            ))
+        }
+
         UserType {
-            attrs: UserTypeAttrs::relevant(attrs, &mut self.proj),
+            attrs,
             name,
             public,
             kind,

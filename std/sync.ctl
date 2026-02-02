@@ -3,6 +3,7 @@ pub use std::deps::libc::atomic::MemoryOrder;
 use std::deps::libc::atomic::*;
 use std::mem::Mutable;
 
+$[layout(transparent)]
 pub struct Atomic<T> {
     val: Mutable<T>,
 

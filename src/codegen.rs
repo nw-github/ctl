@@ -151,16 +151,21 @@ impl TypeGen {
         };
 
         let type_name = Buffer::format(defs.1, |buf| buf.emit_type_name(ut));
+        let ut_data = decls.1.scopes.get(ut.id);
         if let Some(inner) = ut.can_omit_tag(&defs.1.scopes, &defs.1.types) {
             write_de!(defs, "typedef ");
             defs.emit_type(inner);
+            writeln_de!(defs, " {type_name};");
+            return;
+        } else if ut_data.attrs.layout == Layout::Transparent {
+            write_de!(defs, "typedef ");
+            defs.emit_type(ut_data.members[0].ty.with_templates(&defs.1.types, &ut.ty_args));
             writeln_de!(defs, " {type_name};");
             return;
         }
 
         writeln_de!(decls, "typedef struct {type_name} {type_name};");
 
-        let ut_data = decls.1.scopes.get(ut.id);
         if ut_data.members.is_empty()
             && ut_data.kind.as_union().is_some_and(|u| u.variants.is_empty())
         {
@@ -1595,9 +1600,9 @@ impl<'a> Codegen<'a> {
                 self.emit_union_instance(state, expr.ty, *name, &members.clone())
             }
             &ExprData::Member { source, member } => {
-                if let Some(ut) = self.proj.types[source.ty].as_user()
-                    && self.proj.scopes.get(ut.id).kind.is_packed_struct()
-                {
+                let ut = self.proj.types[source.ty].as_user().unwrap();
+                let ut_data = self.proj.scopes.get(ut.id);
+                if ut_data.kind.is_packed_struct() {
                     let tmp = tmpbuf!(self, state, |tmp| {
                         let ptr = self.proj.types.insert(Type::Ptr(source.ty));
                         self.emit_type(ptr);
@@ -1609,7 +1614,9 @@ impl<'a> Codegen<'a> {
                     self.emit_bitfield_read(&format!("(*{tmp})"), ut, member, expr.ty);
                 } else {
                     self.emit_expr(source, state);
-                    write_de!(self.buffer, ".{}", member_name(self.proj, member));
+                    if ut_data.attrs.layout != Layout::Transparent {
+                        write_de!(self.buffer, ".{}", member_name(self.proj, member));
+                    }
                 }
             }
             ExprData::Block(block) => enter_block!(self, block.scope, expr.ty, |name| {
@@ -1898,6 +1905,10 @@ impl<'a> Codegen<'a> {
                     self.emit_bitfield_write(&tmp, ut, name, value.ty, &expr);
                 }
             });
+        } else if self.proj.scopes.get(ut.id).attrs.layout == Layout::Transparent {
+            self.emit_cast(ty);
+            self.emit_expr_inline(members[0], state);
+            return;
         }
 
         self.emit_cast(ty);
@@ -2745,8 +2756,10 @@ impl<'a> Codegen<'a> {
                             writeln_de!(self.buffer, ";");
                             tmp
                         })
-                    } else {
+                    } else if ut_data.attrs.layout != Layout::Transparent {
                         format!("{arg}.{}", member_name(self.proj, name))
+                    } else {
+                        arg.to_string()
                     };
                     self.emit_builtin_dbg(args, ty, &buf, fmt, state, lvl + 1);
                 }

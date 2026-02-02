@@ -168,6 +168,7 @@ pub enum Layout {
     #[default]
     Auto,
     C,
+    Transparent,
 }
 
 #[derive(Default)]
@@ -239,6 +240,7 @@ impl UserTypeAttrs {
                     this.layout = match proj.strings.resolve(&arg.data) {
                         "C" => Layout::C,
                         "auto" => Layout::Auto,
+                        "transparent" => Layout::Transparent,
                         other => {
                             proj.diag.report(Error::new(
                                 format!("invalid layout '{other}', expected 'C' or 'auto'"),
