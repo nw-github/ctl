@@ -43,6 +43,7 @@ pub enum Cap {
 #[derive(serde::Deserialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum CompilerOption {
+    Gc,
     NoGc,
     NoOverflowChecks,
     Debug,
@@ -89,7 +90,6 @@ impl<'de> Deserialize<'de> for Constraint {
 }
 
 impl Constraint {
-    #[allow(clippy::only_used_in_recursion)]
     pub fn applies(&self, arg: &ConstraintArgs) -> bool {
         match self {
             Constraint::Not(inner) => !inner.applies(arg),
@@ -97,6 +97,7 @@ impl Constraint {
             Constraint::Or(lhs, rhs) => lhs.applies(arg) || rhs.applies(arg),
             Constraint::None => true,
             Constraint::CompilerOption(opt) => match opt {
+                CompilerOption::Gc => !arg.no_gc.get(),
                 CompilerOption::NoGc => arg.no_gc.get(),
                 CompilerOption::NoOverflowChecks => arg.no_overflow_checks.get(),
                 CompilerOption::Debug => !arg.release,

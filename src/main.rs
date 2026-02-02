@@ -20,36 +20,38 @@ struct Arguments {
     command: SubCommand,
 
     /// Compile without including the entire standard library.
-    #[clap(action, long)]
-    #[arg(global = true)]
+    #[clap(action, long, global = true)]
     no_std: bool,
 
     /// Compile without libgc. By default, all memory allocations in this mode will use the libc
     /// allocator and will not be freed until the program exits.
-    #[clap(action, short = 'g', long)]
-    #[arg(global = true)]
+    #[clap(action, short = 'g', long, global = true)]
     leak: bool,
 
     /// Compile without using _BitInt/_ExtInt. All integer types will use the type with the nearest
     /// power of two bit count. TODO: proper arithmetic wrapping in this mode
-    #[clap(action, short = 'i', long)]
-    #[arg(global = true)]
+    #[clap(action, short = 'i', long, global = true)]
     no_bit_int: bool,
 
     /// Compile as a library
-    #[clap(action, short, long)]
-    #[arg(global = true)]
+    #[clap(action, short, long, global = true)]
     shared: Option<bool>,
 
     /// Silence unnecessary messages from the compiler
-    #[clap(action, short, long)]
-    #[arg(global = true)]
+    #[clap(action, short, long, global = true)]
     quiet: bool,
 
     /// View messages from the C compiler
-    #[clap(action, short, long)]
-    #[arg(global = true)]
+    #[clap(action, short, long, global = true)]
     verbose: bool,
+
+    /// Set the features for the project. If the target is a standalone file, this options sets the
+    /// features for the standard library.
+    #[clap(short, long, value_delimiter = ',', global = true)]
+    features: Vec<String>,
+
+    #[clap(action, short, long, global = true)]
+    no_default_features: bool,
 }
 
 #[derive(Args)]
@@ -409,8 +411,8 @@ fn main() -> Result<()> {
     };
 
     let input = ctl::package::Input {
-        features: Default::default(),
-        no_default_features: false,
+        features: args.features.into_iter().map(|s| s.trim().to_owned()).collect(),
+        no_default_features: args.no_default_features,
         args: ctl::package::ConstraintArgs {
             release: args.command.as_build_args().is_some_and(|b| b.release),
             no_std: args.no_std,
