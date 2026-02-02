@@ -1371,17 +1371,16 @@ impl<'a> Codegen<'a> {
 
                 write_de!(self.buffer, "((");
                 self.buffer.emit_dyn_fn_type(func);
-                let id = func.id;
                 let recv = hoist!(self, self.emit_tmpvar(recv, state));
                 write_de!(self.buffer, "){recv}.vtable[");
                 self.buffer.emit_vtable_prefix(tr);
-                self.buffer.emit_vtable_fn_name(id);
+                self.buffer.emit_vtable_fn_name(func.id);
                 write_de!(self.buffer, "])({recv}.self");
                 if args.is_empty() {
                     write_de!(self.buffer, ")");
                 } else {
                     write_de!(self.buffer, ",");
-                    self.finish_emit_fn_args(state, id, args);
+                    self.finish_emit_fn_args(state, func.id, args);
                 }
                 if expr.ty.is_void_like() {
                     write_de!(self.buffer, ")");

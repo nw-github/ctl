@@ -1,5 +1,9 @@
 use std::{
-    ffi::OsString, io::Write, path::Path, process::{Command, Stdio}, time::Duration
+    ffi::OsString,
+    io::Write,
+    path::Path,
+    process::{Command, Stdio},
+    time::Duration,
 };
 
 use anyhow::Context;

@@ -345,7 +345,6 @@ impl std::fmt::Display for LangType {
     }
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LangTrait {
     Numeric,
