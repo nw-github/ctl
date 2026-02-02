@@ -1564,6 +1564,10 @@ impl<'a> Parser<'a> {
         let span = name.span;
         let name = name.map(|data| match data {
             Token::String(name) => AttrName::Str(name),
+            Token::Unsafe => {
+                props = true;
+                AttrName::Str(Strings::UNSAFE)
+            }
             Token::Ident(name) => {
                 props = true;
                 AttrName::Str(name)

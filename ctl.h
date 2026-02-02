@@ -56,6 +56,7 @@
 #  define CTL_FORCEINLINE  __forceinline inline
 #  define CTL_NEVERINLINE  __declspec(noinline)
 #  define CTL_COLD
+#  define CTL_MALLOC
 #  define CTL_INLINE         inline
 #  define CTL_MEMCPY         memcpy
 #  define CTL_MEMSET         memset
@@ -92,6 +93,7 @@
 #  define CTL_FORCEINLINE    __attribute__((always_inline)) inline
 #  define CTL_NEVERINLINE    __attribute__((noinline))
 #  define CTL_COLD           __attribute__((cold))
+#  define CTL_MALLOC         __attribute__((malloc))
 #  define CTL_INLINE         inline
 #  define CTL_MEMCPY         __builtin_memcpy
 #  define CTL_MEMSET         __builtin_memset
@@ -130,8 +132,7 @@
 
 #define CTL_COERCE(ty, expr) (expr, *(ty *)0)
 #define CTL_VOID(expr)       (expr, CTL_VOID_INST)
-#define CTL_VOID_INST \
-  ($void) { }
+#define CTL_VOID_INST        (($void){})
 
 #define CTL_STATIC_ASSERT(cond, msg) _Static_assert(cond, msg)
 

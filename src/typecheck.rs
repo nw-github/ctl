@@ -1282,7 +1282,7 @@ impl<'a> TypeChecker<'a> {
             self.error(Error::new("only imported extern functions may be variadic", f.name.span))
         }
 
-        let attrs = FunctionAttrs::relevant(f.name.data, &f.attrs, &mut self.proj);
+        let attrs = FunctionAttrs::relevant(f.name.data, &f.attrs, &mut self.proj, false);
         let id = self.insert::<FunctionId>(
             Function {
                 public: f.public,

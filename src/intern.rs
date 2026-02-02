@@ -30,6 +30,7 @@ impl Strings {
     pub const FN_TR_ARGS_NAME: StrId = str_id(SID::FN_TR_ARGS_NAME);
     pub const ITER_VAR_NAME: StrId = str_id(SID::ITER_VAR_NAME);
     pub const SKIP_REASON: StrId = str_id(SID::SKIP_REASON);
+    pub const UNSAFE: StrId = str_id(SID::UNSAFE);
 
     pub const NULL: StrId = str_id(SID::NULL);
     pub const SOME: StrId = str_id(SID::SOME);
@@ -62,6 +63,7 @@ impl Strings {
     pub const ATTR_TEST_RUNNER: StrId = str_id(SID::ATTR_TEST_RUNNER);
     pub const ATTR_SKIP: StrId = str_id(SID::SKIP);
     pub const ATTR_EXPORT: StrId = str_id(SID::ATTR_EXPORT);
+    pub const ATTR_MALLOC: StrId = str_id(SID::ATTR_MALLOC);
 
     pub fn new() -> Self {
         let mut rodeo = Rodeo::default();
@@ -104,6 +106,8 @@ impl Strings {
         assert_eq!(Self::FN_CLOSURE_DO_INVOKE, rodeo.get_or_intern_static("do_invoke"));
         assert_eq!(Self::ATTR_EXPORT, rodeo.get_or_intern_static("export"));
         assert_eq!(Self::ATTR_CFG, rodeo.get_or_intern_static("cfg"));
+        assert_eq!(Self::UNSAFE, rodeo.get_or_intern_static("unsafe"));
+        assert_eq!(Self::ATTR_MALLOC, rodeo.get_or_intern_static("malloc"));
         Self { rodeo, byte_str_data: vec![0] }
     }
 
@@ -176,4 +180,6 @@ enum SID {
     FN_CLOSURE_DO_INVOKE,
     ATTR_EXPORT,
     ATTR_CFG,
+    UNSAFE,
+    ATTR_MALLOC,
 }

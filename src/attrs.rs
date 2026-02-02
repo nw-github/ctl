@@ -110,10 +110,16 @@ pub struct FunctionAttrs {
     pub inline: Option<FunctionInline>,
     pub intrinsic: Option<Intrinsic>,
     pub macro_name: Option<StrId>,
+    pub malloc: bool,
 }
 
 impl FunctionAttrs {
-    pub fn relevant(fn_name: StrId, attrs: &Attributes, proj: &mut Project) -> Self {
+    pub fn relevant(
+        fn_name: StrId,
+        attrs: &[Attribute],
+        proj: &mut Project,
+        is_unsafe: bool,
+    ) -> Self {
         let mut this = Self::default();
         for attr in attrs.iter() {
             let Some(&id) = attr.name.data.as_str() else {
@@ -156,6 +162,13 @@ impl FunctionAttrs {
                     }
                 }
                 Strings::ATTR_INTRINSIC => this.intrinsic = check_intrinsic(fn_name, attr, proj),
+                Strings::ATTR_MALLOC => {
+                    if !is_unsafe {
+                        proj.diag.report(Error::is_unsafe(attr.name.span));
+                    }
+                    this.malloc = true;
+                }
+                Strings::UNSAFE => return Self::relevant(fn_name, &attr.props, proj, true),
                 _ => unrecognized(attr, proj),
             }
         }

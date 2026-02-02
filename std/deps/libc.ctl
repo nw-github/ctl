@@ -8,6 +8,7 @@ pub struct JmpBuf {
 pub extern fn abort(): never;
 pub extern fn exit(code: c_int): never;
 
+$[unsafe(malloc)]
 pub extern fn malloc(size: uint): ?^mut void;
 pub extern fn realloc(addr: ^mut void, size: uint): ?^mut void;
 pub extern fn free(addr: ?^mut void);

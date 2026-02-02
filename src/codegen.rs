@@ -1046,7 +1046,7 @@ impl<'a> Codegen<'a> {
     }
 
     fn gen_c_main(&mut self) -> Option<String> {
-        const MAIN: &str = "int main(int argc, char **argv){$ctl_stdlib_init(argc, argv);";
+        const MAIN: &str = "int main(int argc, char **argv){$ctl_stdlib_init(argc, (s8 **)argv);";
 
         if self.proj.conf.in_test_mode() {
             self.buffer.emit(MAIN);
@@ -3177,6 +3177,10 @@ impl<'a> Codegen<'a> {
 
         if !is_prototype && f.attrs.cold {
             write_de!(self.buffer, "CTL_COLD ");
+        }
+
+        if f.attrs.malloc {
+            write_de!(self.buffer, "CTL_MALLOC ");
         }
 
         if ret == TypeId::NEVER {
