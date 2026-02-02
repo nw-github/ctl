@@ -56,7 +56,8 @@ pub struct MaybeMangledName {
     pub fn from_bytes(func: [u8..]): This => This(func:);
 
     fn demangle_type_name(name: *mut str, f: *mut std::fmt::Formatter): ?void {
-        match name.advance()? {
+        let ch = name.advance()?;
+        match ch {
             'v' => write(f, "void"),
             'V' => write(f, "never"),
             'i' => write(f, "i{name}"),
@@ -97,7 +98,14 @@ pub struct MaybeMangledName {
                 }
                 write(f, ")");
             }
-            'N' => {
+            'e' | 'E' | 'u' | 'N' => {
+                match ch {
+                    'e' => write(f, "extern "),
+                    'E' => write(f, "extern unsafe "),
+                    'u' => write(f, "unsafe "),
+                    _ => {}
+                }
+
                 write(f, "fn(");
                 mut wrote = false;
                 while !name.is_empty() and !name.advance_if_eq('n') {

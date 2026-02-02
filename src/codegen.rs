@@ -479,7 +479,12 @@ impl<'a> Buffer<'a> {
     }
 
     fn emit_fnptr_name(&mut self, f: &FnPtr) {
-        write_de!(self, "N");
+        match (f.is_extern, f.is_unsafe) {
+            (true, true) => write_de!(self, "E"),
+            (true, false) => write_de!(self, "e"),
+            (false, true) => write_de!(self, "u"),
+            (false, false) => write_de!(self, "N"),
+        }
         for &param in f.params.iter() {
             self.write_len_prefixed(&Buffer::format(self.1, |b| b.emit_mangled_name(param)));
         }
