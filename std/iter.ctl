@@ -33,25 +33,28 @@ pub trait Iterator<T> {
         n == 0 then null else n
     }
 
-    fn any<F: Fn(*T) => bool>(mut this, f: F): bool {
-        while this.next() is ?next {
-            if f(&next) {
-                return true;
-            }
-        }
-        false
-    }
+    fn any<F: Fn(T) => bool>(mut this, f: F): bool => this.position(f).is_some();
 
-    fn all<F: Fn(*T) => bool>(mut this, f: F): bool {
+    fn all<F: Fn(T) => bool>(mut this, f: F): bool {
         while this.next() is ?next {
-            if !f(&next) {
+            if !f(next) {
                 return false;
             }
         }
         true
     }
 
-    fn fold<A, F: Fn(A, T) => A>(my mut this, mut acc: A, f: F): A {
+    fn position<F: Fn(T) => bool>(mut this, f: F): ?uint {
+        mut idx = 0u;
+        while this.next() is ?next {
+            if f(next) {
+                break idx;
+            }
+            idx++;
+        }
+    }
+
+    fn fold<Acc, F: Fn(Acc, T) => Acc>(my mut this, mut acc: Acc, f: F): Acc {
         while this.next() is ?next {
             acc = f(acc, next);
         }
