@@ -346,7 +346,7 @@ impl LanguageServer for LspBackend {
                     write_if!(alias.public, str, "pub ");
                     write_de!(str, "type {}", proj.strings.resolve(&alias.name.data));
                     visualize_type_params(&mut str, &alias.type_params, proj);
-                    write_de!(str, " = {}", proj.fmt_ty(alias.ty));
+                    write_de!(str, " = {}", proj.fmt_ty(alias.ty.unwrap_or_default()));
                     Some(str)
                 }
                 LspItem::Property(src_ty, id, name) => {

@@ -1215,7 +1215,7 @@ impl<'a> TypeChecker<'a> {
                     public,
                     name,
                     type_params: this.declare_type_params(type_params),
-                    ty: this.declare_type_hint(ty),
+                    ty: Some(this.declare_type_hint(ty)),
                     body_scope: this.current,
                 });
                 let id = self.insert::<AliasId>(value, public, true);
@@ -5277,7 +5277,6 @@ impl TypeChecker<'_> {
                 traits
             }
             traits @ SuperTraits::Checked(_) => traits,
-            // TODOX: this will result in duplicate errors as the `This` type also checks these paths
             SuperTraits::Unchecked(paths) => self.enter_id(scope, |this| {
                 let mut res_paths = Vec::with_capacity(paths.len());
                 for path in paths.iter() {
@@ -5302,7 +5301,17 @@ impl TypeChecker<'_> {
     }
 
     fn resolve_alias(&mut self, id: AliasId) -> TypeId {
-        resolve_type!(self, self.proj.scopes.get_mut(id).ty)
+        let ty = if let Some(mut ty) = std::mem::take(&mut self.proj.scopes.get_mut(id).ty) {
+            resolve_type!(self, ty);
+            ty
+        } else {
+            self.error(Error::new(
+                "alias cannot reference itself in its own initializer",
+                self.proj.scopes.get(id).name.span,
+            ))
+        };
+        self.proj.scopes.get_mut(id).ty = Some(ty);
+        ty
     }
 
     fn resolve_ext_type(&mut self, id: ExtensionId) -> TypeId {

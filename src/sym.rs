@@ -422,7 +422,7 @@ pub struct Alias {
     pub public: bool,
     pub name: Located<StrId>,
     pub type_params: Vec<UserTypeId>,
-    pub ty: TypeId,
+    pub ty: Option<TypeId>,
     pub body_scope: ScopeId,
 }
 
