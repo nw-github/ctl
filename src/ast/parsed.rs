@@ -96,6 +96,7 @@ pub enum StmtData {
         assoc_types: TypeParams,
     },
     Extension {
+        span: Span,
         ty: TypeHint,
         type_params: TypeParams,
         impls: Vec<Located<ImplBlock>>,

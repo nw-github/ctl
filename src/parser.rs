@@ -196,11 +196,12 @@ impl<'a> Parser<'a> {
                 })
             }
             Token::Extension => {
-                self.next();
+                let span = self.next().span;
+                self.invalid_here(tk_public);
                 self.invalid_here(tk_unsafe);
                 self.invalid_here(tk_extern);
 
-                Ok(Stmt { attrs, data: self.extension(tk_public, earliest_span) })
+                Ok(Stmt { attrs, data: self.extension(earliest_span, span) })
             }
             Token::Mod => {
                 self.next();
@@ -1980,9 +1981,7 @@ impl<'a> Parser<'a> {
         )
     }
 
-    fn extension(&mut self, public: Option<Span>, span: Span) -> Located<StmtData> {
-        self.invalid_here(public);
-
+    fn extension(&mut self, earliest: Span, span: Span) -> Located<StmtData> {
         let type_params = self.type_params();
         let ty = self.type_hint();
         self.expect(Token::LCurly);
@@ -1990,7 +1989,7 @@ impl<'a> Parser<'a> {
         let mut functions = Vec::new();
         let mut operators = Vec::new();
         let mut impls = Vec::new();
-        let span = self.next_until(Token::RCurly, span, |this| {
+        let total_span = self.next_until(Token::RCurly, earliest, |this| {
             let attrs = this.attributes();
             if let Some(token) = this.next_if(Token::Impl) {
                 impls.push(this.impl_block(attrs, token));
@@ -2009,7 +2008,10 @@ impl<'a> Parser<'a> {
             }
         });
 
-        Located::new(span, StmtData::Extension { ty, type_params, impls, functions, operators })
+        Located::new(
+            total_span,
+            StmtData::Extension { span, ty, type_params, impls, functions, operators },
+        )
     }
 
     fn impl_block(&mut self, attrs: Attributes, span: Span) -> Located<ImplBlock> {

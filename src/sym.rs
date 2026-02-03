@@ -331,7 +331,7 @@ pub enum UserTypeKind {
     Template,
     Tuple,
     Closure,
-    Extension(TypeId),
+    Extension(Option<TypeId>),
 }
 
 impl UserTypeKind {

@@ -913,7 +913,12 @@ fn get_semantic_token(
                 token::VARIABLE
             }
         }
-        LspItem::Type(_) => token::TYPE,
+        LspItem::Type(id) => {
+            if scopes.get(id).kind.is_extension() {
+                return None;
+            }
+            token::TYPE
+        },
         LspItem::Trait(_) => token::TYPE,
         LspItem::Alias(_) => token::TYPE,
         LspItem::BuiltinType(_) => token::TYPE,
@@ -1539,7 +1544,7 @@ fn visualize_type(id: UserTypeId, proj: &Project) -> String {
         &UserTypeKind::Extension(ty) => {
             write_de!(res, "extension");
             visualize_type_params(&mut res, &ut.type_params, proj);
-            write_de!(res, " {}", proj.fmt_ty(ty));
+            write_de!(res, " {}", proj.fmt_ty(ty.unwrap_or_default()));
         }
         UserTypeKind::Closure | UserTypeKind::Tuple => {}
     }

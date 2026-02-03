@@ -1181,7 +1181,7 @@ impl<'a> TypeChecker<'a> {
                 self.proj.scopes[scope].kind = ScopeKind::Trait(id);
                 DStmt::Trait { id, fns }
             }
-            PStmtData::Extension { ty, type_params, impls, functions, operators } => {
+            PStmtData::Extension { span, ty, type_params, impls, functions, operators } => {
                 let (ext, impls, fns) = self.enter(ScopeKind::None, |this| {
                     let type_params = this.declare_type_params(type_params);
                     let mut fns = this.declare_fns(functions);
@@ -1189,10 +1189,10 @@ impl<'a> TypeChecker<'a> {
                     let ty = this.declare_type_hint(*ty);
                     let ext = this.create_user_type(
                         &stmt.attrs,
-                        Located::nowhere(Strings::EXTENSION_NAME),
+                        Located::new(*span, Strings::EXTENSION_NAME),
                         false,
                         Default::default(),
-                        UserTypeKind::Extension(ty),
+                        UserTypeKind::Extension(Some(ty)),
                         type_params,
                         stmt.data.span,
                     );
@@ -1541,7 +1541,7 @@ impl<'a> TypeChecker<'a> {
         impls: Vec<(ImplId, UncheckedImpl)>,
     ) -> Vec<ImplId> {
         let ty = if let UserTypeKind::Extension(ty) = self.proj.scopes.get(id).kind {
-            ty
+            ty.expect("extension declared but did not set type")
         } else {
             self.proj.types.insert(Type::User(GenericUserType::from_id(
                 &self.proj.scopes,
@@ -1674,10 +1674,7 @@ impl TypeChecker<'_> {
             }
             DStmt::Extension { id, fns } => {
                 self.enter_id(self.proj.scopes.get(id).body_scope, |this| {
-                    let ty = resolve_type!(
-                        this,
-                        *this.proj.scopes.get_mut(id).kind.as_extension_mut().unwrap()
-                    );
+                    let ty = this.resolve_ext_type(id);
                     for f in fns {
                         this.check_fn(f);
                     }
@@ -5306,7 +5303,7 @@ impl TypeChecker<'_> {
             ty
         } else {
             self.error(Error::new(
-                "alias cannot reference itself in its own initializer",
+                "alias cannot reference itself in its declaration",
                 self.proj.scopes.get(id).name.span,
             ))
         };
@@ -5315,7 +5312,19 @@ impl TypeChecker<'_> {
     }
 
     fn resolve_ext_type(&mut self, id: ExtensionId) -> TypeId {
-        resolve_type!(self, *self.proj.scopes.get_mut(id).kind.as_extension_mut().unwrap())
+        let ty = if let Some(mut ty) =
+            std::mem::take(self.proj.scopes.get_mut(id).kind.as_extension_mut().unwrap())
+        {
+            resolve_type!(self, ty);
+            ty
+        } else {
+            self.error(Error::new(
+                "extension cannot reference itself in its declaration",
+                self.proj.scopes.get(id).name.span,
+            ))
+        };
+        *self.proj.scopes.get_mut(id).kind.as_extension_mut().unwrap() = Some(ty);
+        ty
     }
 
     fn resolve_proto(&mut self, id: FunctionId) {

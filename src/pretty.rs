@@ -137,7 +137,7 @@ impl Pretty<'_> {
                     self.print_fn(&f.data, indent + 2);
                 }
             }
-            StmtData::Extension { ty, type_params, impls, functions, operators } => {
+            StmtData::Extension { span: _, ty, type_params, impls, functions, operators } => {
                 self.print_header(&tabs, "Stmt::Extension", &[]);
                 self.print_type_params(type_params, indent + 1, None);
 
