@@ -758,9 +758,7 @@ impl TypeChecker<'_> {
             return self.check_hover(span, LspItem::Property(Some(ty), owner, param.label));
         }
 
-        if let ParamPattern::Checked(patt) = param.patt
-            && let PatternData::Variable(id) = patt.data
-        {
+        if let ParamPattern::Checked(PatternData::Variable(id)) = param.patt {
             self.check_hover(span, LspItem::FnParamLabel(id, fid));
         }
     }
@@ -1706,7 +1704,7 @@ impl TypeChecker<'_> {
                             return self
                                 .error(Error::must_be_irrefutable("let binding pattern", span));
                         }
-                        return Some(CStmt::Let(patt, Some(value)));
+                        return Some(CStmt::Let(patt.data, Some(value)));
                     } else {
                         let patt = self.check_pattern(PatternParams {
                             scrutinee: ty,
@@ -1725,7 +1723,7 @@ impl TypeChecker<'_> {
                                 span,
                             ));
                         }
-                        return Some(CStmt::Let(patt, None));
+                        return Some(CStmt::Let(patt.data, None));
                     }
                 } else if let Some(value) = value {
                     let span = patt.span;
@@ -1741,7 +1739,7 @@ impl TypeChecker<'_> {
                         return self.error(Error::must_be_irrefutable("let binding pattern", span));
                     }
 
-                    return Some(CStmt::Let(patt, Some(value)));
+                    return Some(CStmt::Let(patt.data, Some(value)));
                 } else {
                     return self.error(Error::new("cannot infer type", patt.span));
                 }
@@ -1996,7 +1994,7 @@ impl TypeChecker<'_> {
                 if !patt.irrefutable {
                     this.error(Error::must_be_irrefutable("parameter patterns", span))
                 } else {
-                    this.proj.scopes.get_mut(id).params[i].patt = ParamPattern::Checked(patt);
+                    this.proj.scopes.get_mut(id).params[i].patt = ParamPattern::Checked(patt.data);
                 }
 
                 names.push(this.proj.strings.get_or_intern(format!("{i}")));
@@ -2047,7 +2045,7 @@ impl TypeChecker<'_> {
                     .iter()
                     .flat_map(|param| Some((param.label, this.arena.typed(
                         param.ty,
-                        CExprData::Var(*param.patt.as_checked().and_then(|p| p.data.as_variable())?)
+                        CExprData::Var(*param.patt.as_checked().and_then(|p| p.as_variable())?)
                     ))))
                     .collect();
                 let variant = func.name.data;
@@ -2460,17 +2458,24 @@ impl TypeChecker<'_> {
             };
 
             let name = self.proj.strings.get_or_intern(format!("{i}"));
+            let patt = self.check_pattern(PatternParams {
+                scrutinee: ty,
+                mutable: false,
+                pattern: patt,
+                typ: PatternType::Fn,
+                has_hint: hint.is_some(),
+            });
+            if !patt.irrefutable {
+                self.error(Error::must_be_irrefutable("parameter patterns", span))
+            }
+
+            // FIXME: we should just be able to use `name`, but codegen can produce invalid code
+            // sometimes for some reason
             checked_params.push(CheckedParam {
                 keyword: false,
-                label: name,
+                label: self.proj.strings.get_or_intern(format!("$_{i}")),
                 ty,
-                patt: ParamPattern::Checked(self.check_pattern(PatternParams {
-                    scrutinee: ty,
-                    mutable: false,
-                    pattern: patt,
-                    typ: PatternType::Fn,
-                    has_hint: hint.is_some(),
-                })),
+                patt: ParamPattern::Checked(patt.data),
                 default: None,
             });
 
@@ -2519,9 +2524,8 @@ impl TypeChecker<'_> {
                         CheckedParam {
                             keyword: false,
                             label: Strings::THIS_PARAM,
-                            patt: ParamPattern::Checked(CPattern {
-                                irrefutable: true,
-                                data: PatternData::Variable(this.insert::<VariableId>(
+                            patt: ParamPattern::Checked(PatternData::Variable(
+                                this.insert::<VariableId>(
                                     Variable {
                                         name: Located::nowhere(Strings::THIS_PARAM),
                                         ty: this_ptr_mut_ty,
@@ -2529,8 +2533,8 @@ impl TypeChecker<'_> {
                                     },
                                     false,
                                     false,
-                                )),
-                            }),
+                                ),
+                            )),
                             ty: this_ptr_mut_ty,
                             default: None,
                         },
@@ -2608,20 +2612,14 @@ impl TypeChecker<'_> {
                         CheckedParam {
                             keyword: false,
                             label: Strings::THIS_PARAM,
-                            patt: ParamPattern::Checked(CPattern {
-                                irrefutable: true,
-                                data: PatternData::Variable(this_ptr_var),
-                            }),
+                            patt: ParamPattern::Checked(PatternData::Variable(this_ptr_var)),
                             ty: this_ptr_ty,
                             default: None,
                         },
                         CheckedParam {
                             keyword: false,
                             label: Strings::FN_TR_ARGS_NAME,
-                            patt: ParamPattern::Checked(CPattern {
-                                irrefutable: true,
-                                data: PatternData::Variable(args_var),
-                            }),
+                            patt: ParamPattern::Checked(PatternData::Variable(args_var)),
                             ty: args_tuple,
                             default: None,
                         },
@@ -4202,10 +4200,7 @@ impl TypeChecker<'_> {
                 out,
                 CExprData::Block(Block {
                     body: vec![
-                        CStmt::Let(
-                            CPattern { irrefutable: true, data: PatternData::Variable(iter_var) },
-                            Some(iter),
-                        ),
+                        CStmt::Let(PatternData::Variable(iter_var), Some(iter)),
                         CStmt::Expr(inner),
                     ],
                     scope: this.current,

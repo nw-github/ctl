@@ -4,7 +4,7 @@ use enum_as_inner::EnumAsInner;
 use crate::{
     ast::{
         DefaultCapturePolicy,
-        checked::{Expr as CheckedExpr, Pattern as CheckedPattern},
+        checked::{Expr as CheckedExpr, PatternData as CheckedPatternData},
         declared::UsePath,
         parsed::{Expr, FunctionType, Path, Pattern, TypeHint},
     },
@@ -155,7 +155,7 @@ pub enum DefaultExpr {
 #[derive(Clone, EnumAsInner)]
 pub enum ParamPattern {
     Unchecked(Located<Pattern>),
-    Checked(CheckedPattern),
+    Checked(CheckedPatternData),
 }
 
 #[derive(Clone)]

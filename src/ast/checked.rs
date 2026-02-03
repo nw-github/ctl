@@ -98,7 +98,7 @@ impl Default for Pattern {
 #[derive(Clone)]
 pub enum Stmt {
     Expr(Expr),
-    Let(Pattern, Option<Expr>),
+    Let(PatternData, Option<Expr>),
     Defer(Expr),
     Guard { cond: Expr, body: Expr },
 }

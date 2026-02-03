@@ -1051,6 +1051,7 @@ impl<'a> Codegen<'a> {
         if self.proj.conf.in_test_mode() {
             self.buffer.emit(MAIN);
             self.gen_test_main();
+            self.buffer.emit("$ctl_stdlib_deinit();return 0;}\n");
             return Some(self.buffer.take().finish());
         }
 
@@ -1142,10 +1143,7 @@ impl<'a> Codegen<'a> {
             self.buffer.emit_fn_name(&runner.func);
             write_de!(self.buffer, "(");
             self.emit_cast(self.proj.scopes.get(runner.func.id).params[0].ty);
-            writeln_de!(
-                self.buffer,
-                "{{.ptr=tests,.len={test_count}}});$ctl_stdlib_deinit();return 0;}}"
-            );
+            writeln_de!(self.buffer, "{{.ptr=tests,.len={test_count}}});");
             self.funcs.insert(runner);
         });
     }
@@ -1187,13 +1185,13 @@ impl<'a> Codegen<'a> {
                 let Some(patt) = param
                     .patt
                     .as_checked()
-                    .filter(|patt| !matches!(patt.data, PatternData::Variable(_)))
+                    .filter(|patt| !matches!(patt, PatternData::Variable(_)))
                 else {
                     continue;
                 };
 
                 let ty = param.ty.with_templates(&self.proj.types, &state.func.ty_args);
-                self.emit_pattern_bindings(state, &patt.data, self.proj.str(param.label), ty);
+                self.emit_pattern_bindings(state, patt, self.proj.str(param.label), ty);
             }
 
             hoist_point!(self, {
@@ -1224,7 +1222,7 @@ impl<'a> Codegen<'a> {
         match stmt {
             Stmt::Expr(expr) => hoist_point!(self, self.emit_expr_stmt(expr, state)),
             Stmt::Let(patt, value) => hoist_point!(self, {
-                if let PatternData::Variable(id) = patt.data {
+                if let PatternData::Variable(id) = patt {
                     if !self.proj.scopes.get(id).unused {
                         let ty = self.emit_var_decl(id, state);
                         if let Some(mut expr) = value {
@@ -1240,7 +1238,7 @@ impl<'a> Codegen<'a> {
                     let ty = value.ty.with_templates(&self.proj.types, &state.func.ty_args);
                     value.ty = ty;
                     let tmp = self.emit_tmpvar(value, state);
-                    self.emit_pattern_bindings(state, &patt.data, &tmp, ty);
+                    self.emit_pattern_bindings(state, &patt, &tmp, ty);
                 }
             }),
             Stmt::Defer(expr) => self.defers.last_mut().unwrap().1.push(expr),
@@ -3224,18 +3222,15 @@ impl<'a> Codegen<'a> {
                 if !override_with_voidptr {
                     self.emit_type(ty);
                 }
-            } else if let ParamPattern::Checked(Pattern {
-                data: PatternData::Variable(id), ..
-            }) = &param.patt
-            {
+            } else if let ParamPattern::Checked(PatternData::Variable(id)) = param.patt {
                 if override_with_voidptr {
                     let tmp = state.tmpvar();
                     self.buffer.emit(&tmp);
-                    thisptr = FirstParam::OverriddenVar { tmp, id: *id };
+                    thisptr = FirstParam::OverriddenVar { tmp, id };
                 } else {
-                    self.emit_var_decl(*id, state);
-                    if self.proj.scopes.get(*id).unused {
-                        unused.push(*id);
+                    self.emit_var_decl(id, state);
+                    if self.proj.scopes.get(id).unused {
+                        unused.push(id);
                     }
                 }
             } else {
