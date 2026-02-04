@@ -575,7 +575,7 @@ impl<'a> Buffer<'a> {
         let f = &self.1.scopes.get(func.id);
         if let Some(name) = f.attrs.macro_name.or(f.attrs.link_name) {
             return self.emit_str(name);
-        } else if f.is_extern && f.body.is_none() {
+        } else if f.attrs.no_mangle {
             return self.emit_str(f.name.data);
         }
 
@@ -973,6 +973,10 @@ impl<'a> Codegen<'a> {
         let functions = this.buffer.take();
         if this.proj.conf.build.no_bit_int {
             this.buffer.emit("#define CTL_NOBITINT 1\n");
+        }
+
+        if !this.proj.conf.build.debug_info {
+            this.buffer.emit("#define NDEBUG 1\n");
         }
 
         this.buffer.emit("#ifdef __clang__\n");

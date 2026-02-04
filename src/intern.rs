@@ -64,6 +64,7 @@ impl Strings {
     pub const ATTR_SKIP: StrId = str_id(SID::SKIP);
     pub const ATTR_EXPORT: StrId = str_id(SID::ATTR_EXPORT);
     pub const ATTR_MALLOC: StrId = str_id(SID::ATTR_MALLOC);
+    pub const ATTR_NO_MANGLE: StrId = str_id(SID::ATTR_NO_MANGLE);
 
     pub fn new() -> Self {
         let mut rodeo = Rodeo::default();
@@ -108,6 +109,7 @@ impl Strings {
         assert_eq!(Self::ATTR_CFG, rodeo.get_or_intern_static("cfg"));
         assert_eq!(Self::UNSAFE, rodeo.get_or_intern_static("unsafe"));
         assert_eq!(Self::ATTR_MALLOC, rodeo.get_or_intern_static("malloc"));
+        assert_eq!(Self::ATTR_NO_MANGLE, rodeo.get_or_intern_static("no_mangle"));
         Self { rodeo, byte_str_data: vec![0] }
     }
 
@@ -182,4 +184,5 @@ enum SID {
     ATTR_CFG,
     UNSAFE,
     ATTR_MALLOC,
+    ATTR_NO_MANGLE,
 }

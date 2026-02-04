@@ -102,6 +102,7 @@ pub enum FunctionInline {
 pub struct FunctionAttrs {
     pub panic_handler: bool,
     pub test_runner: bool,
+    pub no_mangle: bool,
     pub cold: bool,
     pub safe_extern: bool,
     pub export: bool,
@@ -130,6 +131,7 @@ impl FunctionAttrs {
             match id {
                 Strings::ATTR_TEST_RUNNER => this.test_runner = true,
                 Strings::ATTR_PANIC_HANDLER => this.panic_handler = true,
+                Strings::ATTR_NO_MANGLE => this.no_mangle = true,
                 Strings::ATTR_MACRO => {
                     if attr.props.is_empty() {
                         this.macro_name = Some(fn_name);

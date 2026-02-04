@@ -2061,6 +2061,10 @@ impl TypeChecker<'_> {
                 return;
             }
 
+            if func.is_extern && body.is_none() {
+                this.proj.scopes.get_mut(id).attrs.no_mangle = true;
+            }
+
             let Some(body) = body else {
                 return;
             };
