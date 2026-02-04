@@ -103,7 +103,7 @@ pub extern fn dwfl_module_addrinfo(
     module: *mut Dwfl_Module,
     address: GElf_Addr,
     offset: *mut GElf_Off,
-    sym:    *mut GElf_Sym,
+    sym:    ^mut GElf_Sym,
     shndxp: ?*mut GElf_Word,
     elfp:   ?^mut ^mut Elf,
     bias:   ?*mut Dwarf_Addr,

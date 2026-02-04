@@ -16,9 +16,15 @@ extension<T> ^T {
     pub unsafe fn read(my this): T => unsafe *this;
     pub unsafe fn read_volatile(my this): T => unsafe std::ptr::read_volatile(this);
     pub unsafe fn read_unaligned(my this): T {
-        mut buf: T;
-        unsafe std::mem::copy_no_overlap(dst: &raw mut buf, src: this, num: 1);
-        buf
+        // unsafe std::mem::Uninit::<T>::assume_init_by(|=this, buf| {
+        //     unsafe std::mem::copy_no_overlap(dst: buf, src: this, num: 1);
+        // }).0
+
+        mut out = std::mem::Uninit::<T>::uninit();
+        unsafe {
+            std::mem::copy_no_overlap(dst: out.as_raw_mut(), src: this, num: 1);
+            out.assume_init()
+        }
     }
 
     $[intrinsic(unary_op)]

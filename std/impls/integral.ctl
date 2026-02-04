@@ -1,5 +1,6 @@
 use std::fmt::{Debug, Format, Formatter};
 use std::reflect::{Integral, Signed, Unsigned};
+use std::mem::Uninit;
 
 extension u8 {
     pub fn is_ascii(my this): bool => (this as char).is_ascii();
@@ -147,23 +148,38 @@ extension<Int: Integral> Int {
 
     $[inline]
     pub fn overflowing_add(this, rhs: Int): (Int, bool) {
-        mut out: Int;
-        let res = unsafe gcc_intrin::__builtin_add_overflow(*this, rhs, &raw mut out);
-        (out, res)
+        // unsafe Uninit::assume_init_by(|=this, =rhs, out| {
+        //     unsafe gcc_intrin::__builtin_add_overflow(*this, rhs, out)
+        // })
+        mut out = Uninit::<Int>::uninit();
+        unsafe {
+            let res = gcc_intrin::__builtin_add_overflow(*this, rhs, out.as_raw_mut());
+            (out.assume_init(), res)
+        }
     }
 
     $[inline]
     pub fn overflowing_sub(this, rhs: Int): (Int, bool) {
-        mut out: Int;
-        let res = unsafe gcc_intrin::__builtin_sub_overflow(*this, rhs, &raw mut out);
-        (out, res)
+        // unsafe Uninit::assume_init_by(|=this, =rhs, out| {
+        //     unsafe gcc_intrin::__builtin_sub_overflow(*this, rhs, out)
+        // })
+        mut out = Uninit::<Int>::uninit();
+        unsafe {
+            let res = gcc_intrin::__builtin_sub_overflow(*this, rhs, out.as_raw_mut());
+            (out.assume_init(), res)
+        }
     }
 
     $[inline]
     pub fn overflowing_mul(this, rhs: Int): (Int, bool) {
-        mut out: Int;
-        let res = unsafe gcc_intrin::__builtin_mul_overflow(*this, rhs, &raw mut out);
-        (out, res)
+        // unsafe Uninit::assume_init_by(|=this, =rhs, out| {
+        //     unsafe gcc_intrin::__builtin_mul_overflow(*this, rhs, out)
+        // })
+        mut out = Uninit::<Int>::uninit();
+        unsafe {
+            let res = gcc_intrin::__builtin_mul_overflow(*this, rhs, out.as_raw_mut());
+            (out.assume_init(), res)
+        }
     }
 
     $[inline]
@@ -256,7 +272,7 @@ extension<Int: Integral> Int {
     /// `buf`   must have a length of at least size_of::<T> * 8
     ///
     /// Returns the position of the start of the digits within `buf`
-    unsafe fn write_digits(my mut this, buf: [mut u8..], radix: int, upper: bool): uint {
+    unsafe fn write_digits(my mut this, buf: [mut Uninit<u8>..], radix: int, upper: bool): uint {
         static UPPER_DIGITS: *[u8; 36] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
         static LOWER_DIGITS: *[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
 
@@ -275,7 +291,7 @@ extension<Int: Integral> Int {
                 (dividend % radix).cast()
             };
             let digit = (digit < 0 then -digit else digit).cast::<uint>();
-            unsafe *buf.as_raw_mut().add(--pos) = *digits.get_unchecked(digit);
+            unsafe *buf.as_raw_mut().add(--pos) = Uninit::new(*digits.get_unchecked(digit));
         } while this != 0.cast();
 
         pos
@@ -295,9 +311,9 @@ extension<Int: Integral> Int {
     fn format_into(this, f: *mut Formatter, radix: int, prefix: ?str) {
         // TODO: const if
         if std::mem::size_of::<Int>() <= std::mem::size_of::<u128>() {
-            mut buf: [u8; /* std::mem::size_of::<u128>() * 8 */ 128];
-            let start = unsafe this.write_digits(buf.subspan_mut_unchecked(..), radix, f.options().upper);
-            let digits = unsafe str::from_utf8_unchecked(buf.subspan_unchecked(start..));
+            mut buf = Uninit::<[u8; 128]>::uninit();
+            let start = unsafe this.write_digits(buf.as_bytes_mut(), radix, f.options().upper);
+            let digits = unsafe str::from_utf8_unchecked(buf.assume_init_bytes(start..));
             f.pad_integral(negative: this < 0.cast(), digits:, prefix:);
         } else {
             // Don't generate a large stack buffer for small types
@@ -307,9 +323,9 @@ extension<Int: Integral> Int {
 
     $[inline(never)]
     fn format_large(this, f: *mut Formatter, radix: int, prefix: ?str) {
-        mut buf: [u8; /* std::mem::size_of::<u65535>() * 8 */ 65535];
-        let start = unsafe this.write_digits(buf.subspan_mut_unchecked(..), radix, f.options().upper);
-        let digits = unsafe str::from_utf8_unchecked(buf.subspan_unchecked(start..));
+        mut buf = Uninit::<[u8; 65535]>::uninit();
+        let start = unsafe this.write_digits(buf.as_bytes_mut(), radix, f.options().upper);
+        let digits = unsafe str::from_utf8_unchecked(buf.assume_init_bytes(start..));
         f.pad_integral(negative: this < 0.cast(), digits:, prefix:);
     }
 

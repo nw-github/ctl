@@ -36,10 +36,10 @@ pub fn f2d(ieee_mantissa: u32, ieee_exponent: u32): FloatingDecimal32 {
     let mm = m2 * 4 - 1 - mm_shift;
 
     // Step 3: Convert to a decimal power base using 64-bit arithmetic.
-    mut vr: u32;
-    mut vp: u32;
-    mut vm: u32;
-    mut e10: i32;
+    mut vr: u32 = 0;
+    mut vp: u32 = 0;
+    mut vm: u32 = 0;
+    mut e10: i32 = 0;
     mut vm_is_trailing_zeros = false;
     mut vr_is_trailing_zeros = false;
     mut last_removed_digit = 0u8;

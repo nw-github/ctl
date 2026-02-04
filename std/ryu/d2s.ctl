@@ -37,10 +37,10 @@ pub fn d2d(ieee_mantissa: u64, ieee_exponent: u32): FloatingDecimal64 {
     // uint64_t mm = mv - 1 - mm_shift;
 
     // Step 3: Convert to a decimal power base using 128-bit arithmetic.
-    mut vr: u64;
-    mut vp: u64;
-    mut vm: u64;
-    mut e10: i32;
+    mut vr: u64 = 0;
+    mut vp: u64 = 0;
+    mut vm: u64 = 0;
+    mut e10: i32 = 0;
     mut vm_is_trailing_zeros = false;
     mut vr_is_trailing_zeros = false;
     if e2 >= 0 {

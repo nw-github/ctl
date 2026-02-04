@@ -226,6 +226,8 @@ struct DwflResolver {
     }
 
     pub fn resolve(this, mut addr: uint): ?SymbolInfo {
+        use std::mem::Uninit;
+
         let dwfl = this.dwfl?;
 
         mut [lineno, colno] = [0 as c_int; 2];
@@ -234,10 +236,10 @@ struct DwflResolver {
             let file = dwfl_lineinfo(line, &mut addr, &mut lineno, &mut colno, null, null)?;
 
             mut func: ?MaybeMangledName = null;
-            mut sym: Elf64_Sym;
+            mut sym = Uninit::<Elf64_Sym>::uninit();
             mut offs = 0u;
             if dwfl_addrmodule(dwfl, addr) is ?module and
-                dwfl_module_addrinfo(module, addr, &mut offs, &mut sym, null, null, null) is ?sym
+                dwfl_module_addrinfo(module, addr, &mut offs, sym.as_raw_mut(), null, null, null) is ?sym
             {
                 func = MaybeMangledName(func: Span::new(sym.cast(), std::intrin::strlen(sym)));
             }

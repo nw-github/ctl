@@ -1717,13 +1717,8 @@ impl TypeChecker<'_> {
                             return self
                                 .error(Error::must_be_irrefutable("let binding pattern", span));
                         }
-                        if !matches!(patt.data, PatternData::Variable(_)) {
-                            return self.error(Error::new(
-                                "must provide a value with a destructuring assignment",
-                                span,
-                            ));
-                        }
-                        return Some(CStmt::Let(patt.data, None));
+                        return self
+                            .error(Error::new("variable binding must be initialized", span));
                     }
                 } else if let Some(value) = value {
                     let span = patt.span;

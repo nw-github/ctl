@@ -285,6 +285,7 @@ impl TypeGen {
                 }
                 if matches!(types[inner], Type::Fn(_) | Type::FnPtr(_))
                     || inner.can_omit_tag(scopes, types).is_some()
+                    || types[inner].as_user().is_some_and(|ut| scopes.get(ut.id).attrs.layout == Layout::Transparent)
                 {
                     deps.insert(inner);
                 } else if matches!(
@@ -1913,16 +1914,18 @@ impl<'a> Codegen<'a> {
             return;
         }
 
-        self.emit_cast(ty);
-        write_de!(self.buffer, "{{");
-        for (&name, value) in members {
-            let mut value = *value;
-            value.ty = value.ty.with_templates(&self.proj.types, &state.func.ty_args);
-            write_de!(self.buffer, ".{}=", member_name(self.proj, name));
-            self.emit_expr(value, state);
-            write_de!(self.buffer, ",");
-        }
-        write_de!(self.buffer, "}}");
+        tmpbuf_emit!(self, state, |tmp| {
+            self.emit_type(ty);
+            writeln_de!(self.buffer, " {tmp};");
+
+            for (&name, value) in members {
+                let mut value = *value;
+                value.ty = value.ty.with_templates(&self.proj.types, &state.func.ty_args);
+                write_de!(self.buffer, "{tmp}.{}=", member_name(self.proj, name));
+                self.emit_expr(value, state);
+                writeln_de!(self.buffer, ";");
+            }
+        });
     }
 
     fn emit_union_instance(
@@ -3341,7 +3344,7 @@ impl<'a> Codegen<'a> {
 
             let (size, _) = ty.size_and_align(&self.proj.scopes, &self.proj.types);
             write_de!(self.buffer, "CTL_MEMCPY({tmp},&");
-            self.emit_expr_inline(rhs, state);
+            self.emit_expr(rhs, state);
             writeln_de!(self.buffer, ",{size});");
         });
         self.buffer.emit(VOID_INSTANCE);
