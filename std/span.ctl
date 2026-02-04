@@ -261,6 +261,53 @@ pub trait AsSpanMut<T>: AsSpan<T> {
     unsafe fn subspan_mut_unchecked<R: RangeBounds<uint>>(mut this, r: R): [mut T..] => unsafe this.as_span_mut().subspan_mut_unchecked(r);
 }
 
+extension<S: AsSpan<T>, T> *S {
+    impl AsSpan<T> {
+        fn as_span(this): [T..] => (*this).as_span();
+        fn len(this): uint => (*this).len();
+        fn is_empty(this): bool => (*this).is_empty();
+        fn get(this, idx: uint): ?*T => (*this).get(idx);
+        fn subspan<R: RangeBounds<uint>>(this, r: R): ?[T..] => (*this).subspan(r);
+        fn as_raw(this): ^T => (*this).as_raw();
+        fn iter(this): Iter<T> => (*this).iter();
+        fn first(this): ?*T => (*this).first();
+        fn last(this): ?*T => (*this).last();
+        unsafe fn get_unchecked(this, idx: uint): *T => unsafe (*this).get_unchecked(idx);
+        unsafe fn subspan_unchecked<R: RangeBounds<uint>>(this, r: R): [T..] => unsafe (*this).subspan_unchecked(r);
+    }
+}
+
+extension<S: AsSpan<T>, T> *mut S {
+    impl AsSpan<T> {
+        fn as_span(this): [T..] => (*this).as_span();
+        fn len(this): uint => (*this).len();
+        fn is_empty(this): bool => (*this).is_empty();
+        fn get(this, idx: uint): ?*T => (*this).get(idx);
+        fn subspan<R: RangeBounds<uint>>(this, r: R): ?[T..] => (*this).subspan(r);
+        fn as_raw(this): ^T => (*this).as_raw();
+        fn iter(this): Iter<T> => (*this).iter();
+        fn first(this): ?*T => (*this).first();
+        fn last(this): ?*T => (*this).last();
+        unsafe fn get_unchecked(this, idx: uint): *T => unsafe (*this).get_unchecked(idx);
+        unsafe fn subspan_unchecked<R: RangeBounds<uint>>(this, r: R): [T..] => unsafe (*this).subspan_unchecked(r);
+    }
+}
+
+extension<S: AsSpanMut<T>, T> *mut S {
+    impl AsSpanMut<T> {
+        fn as_span_mut(mut this): [mut T..] => (*this).as_span_mut();
+        fn get_mut(mut this, idx: uint): ?*mut T => (*this).get_mut(idx);
+        fn as_raw_mut(mut this): ^mut T => (*this).as_raw_mut();
+        fn iter_mut(mut this): IterMut<T> => (*this).iter_mut();
+        fn first_mut(mut this): ?*mut T => (*this).first_mut();
+        fn last_mut(mut this): ?*mut T => (*this).last_mut();
+        fn fill(mut this, t: T) => (*this).fill(t);
+        fn swap(mut this, a: uint, b: uint) => (*this).swap(a, b);
+        unsafe fn get_mut_unchecked(mut this, idx: uint): ?*mut T => unsafe (*this).get_mut_unchecked(idx);
+        unsafe fn subspan_mut_unchecked<R: RangeBounds<uint>>(mut this, r: R): [mut T..] => unsafe (*this).subspan_mut_unchecked(r);
+    }
+}
+
 // TODO: make these member functions/impls when the syntax allows for it
 
 extension<T: Eq<T>> [T..] {
