@@ -11,9 +11,8 @@ pub union Option<T> {
     pub fn get_or_insert(mut this, rhs: T): *mut T => this is ?val then val else this.insert(rhs);
 
     pub fn insert(mut this, rhs: T): *mut T {
-        // TODO: do this more efficiently without the unwrap
         *this = rhs;
-        this.as_mut()!
+        unsafe this.as_mut().unwrap_unchecked()
     }
 
     pub fn take(mut this): This => std::mem::replace(this, null);
@@ -24,6 +23,14 @@ pub union Option<T> {
     pub fn map<U, F: Fn(T) => U>(my this, f: F): ?U => this is ?val then f(val);
     pub fn and_then<U, F: Fn(T) => ?U>(my this, f: F): ?U => this is ?val then f(val) else null;
     pub fn filter<F: Fn(T) => bool>(my this, f: F): ?T => this is ?val and f(val) then val;
+
+    pub unsafe fn unwrap_unchecked(my this): T {
+        if this is ?inner {
+            inner
+        } else {
+            unsafe std::hint::unreachable_unchecked()
+        }
+    }
 
     impl std::ops::Unwrap<T> {
         fn unwrap(my this): T {
