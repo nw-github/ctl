@@ -102,7 +102,6 @@
 #  define CTL_STRLEN         __builtin_strlen
 #  define CTL_UNLIKELY(expr) __builtin_expect(expr, 0)
 #  define CTL_LIKELY(expr)   __builtin_expect(expr, 1)
-#  define CTL_CLEANUP(func)  __attribute__((cleanup(func)))
 #  if defined(__TINYC__)
 #    define CTL_UNREACHABLE() __asm__ volatile("ud2")
 #  else
@@ -129,6 +128,14 @@
 #    define _BitInt(x) _ExtInt(x)
 #  endif
 
+#endif
+
+#ifdef CTL_HAS_UNWIND
+#  define CTL_CLEANUP(func) __attribute__((cleanup(func)))
+#  define CTL_EXEC_DEFER(func, params)
+#else
+#  define CTL_CLEANUP(func)
+#  define CTL_EXEC_DEFER(func, params) func(&params)
 #endif
 
 #define CTL_COERCE(ty, expr) (expr, *(ty *)0)

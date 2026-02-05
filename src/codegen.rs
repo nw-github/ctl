@@ -900,7 +900,7 @@ pub struct Codegen<'a> {
     arrays: Buffer<'a>,
     defer_buf: Buffer<'a>,
     emitted_vtables: HashSet<Vtable>,
-    defers: Vec<(ScopeId, Vec<Expr>)>,
+    defers: Vec<(ScopeId, Vec<(String, String)>)>,
     tg: TypeGen,
     str_interp: StrInterp,
     source: CachingSourceProvider,
@@ -991,6 +991,10 @@ impl<'a> Codegen<'a> {
         let functions = this.buffer.take();
         if this.proj.conf.build.no_bit_int {
             this.buffer.emit("#define CTL_NOBITINT 1\n");
+        }
+
+        if this.proj.conf.build.panic_unwind {
+            this.buffer.emit("#define CTL_HAS_UNWIND 1\n");
         }
 
         if !this.proj.conf.build.debug_info {
@@ -1268,11 +1272,6 @@ impl<'a> Codegen<'a> {
                 }
             }),
             Stmt::Defer(expr, scope) => {
-                // if !self.proj.conf.build.panic_unwind {
-                // self.defers.last_mut().unwrap().1.push(expr);
-                // return;
-                // }
-
                 let mut expr_buf = Buffer::new(self.proj);
                 let defer_state = usebuf!(self, &mut expr_buf, {
                     let old = self.defer_state.replace(DeferState {
@@ -1336,6 +1335,8 @@ impl<'a> Codegen<'a> {
                     write_de!(self.buffer, ",");
                 }
                 writeln_de!(self.buffer, "}};");
+
+                self.defers.last_mut().unwrap().1.push((fn_name, defer_state.params));
             }
             Stmt::Guard { cond, body } => hoist_point!(self, {
                 write_de!(self.buffer, "if(!(");
@@ -1766,7 +1767,7 @@ impl<'a> Codegen<'a> {
                 } else {
                     format!("return {tmp}")
                 };
-                self.leave_scope(state, &str, self.proj.scopes.get(state.func.id).body_scope);
+                self.leave_scope(&str, self.proj.scopes.get(state.func.id).body_scope);
             }),
             &ExprData::Yield(expr, scope) => never_expr!(self, {
                 write_de!(self.buffer, "{SCOPE_VAR_PREFIX}{scope}=");
@@ -1774,7 +1775,7 @@ impl<'a> Codegen<'a> {
                 writeln_de!(self.buffer, ";");
 
                 // if scope != self.cur_block {
-                self.leave_scope(state, &format!("goto {SCOPE_VAR_PREFIX}{scope}"), scope);
+                self.leave_scope(&format!("goto {SCOPE_VAR_PREFIX}{scope}"), scope);
                 // }
             }),
             &ExprData::Break(expr, scope) => never_expr!(self, {
@@ -1782,16 +1783,16 @@ impl<'a> Codegen<'a> {
                 self.emit_expr_inline(expr, state);
                 writeln_de!(self.buffer, ";");
                 if self.cur_loop == scope {
-                    self.leave_scope(state, "break", scope);
+                    self.leave_scope("break", scope);
                 } else {
-                    self.leave_scope(state, &format!("goto {SCOPE_VAR_PREFIX}{scope}"), scope);
+                    self.leave_scope(&format!("goto {SCOPE_VAR_PREFIX}{scope}"), scope);
                 }
             }),
             &ExprData::Continue(scope) => never_expr!(self, {
                 if self.cur_loop == scope {
-                    self.leave_scope(state, "continue", scope);
+                    self.leave_scope("continue", scope);
                 } else {
-                    self.leave_scope(state, &format!("goto {LOOP_CONT_PREFIX}{scope}"), scope);
+                    self.leave_scope(&format!("goto {LOOP_CONT_PREFIX}{scope}"), scope);
                 }
             }),
             &ExprData::Match { mut scrutinee, ref body, dummy_scope } => {
@@ -2287,7 +2288,6 @@ impl<'a> Codegen<'a> {
                             self.emit_expr_inner(opt, state);
                         });
                         self.leave_scope(
-                            state,
                             &buffer.finish(),
                             self.proj.scopes.get(state.func.id).body_scope,
                         );
@@ -2354,24 +2354,24 @@ impl<'a> Codegen<'a> {
         writeln_de!(self.buffer, ";break;");
     }
 
-    fn leave_scope(&mut self, state: &mut State, exit: &str, scope: ScopeId) {
+    fn leave_scope(&mut self, exit: &str, scope: ScopeId) {
         let mut emitted = false;
-        for i in (0..self.defers.len()).rev() {
-            for j in (0..self.defers[i].1.len()).rev() {
+        for (block_scope, defers) in self.defers.iter().rev() {
+            for (func_name, params_name) in defers.iter().rev() {
                 if !emitted {
-                    write_nm!(self, "/* begin defers {scope:?} */");
+                    write_nm!(self, "/* begin defers {scope:?} */\n");
                     emitted = true;
                 }
 
-                hoist_point!(self, self.emit_expr_stmt(self.defers[i].1[j], state));
+                writeln_de!(self.buffer, "CTL_EXEC_DEFER({func_name}, {params_name});");
             }
 
-            if self.defers[i].0 == scope {
+            if block_scope == &scope {
                 break;
             }
         }
         if emitted {
-            write_nm!(self, "/* end defers {scope:?} */");
+            write_nm!(self, "/* end defers {scope:?} */\n");
         }
         writeln_de!(self.buffer, "{exit};");
     }
@@ -3207,11 +3207,11 @@ impl<'a> Codegen<'a> {
         }
 
         if !defers.is_empty() {
-            write_nm!(self, "/* begin defers {id:?} */");
-            for expr in defers.into_iter().rev() {
-                hoist_point!(self, self.emit_expr_stmt(expr, state));
+            write_nm!(self, "/* begin defers {id:?} */\n");
+            for (func_name, params_name) in defers.into_iter().rev() {
+                writeln_de!(self.buffer, "CTL_EXEC_DEFER({func_name}, {params_name});");
             }
-            write_nm!(self, "/* end defers {id:?} */");
+            write_nm!(self, "/* end defers {id:?} */\n");
         }
     }
 
