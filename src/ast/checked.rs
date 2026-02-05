@@ -99,7 +99,7 @@ impl Default for Pattern {
 pub enum Stmt {
     Expr(Expr),
     Let(PatternData, Option<Expr>),
-    Defer(Expr),
+    Defer(Expr, ScopeId),
     Guard { cond: Expr, body: Expr },
 }
 

@@ -102,6 +102,7 @@
 #  define CTL_STRLEN         __builtin_strlen
 #  define CTL_UNLIKELY(expr) __builtin_expect(expr, 0)
 #  define CTL_LIKELY(expr)   __builtin_expect(expr, 1)
+#  define CTL_CLEANUP(func)  __attribute__((cleanup(func)))
 #  if defined(__TINYC__)
 #    define CTL_UNREACHABLE() __asm__ volatile("ud2")
 #  else

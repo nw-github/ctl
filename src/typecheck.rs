@@ -1740,9 +1740,9 @@ impl TypeChecker<'_> {
                 }
             }
             DStmt::Defer(expr) => {
-                return Some(CStmt::Defer(
-                    self.enter(ScopeKind::Defer, |this| this.check_expr(expr, None)),
-                ));
+                let (scope, expr) = self
+                    .enter(ScopeKind::Defer, |this| (this.current, this.check_expr(expr, None)));
+                return Some(CStmt::Defer(expr, scope));
             }
             DStmt::Guard { cond, body } => {
                 let (cond, vars) = self.check_condition(cond);

@@ -285,7 +285,9 @@ impl TypeGen {
                 }
                 if matches!(types[inner], Type::Fn(_) | Type::FnPtr(_))
                     || inner.can_omit_tag(scopes, types).is_some()
-                    || types[inner].as_user().is_some_and(|ut| scopes.get(ut.id).attrs.layout == Layout::Transparent)
+                    || types[inner]
+                        .as_user()
+                        .is_some_and(|ut| scopes.get(ut.id).attrs.layout == Layout::Transparent)
                 {
                     deps.insert(inner);
                 } else if matches!(
@@ -856,8 +858,9 @@ macro_rules! hoist_point {
 macro_rules! usebuf {
     ($self: expr, $buf: expr, $body: expr) => {{
         std::mem::swap(&mut $self.buffer, $buf);
-        $body;
+        let res = $body;
         std::mem::swap(&mut $self.buffer, $buf);
+        res
     }};
 }
 
@@ -878,6 +881,12 @@ struct Vtable {
     ty: TypeId,
 }
 
+struct DeferState {
+    referenced_vars: HashSet<VariableId>,
+    scope: ScopeId,
+    params: String,
+}
+
 pub struct Codegen<'a> {
     proj: &'a Project,
     buffer: Buffer<'a>,
@@ -889,12 +898,14 @@ pub struct Codegen<'a> {
     cur_loop: ScopeId,
     vtables: Buffer<'a>,
     arrays: Buffer<'a>,
+    defer_buf: Buffer<'a>,
     emitted_vtables: HashSet<Vtable>,
     defers: Vec<(ScopeId, Vec<Expr>)>,
     tg: TypeGen,
     str_interp: StrInterp,
     source: CachingSourceProvider,
     arena: ExprArena,
+    defer_state: Option<DeferState>,
 }
 
 impl<'a> Codegen<'a> {
@@ -920,12 +931,14 @@ impl<'a> Codegen<'a> {
             temporaries: Buffer::new(proj),
             vtables: Buffer::new(proj),
             arrays: Buffer::new(proj),
+            defer_buf: Buffer::new(proj),
             cur_block: Default::default(),
             cur_loop: Default::default(),
             emitted_vtables: Default::default(),
             defers: Default::default(),
             tg: Default::default(),
             source: CachingSourceProvider::new(),
+            defer_state: None,
         };
         let main = this.gen_c_main();
         let mut static_defs = Buffer::new(proj);
@@ -941,7 +954,11 @@ impl<'a> Codegen<'a> {
             emitted_fns.extend(this.funcs.drain());
 
             for mut state in diff {
-                this.emit_fn(&mut state, &mut prototypes);
+                let data = this.emit_fn(&mut state, &mut prototypes);
+                this.buffer.emit(this.defer_buf.take().finish());
+                if let Some(data) = data {
+                    this.buffer.emit(data);
+                }
             }
 
             for var in std::mem::take(&mut this.statics) {
@@ -1153,19 +1170,21 @@ impl<'a> Codegen<'a> {
         });
     }
 
-    fn emit_fn(&mut self, state: &mut State, prototypes: &mut Buffer<'a>) {
+    fn emit_fn(&mut self, state: &mut State, prototypes: &mut Buffer<'a>) -> Option<String> {
         let func = self.proj.scopes.get(state.func.id);
         if func.attrs.macro_name.is_some() {
-            return;
+            return None;
         }
 
         usebuf!(self, prototypes, {
             self.emit_prototype(state, true);
             writeln_de!(self.buffer, ";");
         });
-        if let Some(body) = func.body {
-            let void_return =
-                func.ret.with_templates(&self.proj.types, &state.func.ty_args).is_void_like();
+        let body = func.body?;
+        let void_return =
+            func.ret.with_templates(&self.proj.types, &state.func.ty_args).is_void_like();
+        let mut data = Buffer::new(self.proj);
+        usebuf!(self, &mut data, {
             let (unused, thisptr) = self.emit_prototype(state, false);
             write_de!(self.buffer, "{{");
             for id in unused {
@@ -1209,7 +1228,9 @@ impl<'a> Codegen<'a> {
                     writeln_de!(self.buffer, ";}}");
                 }
             });
-        }
+        });
+
+        Some(data.finish())
     }
 
     fn emit_expr_stmt(&mut self, expr: Expr, state: &mut State) {
@@ -1246,7 +1267,76 @@ impl<'a> Codegen<'a> {
                     self.emit_pattern_bindings(state, &patt, &tmp, ty);
                 }
             }),
-            Stmt::Defer(expr) => self.defers.last_mut().unwrap().1.push(expr),
+            Stmt::Defer(expr, scope) => {
+                // if !self.proj.conf.build.panic_unwind {
+                // self.defers.last_mut().unwrap().1.push(expr);
+                // return;
+                // }
+
+                let mut expr_buf = Buffer::new(self.proj);
+                let defer_state = usebuf!(self, &mut expr_buf, {
+                    let old = self.defer_state.replace(DeferState {
+                        referenced_vars: Default::default(),
+                        scope,
+                        params: state.tmpvar(),
+                    });
+                    hoist_point!(self, self.emit_expr_stmt(expr, state));
+                    std::mem::replace(&mut self.defer_state, old).unwrap()
+                });
+
+                let fn_name = Buffer::format(self.proj, |buf| {
+                    buf.emit_fn_name(&state.func);
+                    write_de!(buf, "$defer{scope}$");
+                });
+
+                let struct_name = format!("{fn_name}params");
+
+                let mut fn_buf = Buffer::new(self.proj);
+                usebuf!(self, &mut fn_buf, {
+                    write_de!(self.buffer, "typedef struct {{");
+                    for &id in defer_state.referenced_vars.iter() {
+                        let ty = self
+                            .proj
+                            .scopes
+                            .get(id)
+                            .ty
+                            .with_templates(&self.proj.types, &state.func.ty_args);
+                        self.emit_type(ty);
+                        let var = self.proj.scopes.get(id);
+                        if !var.mutable {
+                            let mutable = self.proj.types[ty]
+                                .as_user()
+                                .is_some_and(|ut| self.proj.scopes.get(ut.id).interior_mutable);
+                            self.buffer.emit(if !mutable { " const" } else { "/*const*/" });
+                        }
+                        write_de!(self.buffer, "*");
+                        self.emit_var_name(id, state);
+                        writeln_de!(self.buffer, ";");
+                    }
+                    writeln_de!(
+                        self.buffer,
+                        "}} {struct_name};static void {fn_name}(void *data){{{struct_name}*{}=({struct_name}*)data;{}}}",
+                        defer_state.params,
+                        expr_buf.finish(),
+                    );
+                });
+
+                self.defer_buf.emit(fn_buf.finish());
+
+                write_de!(
+                    self.buffer,
+                    "CTL_CLEANUP({fn_name}){struct_name} {}={{",
+                    defer_state.params
+                );
+                for &id in defer_state.referenced_vars.iter() {
+                    write_de!(self.buffer, ".");
+                    self.emit_var_name(id, state);
+                    write_de!(self.buffer, "=&");
+                    self.emit_var_access(id, state);
+                    write_de!(self.buffer, ",");
+                }
+                writeln_de!(self.buffer, "}};");
+            }
             Stmt::Guard { cond, body } => hoist_point!(self, {
                 write_de!(self.buffer, "if(!(");
                 self.emit_expr_inline(cond, state);
@@ -1576,28 +1666,7 @@ impl<'a> Codegen<'a> {
                 self.funcs.insert(State::new(func));
             }
             ExprData::MemFn(mfn) => self.emit_member_fn(state, mfn.clone()),
-            &ExprData::Var(id) => {
-                let var = self.proj.scopes.get(id);
-                match var.kind {
-                    VariableKind::Static => _ = self.statics.insert(id),
-                    VariableKind::Const => {
-                        return self.emit_expr(
-                            var.value.expect("ICE: emitting const with no value"),
-                            state,
-                        );
-                    }
-                    VariableKind::Normal => {}
-                    VariableKind::Capture => {
-                        // TODO: use the actual VariableId for the current `this`
-                        return write_de!(
-                            self.buffer,
-                            "$this->{}",
-                            member_name(self.proj, var.name.data)
-                        );
-                    }
-                }
-                self.emit_var_name(id, state);
-            }
+            &ExprData::Var(id) => self.emit_var_access(id, state),
             ExprData::Instance(members) => self.emit_instance(state, expr.ty, &members.clone()),
             ExprData::VariantInstance(name, members) => {
                 self.emit_union_instance(state, expr.ty, *name, &members.clone())
@@ -3837,6 +3906,53 @@ impl<'a> Codegen<'a> {
         hoist!(self, self.emit_bitfield_write(&source, ut, member, member_ty, &copy));
 
         self.buffer.emit(result);
+    }
+
+    fn emit_var_access(&mut self, id: VariableId, state: &mut State) {
+        let var = self.proj.scopes.get(id);
+        let mut is_local = false;
+        let mut this_ptr = None;
+        match var.kind {
+            VariableKind::Static => _ = self.statics.insert(id),
+            VariableKind::Const => {
+                return self
+                    .emit_expr(var.value.expect("ICE: emitting const with no value"), state);
+            }
+            VariableKind::Normal => is_local = true,
+            VariableKind::Capture => {
+                is_local = true;
+                this_ptr = Some(
+                    *self.proj.scopes.get(state.func.id).params[0]
+                        .patt
+                        .as_checked()
+                        .unwrap()
+                        .as_variable()
+                        .unwrap(),
+                );
+            }
+        }
+
+        if is_local
+            && let Some(defer_state) = &mut self.defer_state
+            && !self.proj.scopes.is_child_of(var.scope, defer_state.scope)
+        {
+            write_de!(self.buffer, "(*{}->", defer_state.params);
+            if let Some(this_ptr) = this_ptr {
+                defer_state.referenced_vars.insert(this_ptr);
+                self.emit_var_name(this_ptr, state);
+                write_de!(self.buffer, ")");
+                write_de!(self.buffer, "->{}", member_name(self.proj, var.name.data));
+            } else {
+                defer_state.referenced_vars.insert(id);
+                self.emit_var_name(id, state);
+                write_de!(self.buffer, ")");
+            }
+        } else if let Some(this_ptr) = this_ptr {
+            self.emit_var_name(this_ptr, state);
+            write_de!(self.buffer, "->{}", member_name(self.proj, var.name.data));
+        } else {
+            self.emit_var_name(id, state);
+        }
     }
 }
 

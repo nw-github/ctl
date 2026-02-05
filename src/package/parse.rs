@@ -23,6 +23,7 @@ pub struct Dependency {
 #[derive(Debug, Clone)]
 pub struct Build {
     pub overflow_checks: bool,
+    pub panic_unwind: bool,
     pub dir: PathBuf,
     pub opt_level: usize,
     pub debug_info: bool,
@@ -42,6 +43,7 @@ impl Build {
             no_gc: false,
             no_bit_int: false,
             minify: false,
+            panic_unwind: true,
         }
     }
 
@@ -54,6 +56,7 @@ impl Build {
             no_gc: false,
             no_bit_int: false,
             minify: false,
+            panic_unwind: true,
         }
     }
 }
@@ -213,6 +216,7 @@ impl Config {
             no_gc: build_prop!(config, base, fallback, no_gc),
             no_bit_int: build_prop!(config, base, fallback, no_bit_int),
             minify: false,
+            panic_unwind: true,
         };
 
         Ok((Self { module, libs, deps }, build))

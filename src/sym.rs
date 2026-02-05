@@ -636,6 +636,10 @@ impl Scopes {
         self.traits.iter().enumerate().map(|(i, ut)| (TraitId(i), ut))
     }
 
+    pub fn is_child_of(&self, child: ScopeId, parent: ScopeId) -> bool {
+        self.walk(child).any(|(id, _)| id == parent)
+    }
+
     pub fn get_option_id(&self) -> Option<UserTypeId> {
         self.lang_types.get(&LangType::Option).copied()
     }
