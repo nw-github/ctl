@@ -315,23 +315,23 @@ pub unsafe fn backtrace<F: Fn(uint) => bool>(f: F, kw start_pc: ?uint = null): b
             let state: ^mut State<F> = unsafe std::mem::bit_cast(user);
             let pc = unsafe _Unwind_GetIP(ctx);
             if pc == 0 {
-                return :_URC_NO_REASON;
+                return _URC_NO_REASON;
             }
 
             let state = unsafe &mut *state;
             if state.ignore_until is ?start_pc {
                 if start_pc != pc {
-                    return :_URC_NO_REASON;
+                    return _URC_NO_REASON;
                 }
 
                 state.ignore_until = null;
             }
 
             if !(state.callback)(pc) {
-                return :_URC_END_OF_STACK;
+                return _URC_END_OF_STACK;
             }
 
-            :_URC_NO_REASON
+            _URC_NO_REASON
         }
 
         mut state = State(ignore_until: start_pc, callback: f);

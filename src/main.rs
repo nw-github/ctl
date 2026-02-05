@@ -224,6 +224,7 @@ fn compile_results(
         .args(build.ccargs.unwrap_or_default().split(' ').filter(|f| !f.is_empty()))
         .arg(format!("-O{}", conf.build.opt_level))
         .args(conf.build.debug_info.then_some(debug_flags).into_iter().flatten())
+        .args(conf.build.panic_unwind.then_some("-fexceptions"))
         .args(conf.libs.into_iter().map(|lib| match lib {
             ctl::package::Lib::Name(name) => OsString::from(format!("-l{name}")),
             ctl::package::Lib::Path(path) => path.into_os_string(),

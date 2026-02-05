@@ -404,9 +404,9 @@ extension u16 {
     pub fn from_ne_bytes(bytes: [u8; size_of::<This>()]): This => unsafe bit_cast(bytes);
     pub fn from_be_bytes(bytes: [u8; size_of::<This>()]): This => This::from_le_bytes(bytes).swap_bytes();
 
-    pub fn to_le_bytes(my this): [u8; std::mem::size_of::<This>()] => unsafe std::mem::bit_cast(this);
-    pub fn to_ne_bytes(my this): [u8; std::mem::size_of::<This>()] => unsafe std::mem::bit_cast(this);
-    pub fn to_be_bytes(my this): [u8; std::mem::size_of::<This>()] => unsafe std::mem::bit_cast(this.swap_bytes());
+    pub fn to_le_bytes(my this): [u8; size_of::<This>()] => unsafe bit_cast(this);
+    pub fn to_ne_bytes(my this): [u8; size_of::<This>()] => unsafe bit_cast(this);
+    pub fn to_be_bytes(my this): [u8; size_of::<This>()] => unsafe bit_cast(this.swap_bytes());
 }
 
 extension u32 {
@@ -415,9 +415,19 @@ extension u32 {
     pub fn from_ne_bytes(bytes: [u8; size_of::<This>()]): This => unsafe bit_cast(bytes);
     pub fn from_be_bytes(bytes: [u8; size_of::<This>()]): This => This::from_le_bytes(bytes).swap_bytes();
 
-    pub fn to_le_bytes(my this): [u8; std::mem::size_of::<This>()] => unsafe std::mem::bit_cast(this);
-    pub fn to_ne_bytes(my this): [u8; std::mem::size_of::<This>()] => unsafe std::mem::bit_cast(this);
-    pub fn to_be_bytes(my this): [u8; std::mem::size_of::<This>()] => unsafe std::mem::bit_cast(this.swap_bytes());
+    pub fn to_le_bytes(my this): [u8; size_of::<This>()] => unsafe bit_cast(this);
+    pub fn to_ne_bytes(my this): [u8; size_of::<This>()] => unsafe bit_cast(this);
+    pub fn to_be_bytes(my this): [u8; size_of::<This>()] => unsafe bit_cast(this.swap_bytes());
+}
+
+extension u64 {
+    pub fn from_le_bytes(bytes: [u8; size_of::<This>()]): This => unsafe bit_cast(bytes);
+    pub fn from_ne_bytes(bytes: [u8; size_of::<This>()]): This => unsafe bit_cast(bytes);
+    pub fn from_be_bytes(bytes: [u8; size_of::<This>()]): This => This::from_le_bytes(bytes).swap_bytes();
+
+    pub fn to_le_bytes(my this): [u8; size_of::<This>()] => unsafe bit_cast(this);
+    pub fn to_ne_bytes(my this): [u8; size_of::<This>()] => unsafe bit_cast(this);
+    pub fn to_be_bytes(my this): [u8; size_of::<This>()] => unsafe bit_cast(this.swap_bytes());
 }
 
 extension uint {
@@ -425,9 +435,9 @@ extension uint {
     pub fn from_ne_bytes(bytes: [u8; size_of::<This>()]): This => unsafe bit_cast(bytes);
     pub fn from_be_bytes(bytes: [u8; size_of::<This>()]): This => This::from_le_bytes(bytes).swap_bytes();
 
-    pub fn to_le_bytes(my this): [u8; std::mem::size_of::<This>()] => unsafe std::mem::bit_cast(this);
-    pub fn to_ne_bytes(my this): [u8; std::mem::size_of::<This>()] => unsafe std::mem::bit_cast(this);
-    pub fn to_be_bytes(my this): [u8; std::mem::size_of::<This>()] => unsafe std::mem::bit_cast(this.swap_bytes());
+    pub fn to_le_bytes(my this): [u8; size_of::<This>()] => unsafe bit_cast(this);
+    pub fn to_ne_bytes(my this): [u8; size_of::<This>()] => unsafe bit_cast(this);
+    pub fn to_be_bytes(my this): [u8; size_of::<This>()] => unsafe bit_cast(this.swap_bytes());
 
     $[intrinsic(numeric_cast)]
     pub fn to_raw<T>(my this): ^T => This::to_raw(this);
@@ -441,9 +451,9 @@ extension int {
     pub fn from_ne_bytes(bytes: [u8; size_of::<This>()]): This => unsafe bit_cast(bytes);
     pub fn from_be_bytes(bytes: [u8; size_of::<This>()]): This => This::from_le_bytes(bytes).swap_bytes();
 
-    pub fn to_le_bytes(my this): [u8; std::mem::size_of::<This>()] => unsafe std::mem::bit_cast(this);
-    pub fn to_ne_bytes(my this): [u8; std::mem::size_of::<This>()] => unsafe std::mem::bit_cast(this);
-    pub fn to_be_bytes(my this): [u8; std::mem::size_of::<This>()] => unsafe std::mem::bit_cast(this.swap_bytes());
+    pub fn to_le_bytes(my this): [u8; size_of::<This>()] => unsafe bit_cast(this);
+    pub fn to_ne_bytes(my this): [u8; size_of::<This>()] => unsafe bit_cast(this);
+    pub fn to_be_bytes(my this): [u8; size_of::<This>()] => unsafe bit_cast(this.swap_bytes());
 
     $[intrinsic(numeric_cast)]
     pub fn to_raw<T>(my this): ^T => This::to_raw(this);

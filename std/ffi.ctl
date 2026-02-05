@@ -5,6 +5,8 @@ pub mod types {
     pub type c_long      = i64;
     pub type c_longlong  = i64;
 
+    pub type c_enum      = i32;
+
     pub type c_uchar     = u8;
     pub type c_ushort    = u16;
     pub type c_uint      = u32;

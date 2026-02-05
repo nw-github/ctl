@@ -1,5 +1,5 @@
 use std::fmt::*;
-use std::deps::libc;
+use std::deps::{libc, libunwind as uw};
 
 pub struct SourceLocation {
     pub file: str,
@@ -58,13 +58,19 @@ pub fn debug_assert(_cond: bool, _msg: ?Arguments = null, _loc: *SL = SL::here()
 }
 
 $[thread_local, feature(hosted)]
-static mut CTL_PANIC_JMPBUF: ?libc::JmpBuf = null;
+static mut CTL_PANIC_JMPBUF: ?(libc::JmpBuf, ?^mut void) = null;
 
 $[thread_local, feature(hosted)]
 static mut CTL_PANIC_INFO: str = "";
 
 $[thread_local, feature(hosted)]
 static mut IS_PANICKING: bool = false;
+
+$[thread_local, feature(hosted)]
+static mut CTL_DUMMY_EXCEPTION: uw::_Unwind_Exception = uw::_Unwind_Exception(
+    class: u64::from_le_bytes(*b"CTL\0\0\0NW"),
+    cleanup: |_, _| {},
+);
 
 pub struct PanicInfo {
     args: Arguments,
@@ -83,17 +89,34 @@ pub struct PanicInfo {
 
 $[panic_handler, feature(hosted, io)]
 fn panic_handler(info: *PanicInfo): never {
-    if unsafe IS_PANICKING {
+    unsafe if std::mem::replace(&mut IS_PANICKING, true) {
         eprintln("During the execution of the panic_handler, this panic occured:\n{info}");
-        unsafe libc::abort();
+        libc::abort();
     }
 
-    unsafe {
-        IS_PANICKING = true;
-        if &mut CTL_PANIC_JMPBUF is ?jmp_buf {
-            CTL_PANIC_INFO = info.to_str();
-            libc::longjmp(jmp_buf, 1);
-        }
+    $[cfg("!ctl:panic-abort")]
+    unsafe if &mut CTL_PANIC_JMPBUF is ?data {
+        CTL_PANIC_INFO = info.to_str();
+
+        $[cfg("!ctl:panic-unwind")]
+        libc::longjmp(&mut data.0, 1);
+
+        $[cfg("ctl:panic-unwind")]
+        uw::_Unwind_ForcedUnwind(&mut CTL_DUMMY_EXCEPTION, user: null, |_, act, _, _, ctx, _| {
+            assert(act & uw::_UA_FORCE_UNWIND != 0);
+            assert(act & uw::_UA_END_OF_STACK == 0);
+
+            unsafe {
+                let fp = uw::_Unwind_GetGR(ctx, uw::GR_FRAME_PTR).to_raw_mut::<void>();
+                if &mut CTL_PANIC_JMPBUF is ?(jmp_buf, saved_fp) and saved_fp == ?fp {
+                    libc::longjmp(jmp_buf, 1);
+                }
+            }
+
+            uw::_URC_NO_REASON
+        });
+
+        unreachable();
     }
 
     eprintln(info);
@@ -114,22 +137,26 @@ fn panic_handler(info: *PanicInfo): never {
 
 $[feature(hosted)]
 pub fn catch_panic<F: Fn() => R, R>(func: F): Result<R, str> {
-    let (prev_buf, was_panicking) = unsafe (CTL_PANIC_JMPBUF.take(), IS_PANICKING);
-    let buf = unsafe CTL_PANIC_JMPBUF.insert(std::mem::zeroed());
-    // TODO: Make this an intrinsic so that we use the macro and follow the very specific semantics
-    // of setjmp
-    let res: Result<R, str> = match unsafe libc::_setjmp(buf) {
-        0 => Ok(func()),
-        _ => Err(unsafe CTL_PANIC_INFO),
-    };
-
+    $[cfg("!ctl:panic-abort")]
     unsafe {
-        IS_PANICKING = was_panicking;
-        CTL_PANIC_INFO = "";
-        CTL_PANIC_JMPBUF = prev_buf;
+        let (prev_buf, was_panicking) = (CTL_PANIC_JMPBUF.take(), IS_PANICKING);
+        let buf = CTL_PANIC_JMPBUF.insert((std::mem::zeroed(), std::intrin::current_frame_addr()));
+        defer {
+            IS_PANICKING = was_panicking;
+            CTL_PANIC_JMPBUF = prev_buf;
+            CTL_PANIC_INFO = "";
+        }
+
+        // TODO: Make this an intrinsic so that we use the macro and follow the very specific
+        // semantics of setjmp
+        return match libc::_setjmp(&mut buf.0) {
+            0 => Ok(func()),
+            _ => Err(CTL_PANIC_INFO),
+        };
     }
 
-    res
+    $[cfg("ctl:panic-abort")]
+    return Ok(func());
 }
 
 extension std::bt::Resolver {
