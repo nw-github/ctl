@@ -488,6 +488,7 @@ pub enum Intrinsic {
     InvokeWithTuple,
     VTableOf,
     InstancePtrOf,
+    CurrentFrameAddr,
 }
 
 impl Intrinsic {
@@ -516,6 +517,7 @@ impl Intrinsic {
             "invoke_with_tuple" => Some(Self::InvokeWithTuple),
             "vtable_of" => Some(Self::VTableOf),
             "instance_ptr_of" => Some(Self::InstancePtrOf),
+            "current_frame_addr" => Some(Self::CurrentFrameAddr),
             _ => None,
         }
     }

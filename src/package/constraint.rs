@@ -48,6 +48,8 @@ pub enum CompilerOption {
     NoOverflowChecks,
     Debug,
     Release,
+    PanicUnwind,
+    PanicAbort
 }
 
 /*
@@ -102,6 +104,8 @@ impl Constraint {
                 CompilerOption::NoOverflowChecks => arg.no_overflow_checks.get(),
                 CompilerOption::Debug => !arg.release,
                 CompilerOption::Release => arg.release,
+                CompilerOption::PanicAbort => false,
+                CompilerOption::PanicUnwind => true,
             },
             // TODO: above constraints
             _ => true,

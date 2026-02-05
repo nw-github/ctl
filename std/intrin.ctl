@@ -51,6 +51,8 @@ pub extern fn vtable_of<T: DynPtr>(ptr: T): [unsafe fn()..];
 $[intrinsic]
 pub extern fn instance_ptr_of<T: DynPtr>(ptr: T): ^mut void;
 
+$[intrinsic]
+pub extern fn current_frame_addr(): ?^mut void;
 
 $[c_macro("CTL_MEMSET")]
 pub extern fn memset(dst: ^mut void, c: c_int, len: uint): ^mut void;

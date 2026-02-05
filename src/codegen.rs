@@ -2726,6 +2726,9 @@ impl<'a> Codegen<'a> {
                 self.buffer.emit_vtable_prefix(tr);
                 write_de!(self.buffer, "{VTABLE_TRAIT_LEN}}}");
             }
+            Intrinsic::CurrentFrameAddr => {
+                writeln_de!(self.buffer, "__builtin_frame_address(0)")
+            }
         }
     }
 
