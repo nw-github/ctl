@@ -2,12 +2,15 @@ use std::cell::Cell;
 
 use serde::de::{self, Deserialize, Deserializer};
 
+use crate::package::raw::PanicMode;
+
 #[derive(Debug, Default, Clone)]
 pub struct ConstraintArgs {
     pub release: bool,
     pub no_gc: Cell<bool>,
     pub no_overflow_checks: Cell<bool>,
     pub no_std: bool,
+    pub panic_mode: PanicMode,
 }
 
 #[derive(serde::Deserialize, Debug, PartialEq, Eq)]
@@ -49,7 +52,8 @@ pub enum CompilerOption {
     Debug,
     Release,
     PanicUnwind,
-    PanicAbort
+    PanicAbort,
+    PanicSjlj,
 }
 
 /*
@@ -104,8 +108,9 @@ impl Constraint {
                 CompilerOption::NoOverflowChecks => arg.no_overflow_checks.get(),
                 CompilerOption::Debug => !arg.release,
                 CompilerOption::Release => arg.release,
-                CompilerOption::PanicAbort => false,
-                CompilerOption::PanicUnwind => true,
+                CompilerOption::PanicAbort => arg.panic_mode.is_abort(),
+                CompilerOption::PanicUnwind => arg.panic_mode.is_unwind(),
+                CompilerOption::PanicSjlj => arg.panic_mode.is_sjlj(),
             },
             // TODO: above constraints
             _ => true,

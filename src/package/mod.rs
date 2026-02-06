@@ -10,7 +10,7 @@ use std::{
 
 pub use constraint::{Constraint, ConstraintArgs};
 use parse::Config;
-pub use parse::{Build, Module};
+pub use parse::{Build, Module, PanicMode};
 
 use crate::{
     ds::{Dependencies, DependencyGraph},
@@ -109,6 +109,7 @@ impl Project {
                 if args.release { Build::default_release() } else { Build::default_debug() };
             build.no_gc = args.no_gc.get();
             build.overflow_checks = !args.no_overflow_checks.get();
+            build.panic_mode = args.panic_mode;
 
             (config, Some(build))
         } else {

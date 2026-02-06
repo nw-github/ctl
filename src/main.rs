@@ -28,6 +28,9 @@ struct Arguments {
     #[clap(action, short = 'g', long, global = true)]
     no_gc: bool,
 
+    #[clap(short = 'P', long, global = true)]
+    panic_mode: Option<ctl::package::PanicMode>,
+
     /// Compile without using _BitInt/_ExtInt. All integer types will use the type with the nearest
     /// power of two bit count. TODO: proper arithmetic wrapping in this mode
     #[clap(action, short = 'i', long, global = true)]
@@ -224,7 +227,8 @@ fn compile_results(
         .args(build.ccargs.unwrap_or_default().split(' ').filter(|f| !f.is_empty()))
         .arg(format!("-O{}", conf.build.opt_level))
         .args(conf.build.debug_info.then_some(debug_flags).into_iter().flatten())
-        .args(conf.build.panic_unwind.then_some("-fexceptions"))
+        .args(conf.build.panic_mode.is_unwind().then_some("-fexceptions"))
+        .args(conf.args.release.then_some("-DNDEBUG"))
         .args(conf.libs.into_iter().map(|lib| match lib {
             ctl::package::Lib::Name(name) => OsString::from(format!("-l{name}")),
             ctl::package::Lib::Path(path) => path.into_os_string(),
@@ -418,7 +422,8 @@ fn main() -> Result<()> {
             release: args.command.as_build_args().is_some_and(|b| b.release),
             no_std: args.no_std,
             no_gc: args.no_gc.into(),
-            ..Default::default()
+            panic_mode: args.panic_mode.unwrap_or_default(),
+            no_overflow_checks: Default::default(),
         },
     };
 

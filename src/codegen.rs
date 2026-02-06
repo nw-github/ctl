@@ -993,7 +993,7 @@ impl<'a> Codegen<'a> {
             this.buffer.emit("#define CTL_NOBITINT 1\n");
         }
 
-        if this.proj.conf.build.panic_unwind {
+        if this.proj.conf.build.panic_mode.is_unwind() {
             this.buffer.emit("#define CTL_HAS_UNWIND 1\n");
         }
 
