@@ -89,9 +89,9 @@ static mut CTL_DUMMY_EXCEPTION: uw::_Unwind_Exception = uw::_Unwind_Exception(
 
 $[panic_handler, feature(hosted, io)]
 fn panic_handler(info: *PanicInfo): never {
-    unsafe if std::mem::replace(&mut IS_PANICKING, true) {
+    if std::mem::replace(unsafe &mut IS_PANICKING, true) {
         eprintln("During the execution of the panic_handler, this panic occured:\n{info}");
-        libc::abort();
+        std::proc::abort();
     }
 
     $[cfg("!ctl:panic-abort")]
@@ -120,19 +120,7 @@ fn panic_handler(info: *PanicInfo): never {
     }
 
     eprintln(info);
-    if std::bt::Resolver::new() is ?mut resolver {
-        defer resolver.deinit();
-        unsafe std::bt::backtrace(|&resolver, =mut i = 0u, pc| {
-            if i != 0 {
-                resolver.print_bt_line(i, pc);
-            }
-
-            i++;
-            true
-        });
-    }
-
-    unsafe libc::abort();
+    std::proc::abort();
 }
 
 $[feature(hosted)]
@@ -157,16 +145,4 @@ pub fn catch_panic<F: Fn() => R, R>(func: F): Result<R, str> {
 
     $[cfg("ctl:panic-abort")]
     return Ok(func());
-}
-
-extension std::bt::Resolver {
-    // TODO: this should be package-public
-    pub fn print_bt_line(this, i: uint, addr: uint) {
-        if this.resolve(addr) is ?{func, file, line, col, offs} {
-            let func = func ?? std::bt::MaybeMangledName::from_str("??");
-            eprintln("{i:>5}: {func} + {offs:#x} [{addr:#x}]\n{"":<8}at {file ?? "??"}:{line}:{col}");
-        } else {
-            eprintln("{i:>5}: ?? [{addr:#x}]");
-        }
-    }
 }

@@ -44,6 +44,22 @@ pub trait Iterator<T> {
         true
     }
 
+    fn find<F: Fn(*T) => bool>(mut this, f: F): ?T {
+        while this.next() is ?next {
+            if f(&next) {
+                break next;
+            }
+        }
+    }
+
+    fn find_map<F: Fn(*T) => ?U, U>(mut this, f: F): ?U {
+        while this.next() is ?next {
+            if f(&next) is ?val {
+                break val;
+            }
+        }
+    }
+
     fn position<F: Fn(T) => bool>(mut this, f: F): ?uint {
         mut idx = 0u;
         while this.next() is ?next {

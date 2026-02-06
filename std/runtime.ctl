@@ -23,6 +23,11 @@ extern fn deinit() {
     unsafe libgc::GC_deinit();
 }
 
+fn eprintln_unlocked<T: std::fmt::Format>(fmt: T) {
+    // Unlocked write to Stderr uses only the write() syscall
+    writeln(&mut std::io::Stderr(), fmt);
+}
+
 $[feature(backtrace)]
 fn install_fault_handler() {
     use libc::{posix::*, linux};
@@ -46,51 +51,61 @@ fn install_fault_handler() {
             }
         }
 
+        static SIGNALS: [(c_int, str); 5] = [
+            (SIGABRT, "SIGABRT"),
+            (SIGSEGV, "SIGSEGV"),
+            (SIGFPE, "SIGFPE"),
+            (SIGILL, "SIGILL"),
+            (SIGBUS, "SIGBUS"),
+        ];
+
         mut sa: sigaction = std::mem::zeroed();
         sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
-        sa.__sigaction_handler.sa_sigaction = ?|sig, info, ctx| => unsafe {
-            let name = sig == SIGSEGV then "SIGSEGV"
-                else sig == SIGFPE then "SIGFPE"
-                else sig == SIGILL then "SIGILL"
-                else sig == SIGBUS then "SIGBUS";
-            let fault_addr = info is ?info then (*info)._sifields._sigfault.si_addr else null;
-            let fault_addr: uint = std::mem::bit_cast(fault_addr);
+        sa.__sigaction_handler.sa_sigaction = ?|sig, info, ctx| unsafe {
+            defer libc::_exit(128i32.wrapping_add(sig.cast()));
 
-            // Unlocked write to Stderr uses only the write() syscall
-            writeln(
-                &mut std::io::Stderr(),
-                "Received signal {sig} ({name ?? "??"}), fault address: {fault_addr:#x}",
-            );
+            if sig != SIGABRT {
+                let name = SIGNALS.iter().find_map(|=sig, (v, name)| v == sig then *name) ?? "??";
+                let fault_addr = info is ?info then (*info)._sifields._sigfault.si_addr else null;
+                let fault_addr: uint = std::mem::bit_cast(fault_addr);
+                eprintln_unlocked("Received signal {sig} ({name}), fault address: {fault_addr:#x}");
 
-            let pid = fork();
-            if pid != 0 {
-                if pid > 0 {
-                    waitpid(pid, null, 0);
+                let pid = fork();
+                if pid != 0 {
+                    if pid > 0 {
+                        waitpid(pid, null, 0);
+                    }
+                    return;
                 }
-                std::proc::exit(128u32.wrapping_add(sig.cast()));
+            } else {
+                eprintln_unlocked("Received signal {sig} (SIGABRT)");
             }
 
-            if ctx is ?ctx and std::bt::Resolver::new() is ?mut resolver {
-                defer resolver.deinit();
-
-                let regs = &(*ctx.cast::<linux::ucontext_t>()).uc_mcontext.gregs;
-                let start_pc: uint = std::mem::bit_cast(regs[linux::REG_RIP as c_int]);
-                std::bt::backtrace(start_pc:, |&resolver, =mut i = 0u, pc| {
-                    resolver.print_bt_line(i++, pc);
-                    true
-                });
+            guard ctx is ?ctx and std::bt::Resolver::new() is ?mut resolver else {
+                return;
             }
+            defer resolver.deinit();
 
-            std::proc::exit(0);
+            let regs = &(*ctx.cast::<linux::ucontext_t>()).uc_mcontext.gregs;
+            let start_pc: uint = std::mem::bit_cast(regs[linux::REG_RIP as c_int]);
+            std::bt::backtrace(start_pc:, |&resolver, =mut i = 0u, pc| {
+                defer i++;
+                if resolver.resolve(pc) is ?{func, file, line, col, offs} {
+                    let func = func ?? std::bt::MaybeMangledName::from_str("??");
+                    eprintln_unlocked("{i:>5}: {func} + {offs:#x} [{pc:#x}]");
+                    eprintln_unlocked("{"":<8}at {file ?? "??"}:{line}:{col}");
+                } else {
+                    eprintln_unlocked("{i:>5}: ?? [{pc:#x}]");
+                }
+                true
+            });
         };
 
         sigemptyset(&mut sa.sa_mask);
-        if sigaction_(SIGSEGV, &sa, null) == -1
-            or sigaction_(SIGBUS, &sa, null) == -1
-            or sigaction_(SIGILL, &sa, null) == -1
-            or sigaction_(SIGFPE, &sa, null) == -1
-        {
-            perror("sigaction\0".as_raw().cast());
+        for (signal, _) in SIGNALS.iter() {
+            if sigaction_(*signal, &sa, null) == -1 {
+                perror("sigaction\0".as_raw().cast());
+            }
         }
     }
 }

@@ -7,6 +7,7 @@ pub struct JmpBuf {
 
 pub extern fn abort(): never;
 pub extern fn exit(code: c_int): never;
+pub extern fn _exit(code: c_int): never;
 
 $[unsafe(malloc)]
 pub extern fn malloc(size: uint): ?^mut void;
@@ -235,6 +236,7 @@ pub mod posix {
     pub const SA_ONSTACK: c_int = 0x08000000;
 
     pub const SIGILL: c_int = 4;
+    pub const SIGABRT: c_int = 6;
     pub const SIGBUS: c_int = 7;
     pub const SIGFPE: c_int = 8;
     pub const SIGSEGV: c_int = 11;
