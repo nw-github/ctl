@@ -25,13 +25,6 @@ macro_rules! write_if {
     }};
 }
 
-#[macro_export]
-macro_rules! write_nm {
-    ($self: expr, $($arg:tt)*) => {
-        write_if!(!$self.proj.conf.build.minify, $self.buffer, $($arg)*)
-    };
-}
-
 const UNION_TAG_NAME: &str = "$tag";
 const ARRAY_DATA_NAME: &str = "data";
 const VOID_INSTANCE: &str = "CTL_VOID_INST";
@@ -1698,14 +1691,14 @@ impl<'a> Codegen<'a> {
             }
             ExprData::Block(block) => enter_block!(self, block.scope, expr.ty, |name| {
                 let yields = block.is_yielding(&self.proj.scopes);
-                write_nm!(self, "{{");
+                write_de!(self.buffer, "{{");
                 self.emit_block(block.clone(), state);
                 if !yields {
                     writeln_de!(self.buffer, "{name}={VOID_INSTANCE};");
                 } else {
                     writeln_de!(self.buffer, "{name}:;");
                 }
-                write_nm!(self, "}}");
+                write_de!(self.buffer, "}}");
             }),
             &ExprData::If { cond, if_branch, else_branch, dummy_scope } => {
                 enter_block!(self, dummy_scope, expr.ty, |name| {
