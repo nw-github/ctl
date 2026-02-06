@@ -2484,7 +2484,7 @@ impl TypeChecker<'_> {
 
             checked_params.push(CheckedParam {
                 keyword: false,
-                label: name,
+                label: self.proj.strings.get_or_intern(format!("$unnamed{i}")),
                 ty,
                 patt: ParamPattern::Checked(patt.data),
                 default: None,

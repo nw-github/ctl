@@ -967,6 +967,10 @@ impl<'a> Codegen<'a> {
                 }
 
                 this.proj.static_deps.dfs(var, &mut emitted_statics, |id| {
+                    if this.proj.scopes.get(id).kind.is_const() {
+                        return;
+                    }
+
                     usebuf!(this, &mut static_defs, {
                         this.emit_var_decl(id, static_state);
                         writeln_de!(this.buffer, ";");
