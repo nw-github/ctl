@@ -382,59 +382,59 @@ pub struct Param {
 
 #[derive(Clone, Copy, derive_more::Display)]
 pub enum OperatorFnType {
-    #[display(fmt = "+")]
+    #[display("+")]
     Plus,
-    #[display(fmt = "-")]
+    #[display("-")]
     Minus,
-    #[display(fmt = "*")]
+    #[display("*")]
     Mul,
-    #[display(fmt = "/")]
+    #[display("/")]
     Div,
-    #[display(fmt = "%")]
+    #[display("%")]
     Rem,
-    #[display(fmt = "&")]
+    #[display("&")]
     BitAnd,
-    #[display(fmt = "|")]
+    #[display("|")]
     BitOr,
-    #[display(fmt = "^")]
+    #[display("^")]
     Xor,
-    #[display(fmt = "<<")]
+    #[display("<<")]
     Shl,
-    #[display(fmt = ">>")]
+    #[display(">>")]
     Shr,
-    #[display(fmt = "==")]
+    #[display("==")]
     Eq,
-    #[display(fmt = "<=>")]
+    #[display("<=>")]
     Cmp,
-    #[display(fmt = "++")]
+    #[display("++")]
     Increment,
-    #[display(fmt = "--")]
+    #[display("--")]
     Decrement,
-    #[display(fmt = "!")]
+    #[display("!")]
     Bang,
-    #[display(fmt = "[]")]
+    #[display("[]")]
     Subscript,
-    #[display(fmt = "[]=")]
+    #[display("[]=")]
     SubscriptAssign,
-    #[display(fmt = "+=")]
+    #[display("+=")]
     AddAssign,
-    #[display(fmt = "-=")]
+    #[display("-=")]
     SubAssign,
-    #[display(fmt = "*=")]
+    #[display("*=")]
     MulAssign,
-    #[display(fmt = "/=")]
+    #[display("/=")]
     DivAssign,
-    #[display(fmt = "%=")]
+    #[display("%=")]
     RemAssign,
-    #[display(fmt = "&=")]
+    #[display("&=")]
     BitAndAssign,
-    #[display(fmt = "|=")]
+    #[display("|=")]
     BitOrAssign,
-    #[display(fmt = "^=")]
+    #[display("^=")]
     XorAssign,
-    #[display(fmt = "<<=")]
+    #[display("<<=")]
     ShlAssign,
-    #[display(fmt = ">>=")]
+    #[display(">>=")]
     ShrAssign,
 }
 

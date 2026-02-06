@@ -63,69 +63,69 @@ impl Attributes {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display, Hash)]
 pub enum BinaryOp {
-    #[display(fmt = "+")]
+    #[display("+")]
     Add,
-    #[display(fmt = "-")]
+    #[display("-")]
     Sub,
-    #[display(fmt = "*")]
+    #[display("*")]
     Mul,
-    #[display(fmt = "/")]
+    #[display("/")]
     Div,
-    #[display(fmt = "%")]
+    #[display("%")]
     Rem,
-    #[display(fmt = "&")]
+    #[display("&")]
     BitAnd,
-    #[display(fmt = "^")]
+    #[display("^")]
     Xor,
-    #[display(fmt = "|")]
+    #[display("|")]
     BitOr,
-    #[display(fmt = "<<")]
+    #[display("<<")]
     Shl,
-    #[display(fmt = ">>")]
+    #[display(">>")]
     Shr,
-    #[display(fmt = "??")]
+    #[display("??")]
     NoneCoalesce,
-    #[display(fmt = ">")]
+    #[display(">")]
     Gt,
-    #[display(fmt = ">=")]
+    #[display(">=")]
     GtEqual,
-    #[display(fmt = "<")]
+    #[display("<")]
     Lt,
-    #[display(fmt = "<=")]
+    #[display("<=")]
     LtEqual,
-    #[display(fmt = "<=>")]
+    #[display("<=>")]
     Cmp,
-    #[display(fmt = "==")]
+    #[display("==")]
     Equal,
-    #[display(fmt = "!=")]
+    #[display("!=")]
     NotEqual,
-    #[display(fmt = "or")]
+    #[display("or")]
     LogicalOr,
-    #[display(fmt = "and")]
+    #[display("and")]
     LogicalAnd,
-    #[display(fmt = "=")]
+    #[display("=")]
     Assign,
-    #[display(fmt = "+=")]
+    #[display("+=")]
     AddAssign,
-    #[display(fmt = "-=")]
+    #[display("-=")]
     SubAssign,
-    #[display(fmt = "*=")]
+    #[display("*=")]
     MulAssign,
-    #[display(fmt = "/=")]
+    #[display("/=")]
     DivAssign,
-    #[display(fmt = "%=")]
+    #[display("%=")]
     RemAssign,
-    #[display(fmt = "&=")]
+    #[display("&=")]
     BitAndAssign,
-    #[display(fmt = "^=")]
+    #[display("^=")]
     XorAssign,
-    #[display(fmt = "|=")]
+    #[display("|=")]
     BitOrAssign,
-    #[display(fmt = "<<=")]
+    #[display("<<=")]
     ShlAssign,
-    #[display(fmt = ">>=")]
+    #[display(">>=")]
     ShrAssign,
-    #[display(fmt = "??=")]
+    #[display("??=")]
     NoneCoalesceAssign,
     Call,
 }
@@ -230,35 +230,35 @@ impl BinaryOp {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display, Hash)]
 pub enum UnaryOp {
-    #[display(fmt = "+")]
+    #[display("+")]
     Plus,
-    #[display(fmt = "-")]
+    #[display("-")]
     Neg,
-    #[display(fmt = "++")]
+    #[display("++")]
     PostIncrement,
-    #[display(fmt = "--")]
+    #[display("--")]
     PostDecrement,
-    #[display(fmt = "++")]
+    #[display("++")]
     PreIncrement,
-    #[display(fmt = "--")]
+    #[display("--")]
     PreDecrement,
-    #[display(fmt = "!")]
+    #[display("!")]
     Not,
-    #[display(fmt = "*")]
+    #[display("*")]
     Deref,
-    #[display(fmt = "&")]
+    #[display("&")]
     Addr,
-    #[display(fmt = "&mut")]
+    #[display("&mut")]
     AddrMut,
-    #[display(fmt = "&raw")]
+    #[display("&raw")]
     AddrRaw,
-    #[display(fmt = "&raw mut")]
+    #[display("&raw mut")]
     AddrRawMut,
-    #[display(fmt = "!")]
+    #[display("!")]
     Unwrap,
-    #[display(fmt = "?")]
+    #[display("?")]
     Try,
-    #[display(fmt = "?")]
+    #[display("?")]
     Option,
 }
 
