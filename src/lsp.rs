@@ -961,7 +961,7 @@ fn get_semantic_token(
 fn get_document_symbols(proj: &Project, src: &str, file: FileId) -> Vec<DocumentSymbol> {
     let valid_name = |name: Located<StrId>| {
         name.span.file == file
-            && name.data != Strings::EMPTY
+            && !matches!(name.data, Strings::EMPTY | Strings::UNDERSCORE)
             && !proj.strings.resolve(&name.data).starts_with('$')
     };
 

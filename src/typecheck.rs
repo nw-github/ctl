@@ -1220,14 +1220,8 @@ impl<'a> TypeChecker<'a> {
                 DStmt::Alias { id }
             }
             PStmtData::Fn(f) => DStmt::Fn(self.declare_fn(Located::new(stmt.data.span, f))),
-            &PStmtData::Binding { public, constant, mut name, mutable, ty, value, is_extern } => {
+            &PStmtData::Binding { public, constant, name, mutable, ty, value, is_extern } => {
                 let ty = self.declare_type_hint(ty);
-                let mut unused = true;
-                if name.data == Strings::UNDERSCORE {
-                    name.data = Strings::EMPTY;
-                    unused = false;
-                }
-
                 let attrs = VariableAttrs::relevant(&stmt.attrs, &mut self.proj);
                 DStmt::Binding {
                     id: self.insert::<VariableId>(
@@ -1236,7 +1230,7 @@ impl<'a> TypeChecker<'a> {
                             public,
                             name,
                             ty,
-                            unused,
+                            unused: true,
                             is_extern,
                             kind: [VariableKind::Static, VariableKind::Const][constant as usize],
                             has_hint: true,
@@ -2468,11 +2462,9 @@ impl TypeChecker<'_> {
                 self.error(Error::must_be_irrefutable("parameter patterns", span))
             }
 
-            // FIXME: we should just be able to use `name`, but codegen can produce invalid code
-            // sometimes for some reason
             checked_params.push(CheckedParam {
                 keyword: false,
-                label: self.proj.strings.get_or_intern(format!("$_{i}")),
+                label: name,
                 ty,
                 patt: ParamPattern::Checked(patt.data),
                 default: None,
@@ -5684,19 +5676,11 @@ impl TypeChecker<'_> {
     fn insert_pattern_var(
         &mut self,
         typ: PatternType,
-        mut name: Located<StrId>,
+        name: Located<StrId>,
         ty: TypeId,
         mutable: bool,
         has_hint: bool,
-    ) -> Option<VariableId> {
-        let mut good = true;
-        let mut no_redef = typ != PatternType::Regular;
-        if name.data == Strings::UNDERSCORE {
-            name.data = Strings::EMPTY;
-            good = false;
-            no_redef = false;
-        }
-
+    ) -> VariableId {
         let id = self.insert(
             Variable {
                 name,
@@ -5708,12 +5692,12 @@ impl TypeChecker<'_> {
                 ..Default::default()
             },
             false,
-            no_redef,
+            typ != PatternType::Regular && name.data != Strings::UNDERSCORE,
         );
         if let Some(listen) = &mut self.listening_vars {
             listen.push(id);
         }
-        good.then_some(id)
+        id
     }
 
     fn check_match_coverage<'a>(
@@ -5951,8 +5935,8 @@ impl TypeChecker<'_> {
         let mut result = Vec::new();
         for (i, patt) in patterns.iter().enumerate() {
             if let Pattern::Rest(var) = patt.data {
-                let id = var.and_then(|(m, name)| {
-                    self.insert_pattern_var(typ, name, TypeId::UNKNOWN, m, false)
+                let id = var.map(|(mutable, name)| {
+                    self.insert_pattern_var(typ, name, TypeId::UNKNOWN, mutable, false)
                 });
 
                 if rest.is_some() {
@@ -6041,7 +6025,7 @@ impl TypeChecker<'_> {
         let mut result = Vec::new();
         for (i, patt) in patterns.iter().enumerate() {
             if let Pattern::Rest(var) = patt.data {
-                let id = var.and_then(|(mutable, name)| {
+                let id = var.map(|(mutable, name)| {
                     self.insert_pattern_var(typ, name, TypeId::UNKNOWN, mutable, false)
                 });
 
@@ -6313,7 +6297,7 @@ impl TypeChecker<'_> {
             if i == 0 {
                 prev_vars = vars
                     .into_iter()
-                    .filter(|&v| self.proj.scopes.get(v).name.data != Strings::EMPTY)
+                    .filter(|&v| self.proj.scopes.get(v).name.data != Strings::UNDERSCORE)
                     .map(|v| (self.proj.scopes.get(v).name.data, v))
                     .collect();
                 continue;
@@ -6322,7 +6306,7 @@ impl TypeChecker<'_> {
             let mut prev_vars = prev_vars.clone();
             for &id in vars.iter() {
                 let var = self.proj.scopes.get(id);
-                if var.name.data == Strings::EMPTY {
+                if var.name.data == Strings::UNDERSCORE {
                     continue;
                 }
 
@@ -6407,14 +6391,9 @@ impl TypeChecker<'_> {
                             inner: TypeId::UNKNOWN,
                             borrows: false,
                         }),
-                        Err(Some(_)) => {
-                            let Some(var) =
-                                self.insert_pattern_var(typ, ident, scrutinee, mutable, has_hint)
-                            else {
-                                return CPattern::irrefutable(PatternData::Void);
-                            };
-                            CPattern::irrefutable(PatternData::Variable(var))
-                        }
+                        Err(Some(_)) => CPattern::irrefutable(PatternData::Variable(
+                            self.insert_pattern_var(typ, ident, scrutinee, mutable, has_hint),
+                        )),
                         Err(None) => Default::default(),
                     }
                 } else {
@@ -6440,18 +6419,9 @@ impl TypeChecker<'_> {
                     typ,
                 )
             }
-            &Pattern::MutBinding(name) => {
-                let Some(var) = self.insert_pattern_var(
-                    typ,
-                    Located::new(span, name),
-                    scrutinee,
-                    true,
-                    has_hint,
-                ) else {
-                    return CPattern::irrefutable(PatternData::Void);
-                };
-                CPattern::irrefutable(PatternData::Variable(var))
-            }
+            &Pattern::MutBinding(name) => CPattern::irrefutable(PatternData::Variable(
+                self.insert_pattern_var(typ, Located::new(span, name), scrutinee, true, has_hint),
+            )),
             Pattern::Struct(sub) => self.check_struct_pattern(scrutinee, mutable, sub, span, typ),
             &Pattern::String(value) => {
                 let string = self.make_lang_type_by_name(LangType::String, [], span);
@@ -7001,6 +6971,12 @@ impl TypeChecker<'_> {
     }
 
     fn resolve_value_path(&mut self, path: &Path, target: Option<TypeId>) -> ResolvedValue {
+        if let Some(ident) = path.as_identifier()
+            && ident.data == Strings::UNDERSCORE
+        {
+            return ResolvedValue::NotFound(ident);
+        }
+
         let span = path.span();
         match path.origin {
             PathOrigin::Root(_) => self.resolve_value_path_in(
