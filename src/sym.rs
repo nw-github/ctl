@@ -209,7 +209,7 @@ pub struct Function {
     /// Is this a trait function with a body
     pub has_body: bool,
     pub typ: FunctionType,
-    pub type_params: Vec<UserTypeId>,
+    pub type_params: Vec<TypeParamId>,
     pub params: Vec<CheckedParam>,
     pub ret: TypeId,
     pub body: Option<CheckedExpr>,
@@ -284,7 +284,7 @@ pub struct CheckedImpl {
     pub scope: Option<ScopeId>,
     pub assoc_types: HashMap<TypeParamId, Located<TypeId>>,
     /// The type parameters for the impl block (`T` in `impl<T> Foo`) and the enclosing scope
-    pub type_params: Vec<UserTypeId>,
+    pub type_params: Vec<TypeParamId>,
     /// The type args for this trait (`T = i32` in `impl Foo<i32>`)
     pub tr: GenericTrait,
     /// The type this trait is implemented for
@@ -302,16 +302,16 @@ pub enum UncheckedImplTrait {
 
 pub struct UncheckedImpl {
     pub tr: UncheckedImplTrait,
-    pub type_params: Vec<UserTypeId>,
+    pub type_params: Vec<TypeParamId>,
     pub assoc_types: HashMap<StrId, Located<TypeId>>,
     pub span: Span,
     /// The scope of the impl block
     pub scope: ScopeId,
-    pub is_type_param: Option<UserTypeId>,
+    pub is_type_param: Option<TypeParamId>,
 }
 
 impl UncheckedImpl {
-    pub fn type_param(tr: UncheckedImplTrait, id: UserTypeId, scope: ScopeId) -> UncheckedImpl {
+    pub fn type_param(tr: UncheckedImplTrait, id: TypeParamId, scope: ScopeId) -> UncheckedImpl {
         UncheckedImpl {
             tr,
             type_params: Default::default(),
@@ -347,7 +347,7 @@ pub struct UserType {
     pub body_scope: ScopeId,
     pub kind: UserTypeKind,
     pub impls: Vec<ImplId>,
-    pub type_params: Vec<UserTypeId>,
+    pub type_params: Vec<TypeParamId>,
     pub members: IndexMap<StrId, CheckedMember>,
     pub members_resolved: bool,
     pub recursive: bool,
@@ -421,7 +421,7 @@ impl UserType {
 pub struct Alias {
     pub public: bool,
     pub name: Located<StrId>,
-    pub type_params: Vec<UserTypeId>,
+    pub type_params: Vec<TypeParamId>,
     pub ty: Option<TypeId>,
     pub body_scope: ScopeId,
 }
@@ -455,11 +455,11 @@ pub struct Trait {
     pub public: bool,
     pub name: Located<StrId>,
     pub body_scope: ScopeId,
-    pub type_params: Vec<UserTypeId>,
+    pub type_params: Vec<TypeParamId>,
     pub super_traits: SuperTraits,
-    pub assoc_types: HashMap<StrId, UserTypeId>,
+    pub assoc_types: HashMap<StrId, TypeParamId>,
     /// The template parameter corresponding to the `This` type
-    pub this: UserTypeId,
+    pub this: TypeParamId,
     pub is_sealed: bool,
     pub is_unsafe: bool,
     pub implementors: Vec<ImplId>,
@@ -467,35 +467,35 @@ pub struct Trait {
 }
 
 pub trait HasTypeParams {
-    fn get_type_params(&self) -> &[UserTypeId];
+    fn get_type_params(&self) -> &[TypeParamId];
 }
 
 impl HasTypeParams for UserType {
-    fn get_type_params(&self) -> &[UserTypeId] {
+    fn get_type_params(&self) -> &[TypeParamId] {
         &self.type_params
     }
 }
 
 impl HasTypeParams for Trait {
-    fn get_type_params(&self) -> &[UserTypeId] {
+    fn get_type_params(&self) -> &[TypeParamId] {
         &self.type_params
     }
 }
 
 impl HasTypeParams for Function {
-    fn get_type_params(&self) -> &[UserTypeId] {
+    fn get_type_params(&self) -> &[TypeParamId] {
         &self.type_params
     }
 }
 
 impl HasTypeParams for Alias {
-    fn get_type_params(&self) -> &[UserTypeId] {
+    fn get_type_params(&self) -> &[TypeParamId] {
         &self.type_params
     }
 }
 
-impl HasTypeParams for [UserTypeId] {
-    fn get_type_params(&self) -> &[UserTypeId] {
+impl HasTypeParams for [TypeParamId] {
+    fn get_type_params(&self) -> &[TypeParamId] {
         self
     }
 }

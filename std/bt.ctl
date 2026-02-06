@@ -297,7 +297,7 @@ pub struct BacktraceIter {
 }
 
 $[inline(never)]
-pub unsafe fn backtrace<F: Fn(uint) => bool>(f: F, kw start_pc: ?uint = null): bool {
+pub unsafe fn backtrace<F: Fn(uint) => bool>(f: F, kw start_pc: ?uint = null) {
     $[feature(backtrace)]
     unsafe {
         use std::deps::libunwind::*;
@@ -337,8 +337,6 @@ pub unsafe fn backtrace<F: Fn(uint) => bool>(f: F, kw start_pc: ?uint = null): b
         mut state = State(ignore_until: start_pc, callback: f);
         _Unwind_Backtrace(callback::<F>, ?(&raw mut state).cast());
     }
-
-    true
 }
 
 $[feature(alloc)]

@@ -17,19 +17,34 @@ pub struct SourceLocation {
     }
 }
 
-type SL = SourceLocation;
+pub struct PanicInfo {
+    args: Arguments,
+    loc: *SrcLoc,
 
-pub fn unreachable(loc: *SL = SL::here()): never {
+    impl Format {
+        fn fmt(this, f: *mut Formatter) {
+            if this.loc.func is ?func {
+                write(f, "fatal error in function '{func}' at {this.loc}:\n{this.args}")
+            } else {
+                write(f, "fatal error at {this.loc}: {this.args}")
+            }
+        }
+    }
+}
+
+type SrcLoc = SourceLocation;
+
+pub fn unreachable(loc: *SrcLoc = SrcLoc::here()): never {
     panic("entered unreachable code", loc:);
 }
 
 $[cold]
-pub fn panic<T: Format>(args: T, loc: *SL = SL::here()): never {
+pub fn panic<T: Format>(args: T, loc: *SrcLoc = SrcLoc::here()): never {
     std::intrin::panic(&PanicInfo(args: "{args}", loc:))
 }
 
 // TODO: this should take <T: Format>, but there is currently no way to default that
-pub fn assert(cond: bool, msg: ?Arguments = null, loc: *SL = SL::here()) {
+pub fn assert(cond: bool, msg: ?Arguments = null, loc: *SrcLoc = SrcLoc::here()) {
     if !cond {
         if msg is ?msg {
             panic("assertion failed: {msg}", loc:);
@@ -39,20 +54,20 @@ pub fn assert(cond: bool, msg: ?Arguments = null, loc: *SL = SL::here()) {
     }
 }
 
-pub fn assert_eq<Lhs: std::ops::Eq<Rhs>, Rhs>(lhs: Lhs, rhs: Rhs, loc: *SL = SL::here()) {
+pub fn assert_eq<Lhs: std::ops::Eq<Rhs>, Rhs>(lhs: Lhs, rhs: Rhs, loc: *SrcLoc = SrcLoc::here()) {
     if lhs != rhs {
         panic("assertion failed: '{lhs:?}' != '{rhs:?}'", loc:);
     }
 }
 
-pub fn assert_ne<Lhs: std::ops::Eq<Rhs>, Rhs>(lhs: Lhs, rhs: Rhs, loc: *SL = SL::here()) {
+pub fn assert_ne<Lhs: std::ops::Eq<Rhs>, Rhs>(lhs: Lhs, rhs: Rhs, loc: *SrcLoc = SrcLoc::here()) {
     if lhs == rhs {
         panic("assertion failed: '{lhs:?}' == '{rhs:?}'", loc:);
     }
 }
 
 $[inline(always)]
-pub fn debug_assert(_cond: bool, _msg: ?Arguments = null, _loc: *SL = SL::here()) {
+pub fn debug_assert(_cond: bool, _msg: ?Arguments = null, _loc: *SrcLoc = SrcLoc::here()) {
     $[cfg("ctl:debug")]
     assert(_cond, _msg, _loc);
 }
@@ -71,21 +86,6 @@ static mut CTL_DUMMY_EXCEPTION: uw::_Unwind_Exception = uw::_Unwind_Exception(
     class: u64::from_le_bytes(*b"CTL\0\0\0NW"),
     cleanup: |_, _| {},
 );
-
-pub struct PanicInfo {
-    args: Arguments,
-    loc: *SL,
-
-    impl Format {
-        fn fmt(this, f: *mut Formatter) {
-            if this.loc.func is ?func {
-                write(f, "fatal error in function '{func}' at {this.loc}:\n{this.args}")
-            } else {
-                write(f, "fatal error at {this.loc}: {this.args}")
-            }
-        }
-    }
-}
 
 $[panic_handler, feature(hosted, io)]
 fn panic_handler(info: *PanicInfo): never {

@@ -918,7 +918,7 @@ fn get_semantic_token(
                 return None;
             }
             token::TYPE
-        },
+        }
         LspItem::Trait(_) => token::TYPE,
         LspItem::Alias(_) => token::TYPE,
         LspItem::BuiltinType(_) => token::TYPE,
@@ -1495,7 +1495,7 @@ fn visualize_type(id: UserTypeId, proj: &Project) -> String {
         let ut = GenericUserType::new(id, Default::default());
         let (sz, align) =
             proj.types.insert(Type::User(ut)).size_and_align(&proj.scopes, &proj.types);
-        writeln_de!(res, "// size = {sz} ({sz:#x}), align = {align:#x}");
+        writeln_de!(res, "// size = {}, align = {}", S(sz), S(align));
     }
 
     if ut.public {
@@ -1615,14 +1615,28 @@ fn hover_property_text(
             _ => unreachable!(),
         };
         if let Some(o) = ut.bit_offset_of(&proj.scopes, &proj.types, name) {
-            return format!("// bit size = {s} ({s:#x}), bit offset = {o} ({o:#x})\n");
+            return format!("// bit size = {}, bit offset = {}\n", S(s), S(o));
         }
     } else {
         let (s, a) = ty.size_and_align(&proj.scopes, &proj.types);
         if let Some(o) = ut.offset_of(&proj.scopes, &proj.types, name) {
-            return format!("// size = {s} ({s:#x}), align = {a:#x}, offset = {o} ({o:#x})\n");
+            return format!("// size = {}, align = {}, offset = {}\n", S(s), S(a), S(o));
         }
     }
 
     "".into()
+}
+
+struct S<T>(T);
+
+impl std::fmt::Display for S<u32> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0 >= 10 { write!(f, "{0} ({0:#x})", self.0) } else { write!(f, "{}", self.0) }
+    }
+}
+
+impl std::fmt::Display for S<usize> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0 >= 10 { write!(f, "{0} ({0:#x})", self.0) } else { write!(f, "{}", self.0) }
+    }
 }

@@ -1759,9 +1759,8 @@ impl<'a> Codegen<'a> {
             }
             &ExprData::Return(mut expr) => never_expr!(self, {
                 expr.ty = expr.ty.with_templates(&self.proj.types, &state.func.ty_args);
-                let void = expr.ty.is_void_like();
                 let tmp = self.emit_tmpvar(expr, state);
-                let str = if void {
+                let str = if expr.ty.is_void_like() {
                     write_de!(self.buffer, "(void){tmp};");
                     "return".into()
                 } else {
@@ -2355,23 +2354,14 @@ impl<'a> Codegen<'a> {
     }
 
     fn leave_scope(&mut self, exit: &str, scope: ScopeId) {
-        let mut emitted = false;
         for (block_scope, defers) in self.defers.iter().rev() {
             for (func_name, params_name) in defers.iter().rev() {
-                if !emitted {
-                    write_nm!(self, "/* begin defers {scope:?} */\n");
-                    emitted = true;
-                }
-
                 writeln_de!(self.buffer, "CTL_EXEC_DEFER({func_name}, {params_name});");
             }
 
             if block_scope == &scope {
                 break;
             }
-        }
-        if emitted {
-            write_nm!(self, "/* end defers {scope:?} */\n");
         }
         writeln_de!(self.buffer, "{exit};");
     }
@@ -3204,17 +3194,13 @@ impl<'a> Codegen<'a> {
             }
         });
 
-        let (id, defers) = self.defers.pop().unwrap();
+        let (_, defers) = self.defers.pop().unwrap();
         if std::mem::replace(&mut self.emitted_never_in_this_block, old) {
             return;
         }
 
-        if !defers.is_empty() {
-            write_nm!(self, "/* begin defers {id:?} */\n");
-            for (func_name, params_name) in defers.into_iter().rev() {
-                writeln_de!(self.buffer, "CTL_EXEC_DEFER({func_name}, {params_name});");
-            }
-            write_nm!(self, "/* end defers {id:?} */\n");
+        for (func_name, params_name) in defers.into_iter().rev() {
+            writeln_de!(self.buffer, "CTL_EXEC_DEFER({func_name}, {params_name});");
         }
     }
 
