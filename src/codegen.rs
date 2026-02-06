@@ -2600,7 +2600,6 @@ impl<'a> Codegen<'a> {
                         range.map(|s| s.start.line).unwrap_or_default() + 1,
                         range.map(|s| s.start.character).unwrap_or_default() + 1,
                     );
-                    self.emit_cast(option_typ);
                     let ut =
                         self.proj.scopes.get(self.proj.types[option_typ].as_user().unwrap().id);
                     let union = ut.kind.as_union().unwrap();
