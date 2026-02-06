@@ -311,12 +311,17 @@ pub struct UncheckedImpl {
 }
 
 impl UncheckedImpl {
-    pub fn type_param(tr: UncheckedImplTrait, id: TypeParamId, scope: ScopeId) -> UncheckedImpl {
+    pub fn type_param(
+        tr: UncheckedImplTrait,
+        id: TypeParamId,
+        scope: ScopeId,
+        span: Span,
+    ) -> UncheckedImpl {
         UncheckedImpl {
             tr,
             type_params: Default::default(),
             assoc_types: Default::default(),
-            span: Span::nowhere(),
+            span,
             scope,
             is_type_param: Some(id),
         }

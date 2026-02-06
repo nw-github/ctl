@@ -1172,6 +1172,7 @@ impl<'a> TypeChecker<'a> {
                         )),
                         this_id,
                         scope,
+                        Span::nowhere(),
                     ),
                 ));
 
@@ -1353,7 +1354,12 @@ impl<'a> TypeChecker<'a> {
         let v = paths.iter().map(|path| {
             self.proj.impls.alloc(TraitImpl::Unchecked(
                 ty,
-                UncheckedImpl::type_param(UncheckedImplTrait::Path(path.clone()), id, self.current),
+                UncheckedImpl::type_param(
+                    UncheckedImplTrait::Path(path.clone()),
+                    id,
+                    self.current,
+                    path.span(),
+                ),
             ))
         });
         self.proj.scopes.get_mut(id).impls = v.collect();
@@ -1787,6 +1793,7 @@ impl TypeChecker<'_> {
         has: FunctionId,
         wants: FunctionId,
         ty_args: &TypeArgs,
+        span: &mut Span,
     ) -> Result<(), String> {
         let hfn = self.proj.scopes.get(has);
         let wfn = self.proj.scopes.get(wants);
@@ -1839,18 +1846,19 @@ impl TypeChecker<'_> {
         for (&s, &t) in hfn.type_params.iter().zip(wfn.type_params.iter()) {
             let s = self.proj.scopes.get(s);
             let t = self.proj.scopes.get(t);
-            let name = t.name.data;
+            let name = s.name.data;
             // TODO: dont enfore impl order
-            // TODOX: fix this + check s.id == t.id
-            // for (s, t) in s.iter_impls(&self.proj.scopes).zip(t.iter_impls(&self.proj.scopes)) {
-            //     s.tr;
-            //     for (&s, &t) in s.ty_args.values().zip(t.ty_args.values()) {
-            //         if let Err(err) = compare_types(s, t) {
-            //             let data = strdata!(self, name);
-            //             return Err(format!("type parameter '{data}' is incorrect: {err}"));
-            //         }
-            //     }
-            // }
+            for (s, t) in s.iter_impls(&self.proj, false).zip(t.iter_impls(&self.proj, false)) {
+                let wants = t.tr.with_templates(&self.proj.types, &ty_args);
+                if s.tr != wants {
+                    *span = s.span;
+                    return Err(format!(
+                        "expected trait {}, found {}",
+                        self.proj.fmt_tr(&wants),
+                        self.proj.fmt_tr(&s.tr),
+                    ));
+                }
+            }
 
             if s.impls.len() != t.impls.len() {
                 return Err(format!("type parameter '{}' is incorrect", strdata!(self, name)));
@@ -1942,9 +1950,10 @@ impl TypeChecker<'_> {
             let rhs = required.swap_remove(pos);
             self.resolve_proto(rhs);
             let this = Some((tr.id, this));
-            if let Err(why) = self.check_signature_match(this, lhs, rhs, &tr.ty_args) {
+            let mut span = fn_name.span;
+            if let Err(why) = self.check_signature_match(this, lhs, rhs, &tr.ty_args, &mut span) {
                 let data = strdata!(self, fn_name.data);
-                self.error(Error::invalid_impl(data, &why, fn_name.span))
+                self.error(Error::invalid_impl(data, &why, span))
             }
         }
 
@@ -2010,9 +2019,10 @@ impl TypeChecker<'_> {
                 if let Some(panic) = panic {
                     let fn_name = func.name;
                     this.resolve_proto(panic);
-                    if let Err(why) = this.check_signature_match(None, id, panic, &TypeArgs::default()) {
+                    let mut span = fn_name.span;
+                    if let Err(why) = this.check_signature_match(None, id, panic, &TypeArgs::default(), &mut span) {
                         let data = strdata!(this, fn_name.data);
-                        this.proj.diag.report(Error::invalid_impl(data, &why, fn_name.span))
+                        this.proj.diag.report(Error::invalid_impl(data, &why, span))
                     }
                 }
             } else if func.attrs.test_runner {
