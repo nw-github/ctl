@@ -26,9 +26,11 @@ impl Strings {
     pub const TUPLE_ZERO: StrId = str_id(SID::TUPLE_ZERO);
     pub const TUPLE_NAME: StrId = str_id(SID::TUPLE_NAME);
     pub const CLOSURE_NAME: StrId = str_id(SID::CLOSURE_NAME);
+    pub const EXTENSION_NAME: StrId = str_id(SID::EXTENSION_NAME);
     pub const FN_TR_ARGS_NAME: StrId = str_id(SID::FN_TR_ARGS_NAME);
     pub const ITER_VAR_NAME: StrId = str_id(SID::ITER_VAR_NAME);
     pub const SKIP_REASON: StrId = str_id(SID::SKIP_REASON);
+    pub const UNSAFE: StrId = str_id(SID::UNSAFE);
 
     pub const NULL: StrId = str_id(SID::NULL);
     pub const SOME: StrId = str_id(SID::SOME);
@@ -61,6 +63,8 @@ impl Strings {
     pub const ATTR_TEST_RUNNER: StrId = str_id(SID::ATTR_TEST_RUNNER);
     pub const ATTR_SKIP: StrId = str_id(SID::SKIP);
     pub const ATTR_EXPORT: StrId = str_id(SID::ATTR_EXPORT);
+    pub const ATTR_MALLOC: StrId = str_id(SID::ATTR_MALLOC);
+    pub const ATTR_NO_MANGLE: StrId = str_id(SID::ATTR_NO_MANGLE);
 
     pub fn new() -> Self {
         let mut rodeo = Rodeo::default();
@@ -96,12 +100,16 @@ impl Strings {
         assert_eq!(Self::ATTR_COLD, rodeo.get_or_intern_static("cold"));
         assert_eq!(Self::TUPLE_NAME, rodeo.get_or_intern_static("$tuple"));
         assert_eq!(Self::CLOSURE_NAME, rodeo.get_or_intern_static("{closure}"));
+        assert_eq!(Self::EXTENSION_NAME, rodeo.get_or_intern_static("{extension}"));
         assert_eq!(Self::ATTR_ALIGN, rodeo.get_or_intern_static("align"));
         assert_eq!(Self::ATTR_LAYOUT, rodeo.get_or_intern_static("layout"));
         assert_eq!(Self::FN_TR_ARGS_NAME, rodeo.get_or_intern_static("args"));
         assert_eq!(Self::FN_CLOSURE_DO_INVOKE, rodeo.get_or_intern_static("do_invoke"));
         assert_eq!(Self::ATTR_EXPORT, rodeo.get_or_intern_static("export"));
         assert_eq!(Self::ATTR_CFG, rodeo.get_or_intern_static("cfg"));
+        assert_eq!(Self::UNSAFE, rodeo.get_or_intern_static("unsafe"));
+        assert_eq!(Self::ATTR_MALLOC, rodeo.get_or_intern_static("malloc"));
+        assert_eq!(Self::ATTR_NO_MANGLE, rodeo.get_or_intern_static("no_mangle"));
         Self { rodeo, byte_str_data: vec![0] }
     }
 
@@ -167,10 +175,14 @@ enum SID {
     ATTR_COLD,
     TUPLE_NAME,
     CLOSURE_NAME,
+    EXTENSION_NAME,
     ATTR_ALIGN,
     ATTR_LAYOUT,
     FN_TR_ARGS_NAME,
     FN_CLOSURE_DO_INVOKE,
     ATTR_EXPORT,
     ATTR_CFG,
+    UNSAFE,
+    ATTR_MALLOC,
+    ATTR_NO_MANGLE,
 }

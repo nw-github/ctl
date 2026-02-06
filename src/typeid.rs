@@ -1,8 +1,8 @@
-use std::ops::Index;
+use std::{collections::BTreeMap, ops::Index};
 
 use crate::{
     ast::{BinaryOp, UnaryOp, parsed::TypeHint},
-    ds::{ComptimeInt, HashArena, IndexMap},
+    ds::{ComptimeInt, HashArena},
     intern::StrId,
     nearest_pow_of_two,
     project::Project,
@@ -14,16 +14,8 @@ use crate::{
 use derive_more::{Constructor, Deref, DerefMut};
 use enum_as_inner::EnumAsInner;
 
-#[derive(Default, Debug, PartialEq, Eq, Clone, Deref, DerefMut)]
-pub struct TypeArgs(pub IndexMap<UserTypeId, TypeId>);
-
-impl std::hash::Hash for TypeArgs {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        for entry in self.0.iter() {
-            entry.hash(state);
-        }
-    }
-}
+#[derive(Default, Debug, PartialEq, Eq, Hash, Clone, Deref, DerefMut)]
+pub struct TypeArgs(BTreeMap<UserTypeId, TypeId>);
 
 impl TypeArgs {
     pub fn copy_args(&mut self, rhs: &TypeArgs) {
@@ -45,7 +37,7 @@ impl TypeArgs {
         TypeArgs(scopes.get(id).get_type_params().iter().copied().zip(types).collect())
     }
 
-    pub fn unknown(v: &impl HasTypeParams) -> Self {
+    pub fn unknown(v: &(impl HasTypeParams + ?Sized)) -> Self {
         TypeArgs(v.get_type_params().iter().map(|&t| (t, TypeId::UNKNOWN)).collect())
     }
 }
@@ -83,13 +75,32 @@ where
     pub fn from_id_unknown(scopes: &Scopes, id: T) -> Self {
         Self::from_type_args(scopes, id, std::iter::repeat(TypeId::UNKNOWN))
     }
+
+    pub fn get_type_arg(&self, idx: usize, scopes: &Scopes) -> Option<TypeId> {
+        self.ty_args.get(scopes.get(self.id).get_type_params().get(idx)?).copied()
+    }
+
+    pub fn first_type_arg(&self, scopes: &Scopes) -> Option<TypeId> {
+        self.get_type_arg(0, scopes)
+    }
+
+    pub fn ordered_iter<'a>(
+        &self,
+        scopes: &'a Scopes,
+    ) -> impl Iterator<Item = TypeId> + use<'a, '_, T>
+    where
+        <T as ItemId>::Value: 'a,
+    {
+        scopes
+            .get(self.id)
+            .item
+            .get_type_params()
+            .iter()
+            .flat_map(|id| self.ty_args.get(id).copied())
+    }
 }
 
 impl<T> WithTypeArgs<T> {
-    pub fn first_type_arg(&self) -> Option<TypeId> {
-        self.ty_args.values().next().copied()
-    }
-
     pub fn fill_templates(&mut self, types: &Types, map: &TypeArgs) {
         for ty in self.ty_args.values_mut() {
             *ty = ty.with_templates(types, map);
@@ -190,7 +201,10 @@ impl GenericUserType {
     }
 
     pub fn as_option_inner(&self, scopes: &Scopes) -> Option<TypeId> {
-        scopes.get_option_id().filter(|opt| self.id == *opt).and_then(|_| self.first_type_arg())
+        scopes
+            .get_option_id()
+            .filter(|opt| self.id == *opt)
+            .and_then(|_| self.first_type_arg(scopes))
     }
 
     pub fn can_omit_tag(&self, scopes: &Scopes, types: &Types) -> Option<TypeId> {

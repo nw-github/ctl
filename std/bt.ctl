@@ -4,7 +4,7 @@ use std::deps::libc;
 use std::panic::SourceLocation;
 use std::str::CStr;
 
-extension Helpers for str {
+extension str {
     fn advance_if_eq(mut this, v: char): bool {
         if this.chars().next() is ?ch and ch == v {
             *this = unsafe this.substr_unchecked(ch.len_utf8()..);
@@ -56,7 +56,8 @@ pub struct MaybeMangledName {
     pub fn from_bytes(func: [u8..]): This => This(func:);
 
     fn demangle_type_name(name: *mut str, f: *mut std::fmt::Formatter): ?void {
-        match name.advance()? {
+        let ch = name.advance()?;
+        match ch {
             'v' => write(f, "void"),
             'V' => write(f, "never"),
             'i' => write(f, "i{name}"),
@@ -97,7 +98,14 @@ pub struct MaybeMangledName {
                 }
                 write(f, ")");
             }
-            'N' => {
+            'e' | 'E' | 'u' | 'N' => {
+                match ch {
+                    'e' => write(f, "extern "),
+                    'E' => write(f, "extern unsafe "),
+                    'u' => write(f, "unsafe "),
+                    _ => {}
+                }
+
                 write(f, "fn(");
                 mut wrote = false;
                 while !name.is_empty() and !name.advance_if_eq('n') {
@@ -158,8 +166,6 @@ pub struct MaybeMangledName {
 
     impl std::fmt::Format {
         fn fmt(this, f: *mut std::fmt::Formatter) {
-            use std::str::ext::*;
-
             guard str::from_utf8(this.func) is ?base else {
                 for ch in this.func.iter_chars_lossy() {
                     f.write_char(ch);
@@ -186,26 +192,54 @@ pub struct SymbolInfo {
     pub offs: uint, // Offset from the function start
 }
 
-pub struct Call {
-    pub addr: uint,
+$[feature(dw)]
+struct DwflResolver {
+    dwfl: ?*mut Dwfl,
 
-    pub fn addr(my this): uint => this.addr;
+    pub fn new(): ?This {
+        static CALLBACKS: Dwfl_Callbacks = Dwfl_Callbacks(
+            find_elf: dwfl_linux_proc_find_elf,
+            find_debuginfo: dwfl_standard_find_debuginfo,
+            section_address: null,
+            debuginfo_path: null,
+        );
 
-    $[feature(backtrace)]
-    pub fn symbolicate(my this): ?SymbolInfo {
-        let dwfl = unsafe DWFL?;
+        unsafe {
+            let dwfl = dwfl_begin(&CALLBACKS)?;
+            dwfl_report_begin(dwfl);
+            guard dwfl_linux_proc_report(dwfl, libc::posix::getpid()) == 0 else {
+                dwfl_end(dwfl);
+                return null;
+            }
+            guard dwfl_report_end(dwfl, null, null) == 0 else {
+                dwfl_end(dwfl);
+                return null;
+            }
+            This(dwfl:)
+        }
+    }
+
+    pub fn deinit(mut this) {
+        if this.dwfl.take() is ?dwfl {
+            unsafe dwfl_end(dwfl);
+        }
+    }
+
+    pub fn resolve(this, mut addr: uint): ?SymbolInfo {
+        use std::mem::Uninit;
+
+        let dwfl = this.dwfl?;
 
         mut [lineno, colno] = [0 as c_int; 2];
-        mut addr = this.addr;
         unsafe {
             let line = dwfl_getsrc(dwfl, addr)?;
             let file = dwfl_lineinfo(line, &mut addr, &mut lineno, &mut colno, null, null)?;
 
             mut func: ?MaybeMangledName = null;
-            mut sym: Elf64_Sym;
+            mut sym = Uninit::<Elf64_Sym>::uninit();
             mut offs = 0u;
             if dwfl_addrmodule(dwfl, addr) is ?module and
-                dwfl_module_addrinfo(module, addr, &mut offs, &mut sym, null, null, null) is ?sym
+                dwfl_module_addrinfo(module, addr, &mut offs, sym.as_raw_mut(), null, null, null) is ?sym
             {
                 func = MaybeMangledName(func: Span::new(sym.cast(), std::intrin::strlen(sym)));
             }
@@ -219,21 +253,30 @@ pub struct Call {
             )
         }
     }
-
-    $[feature(not(backtrace))]
-    pub fn symbolicate(my this): ?SymbolInfo => null;
 }
 
+struct NoOpResolver {
+    pub fn new(): ?This { null }
+    pub fn deinit(mut this) { }
+    pub fn resolve(this, _addr: uint): ?SymbolInfo { null }
+}
+
+$[feature(dw)]
+pub type Resolver = DwflResolver;
+
+$[feature(not(dw))]
+pub type Resolver = NoOpResolver;
+
 pub struct Backtrace {
-    addrs: [Call],
+    addrs: [uint],
 
     $[inline(never)]
     pub fn capture(): This {
-        mut addrs: [Call] = @[];
-        unsafe backtrace(|&mut addrs, mut i = 0,| (pc) {
+        mut addrs: [uint] = @[];
+        unsafe backtrace(|&mut addrs, =mut i = 0, pc| {
             if i++ >= 2 {
                 // TODO: allow this to fail
-                addrs.push(Call(addr: pc));
+                addrs.push(pc);
             }
 
             true
@@ -246,60 +289,60 @@ pub struct Backtrace {
 }
 
 pub struct BacktraceIter {
-    addrs: std::span::Iter<Call>,
+    addrs: std::span::Iter<uint>,
 
-    impl Iterator<Call> {
-        fn next(mut this): ?Call => this.addrs.next().copied();
+    impl Iterator<uint> {
+        fn next(mut this): ?uint => this.addrs.next().copied();
     }
 }
 
-pub struct Context {
-    pub pc: uint,
-    pub bp: uint,
-    pub sp: uint,
-    pub signal: bool,
-}
-
 $[inline(never)]
-pub unsafe fn backtrace<F: Fn(uint) => bool>(f: F, kw ctx: ?Context = null): bool {
+pub unsafe fn backtrace<F: Fn(uint) => bool>(f: F, kw start_pc: ?uint = null) {
     $[feature(backtrace)]
     unsafe {
         use std::deps::libunwind::*;
 
-        mut context: unw_context_t;
-        mut cursor: unw_cursor_t;
-        if ctx is ?{pc, bp, sp, signal} {
-            if _Ux86_64_init_local2(
-                &mut cursor,
-                &mut context,
-                signal then UNW_INIT_SIGNAL_FRAME else 0
-            ) != 0
-            {
-                return false;
-            }
-
-            _Ux86_64_set_reg(&mut cursor, UNW_REG_SP, sp);
-            _Ux86_64_set_reg(&mut cursor, UNW_REG_BP, bp);
-            _Ux86_64_set_reg(&mut cursor, UNW_REG_IP, pc);
-        } else {
-            if _Ux86_64_getcontext(&mut context) != 0 {
-                return false;
-            } else if _Ux86_64_init_local(&mut cursor, &mut context) != 0 {
-                return false;
-            }
+        struct State<F> {
+            ignore_until: ?uint,
+            callback: F,
         }
 
-        loop {
-            mut ip = 0u;
-            if _Ux86_64_get_reg(&mut cursor, UNW_REG_IP, &mut ip) != 0 {
-                return false;
+        extern fn callback<F: Fn(uint) => bool>(
+            ctx: ^mut _Unwind_Context,
+            user: ?^mut void,
+        ): _Unwind_Reason_Code
+        {
+            let state: ^mut State<F> = unsafe std::mem::bit_cast(user);
+            let pc = unsafe _Unwind_GetIP(ctx);
+            if pc == 0 {
+                return _URC_NO_REASON;
             }
 
-            if !f(ip) {
-                break;
+            let state = unsafe &mut *state;
+            if state.ignore_until is ?start_pc {
+                if start_pc != pc {
+                    return _URC_NO_REASON;
+                }
+
+                state.ignore_until = null;
             }
-        } while _Ux86_64_step(&mut cursor) > 0;
+
+            if !(state.callback)(pc) {
+                return _URC_END_OF_STACK;
+            }
+
+            _URC_NO_REASON
+        }
+
+        mut state = State(ignore_until: start_pc, callback: f);
+        _Unwind_Backtrace(callback::<F>, ?(&raw mut state).cast());
     }
+}
 
-    true
+$[feature(alloc)]
+pub fn demangle_name(name: [u8..]): ?str {
+    mut name = str::from_utf8(name)?.strip_prefix("CTL$")?;
+    mut builder = std::fmt::StringBuilder::new();
+    MaybeMangledName::demangle_name(&mut name, &mut std::fmt::Formatter::new(&mut builder))?;
+    builder.into_str()
 }

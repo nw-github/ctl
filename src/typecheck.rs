@@ -1,7 +1,5 @@
 use std::marker::PhantomData;
 
-use enum_as_inner::EnumAsInner;
-
 use crate::{
     FeatureSet, Warning,
     ast::{
@@ -11,7 +9,7 @@ use crate::{
             FormatOpts as CFormatSpec, Pattern as CPattern, PatternData, RestPattern,
             Stmt as CStmt,
         },
-        declared::{Fn as DFn, ImplBlock as DImplBlock, Stmt as DStmt, UsePath as DUsePath},
+        declared::{Fn as DFn, Stmt as DStmt, UsePath as DUsePath},
         parsed::{
             Expr as PExpr, ExprArena as PExprArena, ExprData as PExprData, Pattern, Stmt as PStmt,
             StmtData as PStmtData, *,
@@ -21,7 +19,7 @@ use crate::{
     error::Error,
     intern::{StrId, Strings, THIS_TYPE},
     lexer::{Located, Span},
-    project::Project,
+    project::{ImplId, Project},
     sym::*,
     typeid::{
         BitSizeResult, FnPtr, GenericExtension, GenericFn, GenericTrait, GenericUserType, Type,
@@ -47,7 +45,7 @@ macro_rules! check_hover {
         if $span.len > 0
             && let Some(items) = &mut $self.proj.lsp_items
         {
-            items.push(($item, $span));
+            items.push(($item.into(), $span));
         }
     }};
 }
@@ -113,28 +111,37 @@ macro_rules! check_unsafe {
     }};
 }
 
-#[derive(Debug, Clone, EnumAsInner)]
-pub enum MemberFnType {
-    Normal,
-    Dynamic,
-    Trait(GenericTrait),
-}
-
 #[derive(Debug, Clone)]
 pub struct MemberFn {
     pub func: GenericFn,
-    pub owner: ScopeId,
-    pub typ: MemberFnType,
-    pub public: bool,
-    pub inst: TypeId,
+    pub trait_fn: Option<(TypeId, GenericTrait)>,
+}
+
+impl From<LookupFnResult> for MemberFn {
+    fn from(val: LookupFnResult) -> Self {
+        MemberFn { func: val.func, trait_fn: val.trait_fn }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LookupFnResult {
+    pub func: GenericFn,
+    pub trait_fn: Option<(TypeId, GenericTrait)>,
+    pub dynamic: bool,
 }
 
 #[derive(Default)]
 pub enum ResolvedType {
-    UserType(GenericUserType),
-    Builtin(TypeId),
+    Type(TypeId),
+    Trait(GenericTrait),
     #[default]
     Error,
+}
+
+impl ResolvedType {
+    pub fn user(types: &Types, ut: GenericUserType) -> Self {
+        ResolvedType::Type(types.insert(Type::User(ut)))
+    }
 }
 
 #[derive(Default)]
@@ -158,10 +165,11 @@ pub enum Safety {
 #[derive(Clone, Copy, derive_more::From)]
 pub enum LspItem {
     Type(UserTypeId),
+    Trait(TraitId),
     Alias(AliasId),
     Module(ScopeId, bool),
     Literal(CExpr),
-    Fn(FunctionId, Option<UserTypeId>),
+    Fn(FunctionId),
     Var(VariableId),
     /// This variant only exists so the LSP doesn't apply the `mutable` modifier to the semantic
     /// tokens for parameter labels
@@ -181,6 +189,7 @@ impl From<TypeItem> for LspItem {
     fn from(value: TypeItem) -> Self {
         match value {
             TypeItem::Type(id) => Self::Type(id),
+            TypeItem::Trait(id) => Self::Trait(id),
             TypeItem::Module(id) => Self::Module(id, false),
             TypeItem::Alias(id) => Self::Alias(id),
         }
@@ -190,17 +199,20 @@ impl From<TypeItem> for LspItem {
 impl From<ValueItem> for LspItem {
     fn from(value: ValueItem) -> Self {
         match value {
-            ValueItem::Fn(id) => Self::Fn(id, None),
+            ValueItem::Fn(id) => Self::Fn(id),
             ValueItem::Var(id) => Self::Var(id),
-            ValueItem::StructConstructor(_, id) => Self::Fn(id, None),
+            ValueItem::StructConstructor(_, id) => Self::Fn(id),
             ValueItem::UnionConstructor(id) => Self::Type(id),
         }
     }
 }
 
-impl From<FunctionId> for LspItem {
-    fn from(value: FunctionId) -> Self {
-        Self::Fn(value, None)
+impl From<InsertedItem> for LspItem {
+    fn from(value: InsertedItem) -> Self {
+        match value {
+            InsertedItem::TypeLike(item) => item.into(),
+            InsertedItem::ValueLike(item) => item.into(),
+        }
     }
 }
 
@@ -306,8 +318,6 @@ struct PatternParams<'a> {
     has_hint: bool,
 }
 
-pub type ExtensionCache = HashMap<Vec<UserTypeId>, HashMap<TypeId, Vec<GenericExtension>>>;
-
 pub struct TypeChecker<'a> {
     safety: Safety,
     current: ScopeId,
@@ -316,11 +326,13 @@ pub struct TypeChecker<'a> {
     listening_vars: Option<Vec<VariableId>>,
     current_static: Option<(VariableId, HashSet<VariableId>)>,
     current_call_ty_args: Option<TypeArgs>,
-    cache: ExtensionCache,
+    cache: HashMap<TypeId, Vec<GenericExtension>>,
     arena: ExprArena,
     parsed: PExprArena,
     _none: PhantomData<&'a ()>,
     feature_set: FeatureSet,
+    checked_impls: usize,
+    impl_resolve_phase: bool,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -344,6 +356,8 @@ impl<'a> TypeChecker<'a> {
             parsed: arena,
             _none: Default::default(),
             feature_set: FeatureSet::new(),
+            checked_impls: 0,
+            impl_resolve_phase: false,
         };
 
         let mut autouse = vec![];
@@ -370,6 +384,8 @@ impl<'a> TypeChecker<'a> {
                 }
             }
 
+            this.resolve_impls();
+
             let DStmt::Module { id, .. } = stmt else { unreachable!() };
             last_scope = id;
             this.check_stmt(stmt);
@@ -391,17 +407,9 @@ impl<'a> TypeChecker<'a> {
                     ));
                 }
 
-                if !matches!(
-                    this.proj.types[func.ret],
-                    Type::Void
-                        | Type::Never
-                        | Type::Int(_)
-                        | Type::Uint(_)
-                        | Type::Isize
-                        | Type::Usize
-                ) {
+                if !matches!(func.ret, TypeId::NEVER | TypeId::VOID) {
                     this.proj.diag.report(Error::new(
-                        "main function must return void, never, or an integer type",
+                        "main function must return type void or never",
                         func.name.span,
                     ));
                 }
@@ -460,13 +468,7 @@ impl<'a> TypeChecker<'a> {
 
     fn insert<T: ItemId>(&mut self, value: T::Value, public: bool, no_redef: bool) -> T {
         let res = T::insert_in(&mut self.proj.scopes, value, public, self.current);
-        self.check_hover(
-            res.id.name(&self.proj.scopes).span,
-            match res.item {
-                InsertedItem::TypeLike(item) => item.into(),
-                InsertedItem::ValueLike(item) => item.into(),
-            },
-        );
+        self.check_hover(res.id.name(&self.proj.scopes).span, res.item);
 
         if res.existed && no_redef {
             let name = res.id.name(&self.proj.scopes);
@@ -509,7 +511,7 @@ impl<'a> TypeChecker<'a> {
                 return;
             }
 
-            if let ScopeKind::Lambda(_, policy) = scope.kind {
+            if let ScopeKind::Closure(_, policy) = scope.kind {
                 if !in_closure {
                     closure_policy = Some(policy);
                 } else {
@@ -524,7 +526,7 @@ impl<'a> TypeChecker<'a> {
 /// LSP routines
 impl TypeChecker<'_> {
     #[inline]
-    fn check_hover(&mut self, span: Span, item: LspItem) {
+    fn check_hover(&mut self, span: Span, item: impl Into<LspItem>) {
         check_hover!(self, span, item);
     }
 
@@ -539,96 +541,70 @@ impl TypeChecker<'_> {
 
         let mut completions = vec![];
         let mut added = HashSet::new();
-        let mut add_methods = |proj: &Project,
-                               c: &mut Vec<LspItem>,
-                               fns: &[Vis<FunctionId>],
-                               cap: bool,
-                               m: UserTypeId,
-                               dynamic: bool| {
-            for func in fns {
-                let f = proj.scopes.get(func.id);
-                if added.contains(&f.name.data) {
-                    continue;
-                }
+        let mut add_methods =
+            |this: &Self, c: &mut Vec<LspItem>, scope: ScopeId, tr: Option<TraitId>| {
+                let cap = tr.is_some() || this.can_access_privates(scope);
+                for id in this.proj.scopes[scope].iter_fns() {
+                    let f = this.proj.scopes.get(id);
+                    if added.contains(&f.name.data) {
+                        continue;
+                    }
 
-                if dynamic && !f.is_dyn_compatible(&proj.scopes, &proj.types, m) {
-                    continue;
-                }
+                    if let Some(tr) = tr
+                        && !f.is_dyn_compatible(&this.proj.scopes, &this.proj.types, tr)
+                    {
+                        continue;
+                    }
 
-                if proj.str(f.name.data).contains('$') {
-                    continue;
-                }
+                    if this.proj.str(f.name.data).contains('$') {
+                        continue;
+                    }
 
-                if (f.public || cap)
-                    && (!method || f.params.first().is_some_and(|p| p.label == Strings::THIS_PARAM))
-                {
-                    c.push(LspItem::Fn(func.id, Some(m)));
-                    added.insert(f.name.data);
+                    if (f.public || cap)
+                        && (!method
+                            || f.params.first().is_some_and(|p| p.label == Strings::THIS_PARAM))
+                    {
+                        c.push(LspItem::Fn(id));
+                        added.insert(f.name.data);
+                    }
                 }
+            };
+
+        if let Some(tr) = self.proj.types[ty].as_dyn_pointee() {
+            let tr_id = tr.id;
+            self.resolve_super_traits(tr_id);
+            for tr in self.proj.scopes.walk_super_trait_ids(tr_id) {
+                add_methods(self, &mut completions, self.proj.scopes.get(tr).body_scope, Some(tr));
             }
-        };
+        }
 
         if let Some(ut_id) = self.proj.types[ty].as_user().map(|ut| ut.id) {
-            self.resolve_impls(ut_id);
-
             let data = self.proj.scopes.get(ut_id);
-            let cap = self.can_access_privates(data.scope);
             if method {
+                let cap = self.can_access_privates(data.scope);
                 for (name, _) in data.members.iter().filter(|(_, m)| m.public || cap) {
                     completions.push(LspItem::Property(Some(ty), ut_id, *name))
                 }
             }
 
-            for tr in self.proj.scopes.get(ut_id).impls.iter_checked() {
-                for tr in self.proj.scopes.walk_super_traits(tr.id) {
-                    let data = self.proj.scopes.get(tr);
-                    add_methods(&self.proj, &mut completions, &data.fns, cap, tr, false);
-                }
-            }
-
-            add_methods(&self.proj, &mut completions, &data.fns, cap, ut_id, false);
-        } else if let Some(tr) = self.proj.types[ty].as_dyn_pointee() {
-            let tr_id = tr.id;
-            self.resolve_impls(tr_id);
-            for tr in self.proj.scopes.walk_super_traits(tr_id) {
-                add_methods(
-                    &self.proj,
-                    &mut completions,
-                    &self.proj.scopes.get(tr).fns,
-                    true,
-                    tr,
-                    true,
-                );
-            }
+            add_methods(self, &mut completions, data.body_scope, None);
         }
 
-        let extensions = self.extensions_in_scope_for(ty);
-        for ext in extensions.iter() {
-            self.resolve_impls(ext.id);
-            for imp in self.proj.scopes.get(ext.id).impls.iter_checked() {
-                for tr in self.proj.scopes.walk_super_traits(imp.id) {
-                    add_methods(
-                        &self.proj,
-                        &mut completions,
-                        &self.proj.scopes.get(tr).fns,
-                        true,
-                        tr,
-                        false,
-                    );
-                }
-            }
-        }
-
+        let extensions = self.extensions_for(ty);
         for ext in extensions.iter() {
             let data = self.proj.scopes.get(ext.id);
-            add_methods(
-                &self.proj,
-                &mut completions,
-                &data.fns,
-                self.can_access_privates(data.scope),
-                ext.id,
-                false,
-            );
+            add_methods(self, &mut completions, data.body_scope, None);
+        }
+
+        for ut in self.proj.types[ty].as_user().into_iter().chain(extensions.iter()) {
+            for imp in self.proj.scopes.get(ut.id).iter_impls(&self.proj, true) {
+                add_methods(
+                    self,
+                    &mut completions,
+                    self.proj.scopes.get(imp.tr.id).body_scope,
+                    None,
+                );
+            }
         }
 
         self.proj.completions = Some(Completions { items: completions, method });
@@ -651,7 +627,7 @@ impl TypeChecker<'_> {
                         if utscope {
                             return;
                         }
-                        completions.push(LspItem::Fn(id, None))
+                        completions.push(id.into())
                     }
                     ValueItem::Var(id) => {
                         let var = self.proj.scopes.get(id);
@@ -666,7 +642,7 @@ impl TypeChecker<'_> {
                         completions.push(LspItem::Var(id));
                         emitted_vars.insert(var.name.data);
                     }
-                    ValueItem::StructConstructor(_, id) => completions.push(LspItem::Fn(id, None)),
+                    ValueItem::StructConstructor(_, id) => completions.push(id.into()),
                     ValueItem::UnionConstructor(_) => {}
                 }
             }
@@ -743,7 +719,7 @@ impl TypeChecker<'_> {
                         if matches!(scope.kind, ScopeKind::UserType(_)) {
                             continue;
                         }
-                        completions.push(LspItem::Fn(id, None))
+                        completions.push(id.into())
                     }
                     ValueItem::Var(id) => {
                         let var = self.proj.scopes.get(id);
@@ -752,7 +728,7 @@ impl TypeChecker<'_> {
                         }
                         completions.push(LspItem::Var(id));
                     }
-                    ValueItem::StructConstructor(_, id) => completions.push(LspItem::Fn(id, None)),
+                    ValueItem::StructConstructor(_, id) => completions.push(id.into()),
                     ValueItem::UnionConstructor(_) => {}
                 }
             }
@@ -782,9 +758,7 @@ impl TypeChecker<'_> {
             return self.check_hover(span, LspItem::Property(Some(ty), owner, param.label));
         }
 
-        if let ParamPattern::Checked(patt) = param.patt
-            && let PatternData::Variable(id) = patt.data
-        {
+        if let ParamPattern::Checked(PatternData::Variable(id)) = param.patt {
             self.check_hover(span, LspItem::FnParamLabel(id, fid));
         }
     }
@@ -853,26 +827,20 @@ impl<'a> TypeChecker<'a> {
                 }
             }
 
-            let (impls, blocks, block_data, subscripts) =
-                this.declare_impl_blocks(&base.impls, &base.operators);
+            let type_params = this.declare_type_params(&base.type_params);
             let mut fns = this.declare_fns(&base.functions);
-            let ut = this.ut_from_stuff(
+            let impls =
+                this.declare_impl_blocks(&type_params, &base.impls, &base.operators, &mut fns);
+            let ut = this.create_user_type(
                 attrs,
                 base.name,
                 base.public,
                 members,
                 UserTypeKind::Struct(init.id, packed),
-                &base.type_params,
-                &fns,
-                impls,
-                block_data,
-                &blocks,
-                &subscripts,
+                type_params,
                 span,
             );
-
-            fns.extend(subscripts);
-            (ut, init, fns, blocks)
+            (ut, init, fns, impls)
         });
 
         let scope = ut.body_scope;
@@ -890,8 +858,9 @@ impl<'a> TypeChecker<'a> {
 
         self.proj.scopes[scope].kind = ScopeKind::UserType(id);
         self.proj.scopes.get_mut(init.id).constructor = Some(id);
+        self.proj.scopes.get_mut(id).impls = self.declare_impls(id, impls);
 
-        DStmt::Struct { init, id, impls, fns }
+        DStmt::UserType { id, fns }
     }
 
     fn declare_union(
@@ -935,8 +904,6 @@ impl<'a> TypeChecker<'a> {
                 });
             }
 
-            let (impls, blocks, block_data, subscripts) =
-                this.declare_impl_blocks(&base.impls, &base.operators);
             let mut enum_union = true;
             for variant in pvariants {
                 let mut params = params.clone();
@@ -994,33 +961,32 @@ impl<'a> TypeChecker<'a> {
             }
             let member_cons_len = fns.len();
             fns.extend(this.declare_fns_iter(&base.functions));
+            let type_params = this.declare_type_params(&base.type_params);
+            let impls =
+                this.declare_impl_blocks(&type_params, &base.impls, &base.operators, &mut fns);
             let tag = tag.map(|tag| this.declare_type_hint(tag)).unwrap_or_default();
-            let ut = this.ut_from_stuff(
+            let ut = this.create_user_type(
                 attrs,
                 base.name,
                 base.public,
                 members,
                 UserTypeKind::Union(Union { tag, variants, enum_union }),
-                &base.type_params,
-                &fns,
-                impls,
-                block_data,
-                &blocks,
-                &subscripts,
+                type_params,
                 span,
             );
 
-            fns.extend(subscripts);
-            (ut, blocks, fns, member_cons_len)
+            (ut, impls, fns, member_cons_len)
         });
         let scope = ut.body_scope;
         let id = self.insert_user_type(ut, base.public);
+        self.proj.scopes.get_mut(id).impls = self.declare_impls(id, impls);
+
         self.proj.scopes[scope].kind = ScopeKind::UserType(id);
         for c in fns.iter().take(member_cons_len) {
             self.proj.scopes.get_mut(c.id).constructor = Some(id);
         }
 
-        DStmt::Union { id, impls, fns }
+        DStmt::UserType { id, fns }
     }
 
     fn declare_unsafe_union(&mut self, span: Span, base: &Struct, attrs: &Attributes) -> DStmt {
@@ -1037,29 +1003,26 @@ impl<'a> TypeChecker<'a> {
                 }
             }
 
-            let (impls, blocks, block_data, subscripts) =
-                this.declare_impl_blocks(&base.impls, &base.operators);
+            let type_params = this.declare_type_params(&base.type_params);
             let mut fns = this.declare_fns(&base.functions);
-            let ut = this.ut_from_stuff(
+            let impls =
+                this.declare_impl_blocks(&type_params, &base.impls, &base.operators, &mut fns);
+            let ut = this.create_user_type(
                 attrs,
                 base.name,
                 base.public,
                 members,
                 UserTypeKind::UnsafeUnion,
-                &base.type_params,
-                &fns,
-                impls,
-                block_data,
-                &blocks,
-                &subscripts,
+                type_params,
                 span,
             );
-            fns.extend(subscripts);
-            (ut, fns, blocks)
+            (ut, fns, impls)
         });
 
         let scope = ut.body_scope;
         let id = self.insert_user_type(ut, base.public);
+        self.proj.scopes.get_mut(id).impls = self.declare_impls(id, impls);
+
         let prev = self.proj.scopes[self.current]
             .vns
             .insert(base.name.data, Vis::new(ValueItem::UnionConstructor(id), base.public));
@@ -1071,7 +1034,7 @@ impl<'a> TypeChecker<'a> {
         }
         self.proj.scopes[scope].kind = ScopeKind::UserType(id);
 
-        DStmt::Union { id, impls, fns }
+        DStmt::UserType { id, fns }
     }
 
     fn declare_stmt(&mut self, autouse: &mut Vec<ScopeId>, stmt: &PStmt) -> Option<DStmt> {
@@ -1095,7 +1058,7 @@ impl<'a> TypeChecker<'a> {
             &PStmtData::Module { public, name, ref body, .. } => {
                 let parent = self.current;
                 self.enter(ScopeKind::Module(name), |this| {
-                    this.check_hover(name.span, this.current.into());
+                    this.check_hover(name.span, this.current);
                     if this.proj.scopes[parent]
                         .tns
                         .insert(name.data, Vis::new(this.current.into(), public))
@@ -1157,84 +1120,93 @@ impl<'a> TypeChecker<'a> {
             &PStmtData::Trait {
                 public,
                 name,
+                is_sealed,
+                is_unsafe,
                 ref type_params,
-                ref impls,
+                ref super_traits,
                 ref functions,
-                sealed,
-                is_unsafe: _,
                 ref assoc_types,
             } => {
                 let (tr, fns, this_id) = self.enter(ScopeKind::None, |this| {
-                    let impls = TraitImpls::Unchecked(
-                        impls
-                            .iter()
-                            .map(|path| TraitImplData::Path(this.current, path.clone()))
-                            .collect(),
-                    );
                     let this_id = this.insert(
-                        UserType::template(
-                            Located::new(name.span, Strings::THIS_TYPE),
-                            this.current,
-                            impls.clone(),
-                        ),
+                        UserType::type_param(Located::new(name.span, Strings::THIS_TYPE)),
                         false,
                         false,
                     );
+
                     let fns = this.declare_fns(functions);
-                    let assoc_types = this.declare_associated_types(assoc_types);
-                    let tr = this.ut_from_stuff(
-                        &stmt.attrs,
-                        name,
+                    let tr = Trait {
+                        attrs: TraitAttrs::relevant(&stmt.attrs, &mut this.proj),
+                        body_scope: this.current,
                         public,
-                        Default::default(),
-                        UserTypeKind::Trait { this: this_id, sealed, assoc_types },
-                        type_params,
-                        &fns,
-                        impls,
-                        vec![],
-                        &[],
-                        &[],
-                        stmt.data.span,
-                    );
+                        name,
+                        type_params: this.declare_type_params(type_params),
+                        super_traits: SuperTraits::Unchecked(super_traits.clone()),
+                        assoc_types: this.declare_associated_types(assoc_types),
+                        this: this_id,
+                        is_sealed,
+                        is_unsafe,
+                        implementors: vec![],
+                        full_span: stmt.data.span,
+                    };
                     (tr, fns, this_id)
                 });
 
                 let scope = tr.body_scope;
-                let id = self.insert_user_type(tr, public);
-                let imp = GenericTrait::from_type_params(&self.proj.scopes, &self.proj.types, id);
-                let impls = self.proj.scopes.get_mut(this_id).impls.as_unchecked_mut().unwrap();
-                impls.push(TraitImplData::Checked(imp));
-                self.proj.scopes[scope].kind = ScopeKind::UserType(id);
+                let id = self.insert::<TraitId>(tr, public, true);
+                if let Some(name) = self.proj.scopes.get(id).attrs.lang {
+                    self.proj.scopes.lang_traits.insert(name, id);
+                }
+
+                let this_ty = self
+                    .proj
+                    .types
+                    .insert(Type::User(GenericUserType::new(this_id, TypeArgs::default())));
+                let impl_id = self.proj.impls.alloc(TraitImpl::Unchecked(
+                    this_ty,
+                    UncheckedImpl::type_param(
+                        UncheckedImplTrait::Known(GenericTrait::from_type_params(
+                            &self.proj.scopes,
+                            &self.proj.types,
+                            id,
+                        )),
+                        this_id,
+                        scope,
+                        Span::nowhere(),
+                    ),
+                ));
+
+                self.proj.scopes.get_mut(this_id).impls.push(impl_id);
+                self.proj.scopes[scope].kind = ScopeKind::Trait(id);
                 DStmt::Trait { id, fns }
             }
-            PStmtData::Extension { public, name, ty, type_params, impls, functions, operators } => {
-                let (ext, impl_blocks, fns) = self.enter(ScopeKind::None, |this| {
-                    let (impls, blocks, block_data, subscripts) =
-                        this.declare_impl_blocks(impls, operators);
+            PStmtData::Extension { span, ty, type_params, impls, functions, operators } => {
+                let (ext, impls, fns) = self.enter(ScopeKind::None, |this| {
+                    let type_params = this.declare_type_params(type_params);
                     let mut fns = this.declare_fns(functions);
+                    let impls = this.declare_impl_blocks(&type_params, impls, operators, &mut fns);
                     let ty = this.declare_type_hint(*ty);
-                    let ext = this.ut_from_stuff(
+                    let ext = this.create_user_type(
                         &stmt.attrs,
-                        *name,
-                        *public,
+                        Located::new(*span, Strings::EXTENSION_NAME),
+                        false,
                         Default::default(),
-                        UserTypeKind::Extension(ty),
+                        UserTypeKind::Extension(Some(ty)),
                         type_params,
-                        &fns,
-                        impls,
-                        block_data,
-                        &blocks,
-                        &subscripts,
                         stmt.data.span,
                     );
-                    fns.extend(subscripts);
-                    (ext, blocks, fns)
+                    (ext, impls, fns)
                 });
 
                 let scope = ext.body_scope;
-                let id = self.insert_user_type(ext, *public);
+                let id = self.insert::<UserTypeId>(ext, false, false);
+                if let Some(name) = self.proj.scopes.get(id).attrs.lang {
+                    self.proj.scopes.lang_types.insert(name, id);
+                }
+                self.proj.scopes.get_mut(id).impls = self.declare_impls(id, impls);
+
                 self.proj.scopes[scope].kind = ScopeKind::UserType(id);
-                DStmt::Extension { id, impls: impl_blocks, fns }
+                DStmt::Extension { id, fns }
             }
             &PStmtData::Alias { public, name, ref type_params, ty } => {
                 // TODO: ensure all type params are referenced
@@ -1242,21 +1214,15 @@ impl<'a> TypeChecker<'a> {
                     public,
                     name,
                     type_params: this.declare_type_params(type_params),
-                    ty: this.declare_type_hint(ty),
+                    ty: Some(this.declare_type_hint(ty)),
                     body_scope: this.current,
                 });
                 let id = self.insert::<AliasId>(value, public, true);
                 DStmt::Alias { id }
             }
             PStmtData::Fn(f) => DStmt::Fn(self.declare_fn(Located::new(stmt.data.span, f))),
-            &PStmtData::Binding { public, constant, mut name, mutable, ty, value, is_extern } => {
+            &PStmtData::Binding { public, constant, name, mutable, ty, value, is_extern } => {
                 let ty = self.declare_type_hint(ty);
-                let mut unused = true;
-                if name.data == Strings::UNDERSCORE {
-                    name.data = Strings::EMPTY;
-                    unused = false;
-                }
-
                 let attrs = VariableAttrs::relevant(&stmt.attrs, &mut self.proj);
                 DStmt::Binding {
                     id: self.insert::<VariableId>(
@@ -1265,7 +1231,7 @@ impl<'a> TypeChecker<'a> {
                             public,
                             name,
                             ty,
-                            unused,
+                            unused: true,
                             is_extern,
                             kind: [VariableKind::Static, VariableKind::Const][constant as usize],
                             has_hint: true,
@@ -1309,7 +1275,7 @@ impl<'a> TypeChecker<'a> {
             self.error(Error::new("only imported extern functions may be variadic", f.name.span))
         }
 
-        let attrs = FunctionAttrs::relevant(f.name.data, &f.attrs, &mut self.proj);
+        let attrs = FunctionAttrs::relevant(f.name.data, &f.attrs, &mut self.proj, false);
         let id = self.insert::<FunctionId>(
             Function {
                 public: f.public,
@@ -1383,115 +1349,28 @@ impl<'a> TypeChecker<'a> {
         })
     }
 
-    fn declare_op_fn(
-        &mut self,
-        f: &Located<OperatorFn>,
-        impls: &mut Vec<TraitImplData>,
-        blocks: &mut Vec<DImplBlock>,
-        data: &mut Vec<ImplBlockData>,
-        subscripts: &mut Vec<DFn>,
-    ) {
-        if self.check_disabled(&f.data.attrs, f.span, false) {
-            return;
-        }
-
-        let full_span = f.span;
-        let f = &f.data;
-
-        use OperatorFnType as O;
-        let (tr_name, fn_name, ty_args) =
-            match f.name.data {
-                O::Minus if f.params.len() > 1 => {
-                    let op = BinaryOp::try_from(f.name.data).unwrap();
-                    let (tr_name, fn_name) = self.get_binary_op(op).unwrap();
-                    (
-                        tr_name,
-                        fn_name,
-                        vec![
-                            f.params
-                                .get(1)
-                                .map(|p| p.ty)
-                                .unwrap_or(Located::nowhere(PExprArena::HINT_ERROR)),
-                            f.ret.unwrap_or(PExprArena::HINT_VOID),
-                        ],
-                    )
-                }
-                O::Minus | O::Bang => {
-                    let op = UnaryOp::try_from_postfix_fn(f.name.data).unwrap();
-                    let (tr_name, fn_name) = self.get_unary_op(op).unwrap();
-                    (tr_name, fn_name, vec![f.ret.unwrap_or(PExprArena::HINT_VOID)])
-                }
-                O::Increment | O::Decrement => {
-                    let op = UnaryOp::try_from_postfix_fn(f.name.data).unwrap();
-                    let (tr_name, fn_name) = self.get_unary_op(op).unwrap();
-                    (tr_name, fn_name, vec![])
-                }
-                O::Subscript | O::SubscriptAssign => {
-                    let name = intern!(self, "$sub{}", subscripts.len());
-                    subscripts.push(self.declare_fn(Located::new(
-                        full_span,
-                        &Fn::from_operator_fn(name, f.clone()),
-                    )));
-                    return;
-                }
-                _ => {
-                    let op = BinaryOp::try_from(f.name.data).unwrap();
-                    let (tr_name, fn_name) = self.get_binary_op(op).unwrap();
-                    if let Some(p) =
-                        f.params.get(1).filter(|_| matches!(f.name.data, O::Cmp | O::Eq)).cloned()
-                    {
-                        if let TypeHintData::Ptr(inner) = self.parsed.hints.get(p.ty.data) {
-                            (tr_name, fn_name, vec![*inner])
-                        } else {
-                            // impl check will take care of issuing an error for this case
-                            (tr_name, fn_name, vec![p.ty])
-                        }
-                    } else {
-                        let mut args = vec![
-                            f.params
-                                .get(1)
-                                .map(|p| p.ty)
-                                .unwrap_or(Located::nowhere(PExprArena::HINT_ERROR)),
-                        ];
-                        if !op.is_assignment() {
-                            args.push(f.ret.unwrap_or(PExprArena::HINT_VOID));
-                        }
-                        (tr_name, fn_name, args)
-                    }
-                }
-            };
-
-        let span = f.name.span;
-        let mut f = Fn::from_operator_fn(fn_name, f.clone());
-        let block = self.enter(ScopeKind::Impl(impls.len()), |this| {
-            data.push(ImplBlockData {
-                type_params: this.declare_type_params(&std::mem::take(&mut f.type_params)),
-                assoc_types: Default::default(),
-            });
-            let lf = Located::new(full_span, &f);
-            DImplBlock { span: f.name.span, scope: this.current, fns: vec![this.declare_fn(lf)] }
+    fn declare_template_impls(&mut self, id: UserTypeId, paths: &[Path]) {
+        let ty = self.proj.types.insert(Type::User(GenericUserType::new(id, Default::default())));
+        let v = paths.iter().map(|path| {
+            self.proj.impls.alloc(TraitImpl::Unchecked(
+                ty,
+                UncheckedImpl::type_param(
+                    UncheckedImplTrait::Path(path.clone()),
+                    id,
+                    self.current,
+                    path.span(),
+                ),
+            ))
         });
-        impls.push(TraitImplData::Operator { tr: tr_name, ty_args, span, scope: block.scope });
-        blocks.push(block);
+        self.proj.scopes.get_mut(id).impls = v.collect();
     }
 
     fn declare_type_params(&mut self, vec: &TypeParams) -> Vec<UserTypeId> {
         vec.iter()
             .map(|(name, impls)| {
-                self.insert(
-                    UserType::template(
-                        *name,
-                        self.current,
-                        TraitImpls::Unchecked(
-                            impls
-                                .iter()
-                                .map(|path| TraitImplData::Path(self.current, path.clone()))
-                                .collect(),
-                        ),
-                    ),
-                    false,
-                    true,
-                )
+                let id = self.insert(UserType::type_param(*name), false, true);
+                self.declare_template_impls(id, impls);
+                id
             })
             .collect()
     }
@@ -1499,43 +1378,29 @@ impl<'a> TypeChecker<'a> {
     fn declare_associated_types(&mut self, vec: &TypeParams) -> HashMap<StrId, UserTypeId> {
         vec.iter()
             .map(|(name, impls)| {
-                (
-                    name.data,
-                    self.insert(
-                        UserType::template(
-                            *name,
-                            self.current,
-                            TraitImpls::Unchecked(
-                                impls
-                                    .iter()
-                                    .map(|path| TraitImplData::Path(self.current, path.clone()))
-                                    .collect(),
-                            ),
-                        ),
-                        false,
-                        true,
-                    ),
-                )
+                let id = self.insert(UserType::type_param(*name), false, true);
+                self.declare_template_impls(id, impls);
+                (name.data, id)
             })
             .collect()
     }
 
     fn declare_impl_blocks(
         &mut self,
+        ut_type_params: &[UserTypeId],
         blocks: &[Located<ImplBlock>],
         operators: &[Located<OperatorFn>],
-    ) -> (TraitImpls, Vec<DImplBlock>, Vec<ImplBlockData>, Vec<DFn>) {
+        fns: &mut Vec<DFn>,
+    ) -> Vec<(ImplId, UncheckedImpl)> {
         let mut impls = Vec::new();
-        let mut declared_blocks = Vec::new();
-        let mut subscripts = Vec::new();
-        let mut data = Vec::new();
         for block in blocks {
             let ImplBlock { path, functions, type_params, attrs, assoc_types } = &block.data;
             if self.check_disabled(attrs, block.span, true) {
                 continue;
             }
 
-            let block = self.enter(ScopeKind::Impl(impls.len()), |this| {
+            let impl_id = self.proj.impls.alloc(TraitImpl::None);
+            self.enter(ScopeKind::Impl(impl_id), |this| {
                 let mut atypes = HashMap::with_capacity(assoc_types.len());
                 for (name, hint) in assoc_types {
                     let prev = atypes
@@ -1546,26 +1411,149 @@ impl<'a> TypeChecker<'a> {
                     }
                 }
 
-                data.push(ImplBlockData {
-                    type_params: this.declare_type_params(type_params),
+                let mut block_type_params = this.declare_type_params(type_params);
+                block_type_params.extend(ut_type_params);
+                let data = UncheckedImpl {
+                    tr: UncheckedImplTrait::Path(path.clone()),
+                    type_params: block_type_params,
                     assoc_types: atypes,
-                });
-
-                DImplBlock {
-                    span: path.final_component_span(),
+                    span: path.span(),
                     scope: this.current,
-                    fns: this.declare_fns(functions),
-                }
+                    is_type_param: None,
+                };
+
+                fns.extend(this.declare_fns(functions));
+                impls.push((impl_id, data));
             });
-            impls.push(TraitImplData::Path(block.scope, path.clone()));
-            declared_blocks.push(block);
         }
 
-        for func in operators {
-            self.declare_op_fn(func, &mut impls, &mut declared_blocks, &mut data, &mut subscripts);
+        for f in operators {
+            if self.check_disabled(&f.data.attrs, f.span, false) {
+                continue;
+            }
+
+            let Some((tr_name, fn_name, ty_args)) = self.op_fn_to_tr_info(f, fns) else {
+                continue;
+            };
+
+            let full_span = f.span;
+            let mut f = Fn::from_operator_fn(fn_name, f.data.clone());
+            let impl_id = self.proj.impls.alloc(TraitImpl::None);
+            self.enter(ScopeKind::Impl(impl_id), |this| {
+                let mut block_type_params =
+                    this.declare_type_params(&std::mem::take(&mut f.type_params));
+                block_type_params.extend(ut_type_params);
+
+                let data = UncheckedImpl {
+                    tr: UncheckedImplTrait::Lang(tr_name, ty_args),
+                    type_params: block_type_params,
+                    assoc_types: Default::default(),
+                    span: f.name.span,
+                    scope: this.current,
+                    is_type_param: None,
+                };
+
+                fns.push(this.declare_fn(Located::new(full_span, &f)));
+                impls.push((impl_id, data));
+            });
         }
 
-        (TraitImpls::Unchecked(impls), declared_blocks, data, subscripts)
+        impls
+    }
+
+    fn op_fn_to_tr_info(
+        &mut self,
+        f: &Located<OperatorFn>,
+        fns: &mut Vec<DFn>,
+    ) -> Option<(LangTrait, StrId, Vec<TypeHint>)> {
+        use OperatorFnType as O;
+        let full_span = f.span;
+        let f = &f.data;
+        Some(match f.name.data {
+            O::Minus if f.params.len() > 1 => {
+                let op = BinaryOp::try_from(f.name.data).unwrap();
+                let (tr_name, fn_name) = self.get_binary_op(op).unwrap();
+                (
+                    tr_name,
+                    fn_name,
+                    vec![
+                        f.params
+                            .get(1)
+                            .map(|p| p.ty)
+                            .unwrap_or(Located::nowhere(PExprArena::HINT_ERROR)),
+                        f.ret.unwrap_or(PExprArena::HINT_VOID),
+                    ],
+                )
+            }
+            O::Minus | O::Bang => {
+                let op = UnaryOp::try_from_postfix_fn(f.name.data).unwrap();
+                let (tr_name, fn_name) = self.get_unary_op(op).unwrap();
+                (tr_name, fn_name, vec![f.ret.unwrap_or(PExprArena::HINT_VOID)])
+            }
+            O::Increment | O::Decrement => {
+                let op = UnaryOp::try_from_postfix_fn(f.name.data).unwrap();
+                let (tr_name, fn_name) = self.get_unary_op(op).unwrap();
+                (tr_name, fn_name, vec![])
+            }
+            O::Subscript | O::SubscriptAssign => {
+                let name = intern!(self, "$sub{}", fns.len());
+                fns.push(
+                    self.declare_fn(Located::new(
+                        full_span,
+                        &Fn::from_operator_fn(name, f.clone()),
+                    )),
+                );
+                return None;
+            }
+            _ => {
+                let op = BinaryOp::try_from(f.name.data).unwrap();
+                let (tr_name, fn_name) = self.get_binary_op(op).unwrap();
+                if let Some(p) =
+                    f.params.get(1).filter(|_| matches!(f.name.data, O::Cmp | O::Eq)).cloned()
+                {
+                    if let TypeHintData::Ptr(inner) = self.parsed.hints.get(p.ty.data) {
+                        (tr_name, fn_name, vec![*inner])
+                    } else {
+                        // impl check will take care of issuing an error for this case
+                        (tr_name, fn_name, vec![p.ty])
+                    }
+                } else {
+                    let mut args = vec![
+                        f.params
+                            .get(1)
+                            .map(|p| p.ty)
+                            .unwrap_or(Located::nowhere(PExprArena::HINT_ERROR)),
+                    ];
+                    if !op.is_assignment() {
+                        args.push(f.ret.unwrap_or(PExprArena::HINT_VOID));
+                    }
+                    (tr_name, fn_name, args)
+                }
+            }
+        })
+    }
+
+    fn declare_impls(
+        &mut self,
+        id: UserTypeId,
+        impls: Vec<(ImplId, UncheckedImpl)>,
+    ) -> Vec<ImplId> {
+        let ty = if let UserTypeKind::Extension(ty) = self.proj.scopes.get(id).kind {
+            ty.expect("extension declared but did not set type")
+        } else {
+            self.proj.types.insert(Type::User(GenericUserType::from_id(
+                &self.proj.scopes,
+                &self.proj.types,
+                id,
+            )))
+        };
+        impls
+            .into_iter()
+            .map(|(id, unchecked)| {
+                *self.proj.impls.get_mut(id) = TraitImpl::Unchecked(ty, unchecked);
+                id
+            })
+            .collect()
     }
 
     fn declare_type_hint(&mut self, hint: TypeHint) -> TypeId {
@@ -1573,37 +1561,35 @@ impl<'a> TypeChecker<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn ut_from_stuff(
+    fn create_user_type(
         &mut self,
         attrs: &Attributes,
         name: Located<StrId>,
         public: bool,
         members: IndexMap<StrId, CheckedMember>,
         kind: UserTypeKind,
-        type_params: &TypeParams,
-        fns: &[DFn],
-        impls: TraitImpls,
-        block_data: Vec<ImplBlockData>,
-        blocks: &[DImplBlock],
-        subscripts: &[DFn],
+        type_params: Vec<UserTypeId>,
         full_span: Span,
     ) -> UserType {
+        let attrs = UserTypeAttrs::relevant(attrs, &mut self.proj);
+        if attrs.layout == Layout::Transparent
+            && (!matches!(kind, UserTypeKind::Struct(_, false)) || members.len() != 1)
+        {
+            self.error(Error::new(
+                "'transparent' layout attribute is only valid for structs with a single member",
+                name.span,
+            ))
+        }
+
         UserType {
-            attrs: UserTypeAttrs::relevant(attrs, &mut self.proj),
+            attrs,
             name,
             public,
             kind,
-            impls,
-            impl_blocks: block_data,
+            impls: vec![],
             members,
-            type_params: self.declare_type_params(type_params),
+            type_params,
             body_scope: self.current,
-            fns: fns
-                .iter()
-                .chain(blocks.iter().flat_map(|block| block.fns.iter()))
-                .map(|f| Vis::new(f.id, self.proj.scopes.get(f.id).public))
-                .collect(),
-            subscripts: subscripts.iter().map(|s| s.id).collect(),
             members_resolved: false,
             recursive: false,
             interior_mutable: false,
@@ -1660,75 +1646,44 @@ impl TypeChecker<'_> {
                     self.check_hover(name.span, LspItem::Module(scope, false));
                 }
             }
-            DStmt::Struct { init, id, impls, fns } => {
+            DStmt::UserType { id, fns } => {
                 self.enter_id(self.proj.scopes.get(id).body_scope, |this| {
-                    this.resolve_impls(id);
                     this.resolve_members(id);
-                    this.check_fn(init);
-                    let this_ty = Type::User(GenericUserType::from_id(
-                        &this.proj.scopes,
-                        &this.proj.types,
-                        id,
-                    ));
-                    let this_ty = this.proj.types.insert(this_ty);
-                    this.resolve_dependencies(id, this_ty, true);
-                    this.check_impl_blocks(this_ty, id, impls);
-
                     for f in fns {
                         this.check_fn(f);
                     }
-                });
-            }
-            DStmt::Union { id, impls, fns } => {
-                self.enter_id(self.proj.scopes.get(id).body_scope, |this| {
-                    this.resolve_impls(id);
-                    this.resolve_members(id);
-                    let this_ty = Type::User(GenericUserType::from_id(
+
+                    let this_ty = this.proj.types.insert(Type::User(GenericUserType::from_id(
                         &this.proj.scopes,
                         &this.proj.types,
                         id,
-                    ));
-                    let this_ty = this.proj.types.insert(this_ty);
+                    )));
                     this.resolve_dependencies(id, this_ty, true);
-                    this.check_impl_blocks(this_ty, id, impls);
-
-                    for f in fns {
-                        this.check_fn(f);
-                    }
+                    this.check_impl_blocks(this_ty, id);
                 });
             }
             DStmt::Trait { id, fns } => {
                 self.enter_id(self.proj.scopes.get(id).body_scope, |this| {
-                    // TODO: disable errors so this doesn't cause duplicate errors
-                    this.resolve_impls(*this.proj.scopes.get(id).kind.as_trait().unwrap().0);
-                    if this.check_trait_dependencies(id) {
-                        // FIXME: this error also shows for traits that have a recursive trait in
-                        // their impls
-                        this.proj
-                            .diag
-                            .report(Error::recursive_trait(this.proj.scopes.get(id).name.span));
-                    }
+                    this.resolve_super_traits(id);
                     for f in fns {
                         this.check_fn(f);
                     }
                 });
             }
-            DStmt::Extension { id, impls, fns } => {
+            DStmt::Extension { id, fns } => {
                 self.enter_id(self.proj.scopes.get(id).body_scope, |this| {
-                    let ty = resolve_type!(
-                        this,
-                        *this.proj.scopes.get_mut(id).kind.as_extension_mut().unwrap()
-                    );
-                    this.resolve_impls(id);
-                    this.check_impl_blocks(ty, id, impls);
+                    let ty = this.resolve_ext_type(id);
                     for f in fns {
                         this.check_fn(f);
                     }
+
+                    this.check_impl_blocks(ty, id);
                 });
             }
             DStmt::Alias { id } => {
                 self.enter_id(self.proj.scopes.get(id).body_scope, |this| {
-                    this.resolve_alias(this.proj.scopes.get(id).name.span, id);
+                    this.check_hover(this.proj.scopes.get(id).name.span, id);
+                    this.resolve_alias(id);
                 });
             }
             DStmt::Expr(expr) => return Some(CStmt::Expr(self.check_expr(expr, None))),
@@ -1749,7 +1704,7 @@ impl TypeChecker<'_> {
                             return self
                                 .error(Error::must_be_irrefutable("let binding pattern", span));
                         }
-                        return Some(CStmt::Let(patt, Some(value)));
+                        return Some(CStmt::Let(patt.data, Some(value)));
                     } else {
                         let patt = self.check_pattern(PatternParams {
                             scrutinee: ty,
@@ -1762,13 +1717,8 @@ impl TypeChecker<'_> {
                             return self
                                 .error(Error::must_be_irrefutable("let binding pattern", span));
                         }
-                        if !matches!(patt.data, PatternData::Variable(_)) {
-                            return self.error(Error::new(
-                                "must provide a value with a destructuring assignment",
-                                span,
-                            ));
-                        }
-                        return Some(CStmt::Let(patt, None));
+                        return self
+                            .error(Error::new("variable binding must be initialized", span));
                     }
                 } else if let Some(value) = value {
                     let span = patt.span;
@@ -1784,15 +1734,15 @@ impl TypeChecker<'_> {
                         return self.error(Error::must_be_irrefutable("let binding pattern", span));
                     }
 
-                    return Some(CStmt::Let(patt, Some(value)));
+                    return Some(CStmt::Let(patt.data, Some(value)));
                 } else {
                     return self.error(Error::new("cannot infer type", patt.span));
                 }
             }
             DStmt::Defer(expr) => {
-                return Some(CStmt::Defer(
-                    self.enter(ScopeKind::Defer, |this| this.check_expr(expr, None)),
-                ));
+                let (scope, expr) = self
+                    .enter(ScopeKind::Defer, |this| (this.current, this.check_expr(expr, None)));
+                return Some(CStmt::Defer(expr, scope));
             }
             DStmt::Guard { cond, body } => {
                 let (cond, vars) = self.check_condition(cond);
@@ -1843,12 +1793,22 @@ impl TypeChecker<'_> {
         has: FunctionId,
         wants: FunctionId,
         ty_args: &TypeArgs,
+        span: &mut Span,
     ) -> Result<(), String> {
         let hfn = self.proj.scopes.get(has);
         let wfn = self.proj.scopes.get(wants);
-        if wfn.is_unsafe && !hfn.is_unsafe {
+        // if wfn.is_extern != hfn.is_extern {
+        //     return Err(format!(
+        //         "function '{}'{} must be declared extern",
+        //         if wfn.is_extern { "" } else { "not" },
+        //         strdata!(self, hfn.name.data)
+        //     ));
+        // }
+
+        if wfn.is_unsafe != hfn.is_unsafe {
             return Err(format!(
-                "function '{}' must be declared unsafe",
+                "function '{}'{} must be declared unsafe",
+                if wfn.is_unsafe { "" } else { "not" },
                 strdata!(self, hfn.name.data)
             ));
         }
@@ -1865,7 +1825,7 @@ impl TypeChecker<'_> {
         }
 
         if let Some((tr, this)) = tr {
-            ty_args.insert(*self.proj.scopes.get(tr).kind.as_trait().unwrap().0, this);
+            ty_args.insert(self.proj.scopes.get(tr).this, this);
         }
 
         let compare_types = |has: TypeId, wants: TypeId| {
@@ -1895,22 +1855,21 @@ impl TypeChecker<'_> {
         for (&s, &t) in hfn.type_params.iter().zip(wfn.type_params.iter()) {
             let s = self.proj.scopes.get(s);
             let t = self.proj.scopes.get(t);
-            let name = t.name.data;
+            let name = s.name.data;
             // TODO: dont enfore impl order
-            for (s, t) in s.impls.iter_checked().zip(t.impls.iter_checked()) {
-                for (&s, &t) in s.ty_args.values().zip(t.ty_args.values()) {
-                    if let Err(err) = compare_types(s, t) {
-                        let data = strdata!(self, name);
-                        return Err(format!("type parameter '{data}' is incorrect: {err}"));
-                    }
+            for (s, t) in s.iter_impls(&self.proj, false).zip(t.iter_impls(&self.proj, false)) {
+                let wants = t.tr.with_templates(&self.proj.types, &ty_args);
+                if s.tr != wants {
+                    *span = s.span;
+                    return Err(format!(
+                        "expected trait {}, found {}",
+                        self.proj.fmt_tr(&wants),
+                        self.proj.fmt_tr(&s.tr),
+                    ));
                 }
             }
 
-            if s.impls
-                .as_checked()
-                .zip(t.impls.as_checked())
-                .is_some_and(|(l, r)| l.len() != r.len())
-            {
+            if s.impls.len() != t.impls.len() {
                 return Err(format!("type parameter '{}' is incorrect", strdata!(self, name)));
             }
         }
@@ -1934,45 +1893,29 @@ impl TypeChecker<'_> {
         Ok(())
     }
 
-    fn check_impl_block(
-        &mut self,
-        this: TypeId,
-        mut tr: GenericTrait,
-        data: &ImplBlockData,
-        block: DImplBlock,
-    ) {
-        let tr_ut = self.proj.scopes.get(tr.id);
-        let tr_name = tr_ut.name.data;
-        let (&this_id, &sealed, tr_assoc_types) = tr_ut.kind.as_trait().unwrap();
-        let tr_assoc_types = tr_assoc_types.clone();
-        if sealed && !self.can_access_privates(tr_ut.scope) {
+    fn check_impl_block(&mut self, this: TypeId, imp: &CheckedImpl) {
+        let mut tr = imp.tr.clone();
+        for (&type_param, &ty) in imp.tr.ty_args.iter() {
+            self.check_bounds(&imp.tr.ty_args, ty, type_param, imp.span);
+        }
+
+        let tr_data = self.proj.scopes.get(tr.id);
+        let this_id = tr_data.this;
+        if tr_data.is_sealed && !self.can_access_privates(tr_data.scope) {
             self.error(Error::new(
-                format!("cannot implement sealed trait '{}'", strdata!(self, tr_ut.name.data)),
-                block.span,
+                format!("cannot implement sealed trait '{}'", strdata!(self, tr_data.name.data)),
+                imp.span,
             ))
         }
 
-        for (&name, typ) in data.assoc_types.iter() {
-            let Some(&id) = tr_assoc_types.get(&name) else {
-                self.proj.diag.report(Error::new(
-                    format!(
-                        "trait '{}' has no associated type '{}'",
-                        strdata!(self, tr_name),
-                        strdata!(self, name)
-                    ),
-                    typ.span,
-                ));
-                continue;
-            };
-
+        for (&id, typ) in imp.assoc_types.iter() {
             self.check_hover(typ.span, LspItem::Type(id));
             self.check_bounds(&TypeArgs::default(), typ.data, id, typ.span);
             tr.ty_args.insert(id, typ.data);
         }
 
-        self.resolve_impls(tr.id);
-        let exts = self.extensions_in_scope(self.current);
-        for mut dep in self.proj.scopes.get(tr.id).impls.clone().into_iter_checked() {
+        self.resolve_super_traits(tr.id);
+        for mut dep in self.proj.scopes.get(tr.id).super_traits.iter_checked_owned() {
             for ty_arg in dep.ty_args.values_mut() {
                 if self.proj.types[*ty_arg].as_user().is_some_and(|ut| ut.id == this_id) {
                     *ty_arg = this;
@@ -1980,26 +1923,27 @@ impl TypeChecker<'_> {
             }
 
             dep.fill_templates(&self.proj.types, &tr.ty_args);
-            if self.find_trait_impl(&exts, dep.id, this).is_none_or(|tr| tr != dep) {
+            if !self.implements_trait(this, &dep) {
                 self.proj.diag.report(Error::new(
                     format!(
                         "trait '{}' requires implementation of trait '{}'",
-                        self.proj.fmt_ut(&tr),
-                        self.proj.fmt_ut(&dep),
+                        self.proj.fmt_tr(&tr),
+                        self.proj.fmt_tr(&dep),
                     ),
-                    block.span,
+                    imp.span,
                 ));
             }
         }
 
-        let mut required = self.proj.scopes.get(tr.id).fns.clone();
-        for f in block.fns {
-            let fn_name = self.proj.scopes.get(f.id).name;
-            let lhs = f.id;
+        let collect_fns = |scope: ScopeId| {
+            self.proj.scopes[scope].vns.values().flat_map(|v| v.into_fn().ok()).collect::<Vec<_>>()
+        };
 
-            self.check_fn(f);
+        let mut required = collect_fns(self.proj.scopes.get(tr.id).body_scope);
+        for lhs in collect_fns(imp.scope.unwrap()) {
+            let fn_name = self.proj.scopes.get(lhs).name;
             let Some(pos) =
-                required.iter().position(|&id| self.proj.scopes.get(*id).name.data == fn_name.data)
+                required.iter().position(|&id| self.proj.scopes.get(id).name.data == fn_name.data)
             else {
                 self.proj.diag.report(Error::new(
                     format!(
@@ -2012,24 +1956,25 @@ impl TypeChecker<'_> {
                 continue;
             };
 
-            let rhs = *required.swap_remove(pos);
+            let rhs = required.swap_remove(pos);
             self.resolve_proto(rhs);
             let this = Some((tr.id, this));
-            if let Err(why) = self.check_signature_match(this, lhs, rhs, &tr.ty_args) {
+            let mut span = fn_name.span;
+            if let Err(why) = self.check_signature_match(this, lhs, rhs, &tr.ty_args, &mut span) {
                 let data = strdata!(self, fn_name.data);
-                self.error(Error::invalid_impl(data, &why, fn_name.span))
+                self.error(Error::invalid_impl(data, &why, span))
             }
         }
 
         for id in required {
-            if !self.proj.scopes.get(*id).has_body {
+            if !self.proj.scopes.get(id).has_body {
                 self.error(Error::new(
                     format!(
                         "must implement '{}::{}'",
-                        self.proj.fmt_ut(&tr),
-                        strdata!(self, self.proj.scopes.get(*id).name.data)
+                        self.proj.fmt_tr(&tr),
+                        strdata!(self, self.proj.scopes.get(id).name.data)
                     ),
-                    block.span,
+                    imp.span,
                 ))
             }
         }
@@ -2037,9 +1982,8 @@ impl TypeChecker<'_> {
 
     fn check_fn(&mut self, DFn { id, body }: DFn) {
         // TODO: disallow private type in public interface
+        self.resolve_proto(id);
         self.enter_id_and_resolve(self.proj.scopes.get(id).body_scope, |this| {
-            this.resolve_proto(id);
-
             let mut names = vec![];
             for i in 0..this.proj.scopes.get(id).params.len() {
                 let Some(patt) = this.proj.scopes.get_mut(id).params[i].patt.as_unchecked().cloned() else {
@@ -2057,7 +2001,7 @@ impl TypeChecker<'_> {
                 if !patt.irrefutable {
                     this.error(Error::must_be_irrefutable("parameter patterns", span))
                 } else {
-                    this.proj.scopes.get_mut(id).params[i].patt = ParamPattern::Checked(patt);
+                    this.proj.scopes.get_mut(id).params[i].patt = ParamPattern::Checked(patt.data);
                 }
 
                 names.push(this.proj.strings.get_or_intern(format!("{i}")));
@@ -2084,9 +2028,10 @@ impl TypeChecker<'_> {
                 if let Some(panic) = panic {
                     let fn_name = func.name;
                     this.resolve_proto(panic);
-                    if let Err(why) = this.check_signature_match(None, id, panic, &TypeArgs::default()) {
+                    let mut span = fn_name.span;
+                    if let Err(why) = this.check_signature_match(None, id, panic, &TypeArgs::default(), &mut span) {
                         let data = strdata!(this, fn_name.data);
-                        this.proj.diag.report(Error::invalid_impl(data, &why, fn_name.span))
+                        this.proj.diag.report(Error::invalid_impl(data, &why, span))
                     }
                 }
             } else if func.attrs.test_runner {
@@ -2108,7 +2053,7 @@ impl TypeChecker<'_> {
                     .iter()
                     .flat_map(|param| Some((param.label, this.arena.typed(
                         param.ty,
-                        CExprData::Var(*param.patt.as_checked().and_then(|p| p.data.as_variable())?)
+                        CExprData::Var(*param.patt.as_checked().and_then(|p| p.as_variable())?)
                     ))))
                     .collect();
                 let variant = func.name.data;
@@ -2122,6 +2067,10 @@ impl TypeChecker<'_> {
                     },
                 ));
                 return;
+            }
+
+            if func.is_extern && body.is_none() {
+                this.proj.scopes.get_mut(id).attrs.no_mangle = true;
             }
 
             let Some(body) = body else {
@@ -2159,41 +2108,25 @@ impl TypeChecker<'_> {
         });
     }
 
-    fn check_impl_blocks(&mut self, this_ty: TypeId, id: UserTypeId, impls: Vec<DImplBlock>) {
+    fn check_impl_blocks(&mut self, this_ty: TypeId, id: UserTypeId) {
         let mut seen = HashSet::new();
-        for (i, block) in impls.into_iter().enumerate() {
-            self.enter_id(block.scope, |this| {
-                let mut block_data = this.proj.scopes.get(id).impl_blocks[i].clone();
-                for &id in block_data.type_params.iter() {
-                    this.resolve_impls(id);
+        for id in self.proj.scopes.get(id).impls.clone() {
+            let Some(imp) = self.proj.impls.get(id).as_checked() else {
+                continue;
+            };
+            let scope = imp.scope.unwrap();
+            let imp = imp.clone();
+            self.enter_id(scope, |this| {
+                // TODOX: more sophisticated conflict check and access check
+                if !seen.insert(imp.tr.clone()) {
+                    this.proj.diag.report(Error::new(
+                        format!("duplicate implementation of trait {}", this.proj.fmt_tr(&imp.tr)),
+                        imp.span,
+                    ))
                 }
 
-                for (name, typ) in block_data.assoc_types.iter_mut() {
-                    typ.data = resolve_type!(
-                        this,
-                        this.proj.scopes.get_mut(id).impl_blocks[i]
-                            .assoc_types
-                            .get_mut(name)
-                            .unwrap()
-                            .data
-                    );
-                }
-
-                if let Some(gtr) = this.proj.scopes.get(id).impls.get_checked(i).cloned() {
-                    if !seen.insert(gtr.clone()) {
-                        this.proj.diag.report(Error::new(
-                            format!("duplicate implementation of trait {}", this.proj.fmt_ut(&gtr)),
-                            block.span,
-                        ))
-                    }
-
-                    this.check_impl_block(this_ty, gtr, &block_data, block);
-                } else {
-                    for f in block.fns {
-                        this.check_fn(f);
-                    }
-                }
-            });
+                this.check_impl_block(this_ty, &imp);
+            })
         }
     }
 
@@ -2209,7 +2142,7 @@ impl TypeChecker<'_> {
             bail!(self, Error::invalid_operator(op, self.proj.fmt_ty(lhs.ty), span));
         };
 
-        let Some(tr_id) = self.proj.scopes.lang_types.get(&trait_name).copied() else {
+        let Some(tr_id) = self.proj.scopes.lang_traits.get(&trait_name).copied() else {
             return self.error(Error::no_lang_item(trait_name, lhs_span));
         };
 
@@ -2255,7 +2188,7 @@ impl TypeChecker<'_> {
             bail!(self, Error::invalid_operator(op, self.proj.fmt_ty(expr.ty), span));
         };
 
-        let Some(tr_id) = self.proj.scopes.lang_types.get(&trait_name).copied() else {
+        let Some(tr_id) = self.proj.scopes.lang_traits.get(&trait_name).copied() else {
             return self.error(Error::no_lang_item(trait_name, span));
         };
 
@@ -2338,7 +2271,7 @@ impl TypeChecker<'_> {
         let mut typ = None;
         match self.arena.get(inner.data) {
             CExprData::Call { callee, .. } => {
-                if matches!(self.arena.get(callee.data), CExprData::Fn(f, _)
+                if matches!(self.arena.get(callee.data), CExprData::Fn(f)
                     if self.proj.scopes.get(f.id).typ.is_subscript())
                 {
                     self.proj.diag.report(Warning::subscript_addr(span));
@@ -2349,7 +2282,7 @@ impl TypeChecker<'_> {
                     self.proj.diag.report(Warning::bitfield_addr(span));
                 }
             }
-            CExprData::Fn(func, _) | CExprData::MemFn(MemberFn { func, .. }, _) => {
+            CExprData::Fn(func) | CExprData::MemFn(MemberFn { func, .. }) => {
                 if matches!(op, UnaryOp::AddrRaw | UnaryOp::AddrRawMut) {
                     self.proj.diag.report(Error::new("cannot create raw pointer to function", span))
                 } else if matches!(op, UnaryOp::AddrMut) {
@@ -2392,18 +2325,15 @@ impl TypeChecker<'_> {
                 }
             }
             Type::User(ut) if self.proj.scopes.get(ut.id).kind.is_template() => {
-                let op_fn_tr = self.proj.scopes.lang_types.get(&LangType::OpFn).copied()?;
+                let op_fn_tr = self.proj.scopes.lang_traits.get(&LangTrait::OpFn).copied()?;
                 let ut_id = ut.id;
-                self.resolve_impls(ut_id);
-
                 let mut tr = self
                     .proj
                     .scopes
                     .get(ut_id)
-                    .impls
-                    .iter_checked()
-                    .find(|tr| tr.id == op_fn_tr)
-                    .cloned()?;
+                    .iter_impls(&self.proj, true)
+                    .find(|imp| imp.tr.id == op_fn_tr)
+                    .map(|imp| imp.tr.clone())?;
                 if let Some(ty_args) = &self.current_call_ty_args
                     && ty_args.contains_key(&ut_id)
                 {
@@ -2412,12 +2342,12 @@ impl TypeChecker<'_> {
 
                 // tr = Fn<Tuple, Ret>
                 let ty = if let Some(i) = i {
-                    let args = self.proj.types[*tr.ty_args.get_index(0)?.1].as_user()?;
-                    args.ty_args
-                        .get_index(i)
-                        .map(|v| v.1.with_templates(&self.proj.types, &tr.ty_args))?
+                    let args = self.proj.types[tr.get_type_arg(0, &self.proj.scopes)?].as_user()?;
+                    args.get_type_arg(i, &self.proj.scopes)
+                        .map(|ty| ty.with_templates(&self.proj.types, &tr.ty_args))?
                 } else {
-                    tr.ty_args.get_index(1)?.1.with_templates(&self.proj.types, &tr.ty_args)
+                    tr.get_type_arg(1, &self.proj.scopes)?
+                        .with_templates(&self.proj.types, &tr.ty_args)
                 };
 
                 if let Some(ty_args) = &self.current_call_ty_args
@@ -2432,7 +2362,7 @@ impl TypeChecker<'_> {
         }
     }
 
-    fn check_lambda(
+    fn check_closure(
         &mut self,
         span: Span,
         t: Option<TypeId>,
@@ -2441,8 +2371,8 @@ impl TypeChecker<'_> {
         ret: Option<TypeId>,
         body: Expr,
     ) -> CExpr {
-        let Some(&fn_tr) = self.proj.scopes.lang_types.get(&LangType::OpFn) else {
-            return self.error(Error::no_lang_item(LangType::OpFn, span));
+        let Some(&fn_tr) = self.proj.scopes.lang_traits.get(&LangTrait::OpFn) else {
+            return self.error(Error::no_lang_item(LangTrait::OpFn, span));
         };
 
         let closure_ut_scope =
@@ -2540,17 +2470,22 @@ impl TypeChecker<'_> {
             };
 
             let name = self.proj.strings.get_or_intern(format!("{i}"));
+            let patt = self.check_pattern(PatternParams {
+                scrutinee: ty,
+                mutable: false,
+                pattern: patt,
+                typ: PatternType::Fn,
+                has_hint: hint.is_some(),
+            });
+            if !patt.irrefutable {
+                self.error(Error::must_be_irrefutable("parameter patterns", span))
+            }
+
             checked_params.push(CheckedParam {
                 keyword: false,
                 label: name,
                 ty,
-                patt: ParamPattern::Checked(self.check_pattern(PatternParams {
-                    scrutinee: ty,
-                    mutable: false,
-                    pattern: patt,
-                    typ: PatternType::Fn,
-                    has_hint: hint.is_some(),
-                })),
+                patt: ParamPattern::Checked(patt.data),
                 default: None,
             });
 
@@ -2561,14 +2496,13 @@ impl TypeChecker<'_> {
         let span = body.span;
         let (_, body) =
             self.with_safety(Safety::Safe, |this| this.check_expr_no_never_propagation(body, ret));
-        let ret = self.proj.scopes[self.current].kind.as_lambda().unwrap().0.unwrap_or(body.ty);
+        let ret = self.proj.scopes[self.current].kind.as_closure().unwrap().0.unwrap_or(body.ty);
         let body = self.type_check_checked(body, ret, span);
-
         let args_tuple = self.proj.scopes.get_tuple(names, ty_args, &self.proj.types);
-        let fn_tr_inst = GenericTrait::from_type_args(&self.proj.scopes, fn_tr, [args_tuple, ret]);
 
         let (closure_id, closure_ty) = self.enter_id(closure_ut_scope, |this| {
             let no_captures = members.is_empty();
+            let impl_id = this.proj.impls.alloc(TraitImpl::None);
             let closure_id = this.insert::<UserTypeId>(
                 UserType {
                     attrs: Default::default(),
@@ -2576,14 +2510,8 @@ impl TypeChecker<'_> {
                     name: Located::nowhere(Strings::CLOSURE_NAME),
                     body_scope: this.current,
                     kind: UserTypeKind::Closure,
-                    impls: TraitImpls::Checked(vec![Some(fn_tr_inst)]),
-                    impl_blocks: vec![ImplBlockData {
-                        type_params: vec![],
-                        assoc_types: Default::default(),
-                    }],
+                    impls: vec![impl_id],
                     type_params: vec![],
-                    fns: vec![],
-                    subscripts: vec![],
                     members,
                     members_resolved: true,
                     recursive: false,
@@ -2606,9 +2534,8 @@ impl TypeChecker<'_> {
                         CheckedParam {
                             keyword: false,
                             label: Strings::THIS_PARAM,
-                            patt: ParamPattern::Checked(CPattern {
-                                irrefutable: true,
-                                data: PatternData::Variable(this.insert::<VariableId>(
+                            patt: ParamPattern::Checked(PatternData::Variable(
+                                this.insert::<VariableId>(
                                     Variable {
                                         name: Located::nowhere(Strings::THIS_PARAM),
                                         ty: this_ptr_mut_ty,
@@ -2616,8 +2543,8 @@ impl TypeChecker<'_> {
                                     },
                                     false,
                                     false,
-                                )),
-                            }),
+                                ),
+                            )),
                             ty: this_ptr_mut_ty,
                             default: None,
                         },
@@ -2638,7 +2565,7 @@ impl TypeChecker<'_> {
                 do_invoke_id
             };
 
-            let fns = this.enter(ScopeKind::Impl(0), |this| {
+            this.enter(ScopeKind::Impl(impl_id), |this| {
                 let (params, invoke_body, invoke_scope) = this.enter(ScopeKind::None, |this| {
                     let args_var = this.insert::<VariableId>(
                         Variable {
@@ -2695,20 +2622,14 @@ impl TypeChecker<'_> {
                         CheckedParam {
                             keyword: false,
                             label: Strings::THIS_PARAM,
-                            patt: ParamPattern::Checked(CPattern {
-                                irrefutable: true,
-                                data: PatternData::Variable(this_ptr_var),
-                            }),
+                            patt: ParamPattern::Checked(PatternData::Variable(this_ptr_var)),
                             ty: this_ptr_ty,
                             default: None,
                         },
                         CheckedParam {
                             keyword: false,
                             label: Strings::FN_TR_ARGS_NAME,
-                            patt: ParamPattern::Checked(CPattern {
-                                irrefutable: true,
-                                data: PatternData::Variable(args_var),
-                            }),
+                            patt: ParamPattern::Checked(PatternData::Variable(args_var)),
                             ty: args_tuple,
                             default: None,
                         },
@@ -2727,13 +2648,21 @@ impl TypeChecker<'_> {
                     body_scope: invoke_scope,
                     ..Default::default()
                 };
-                let invoke_id = this.insert::<FunctionId>(func, false, false);
+                let invoke_id = this.insert::<FunctionId>(func, true, false);
                 this.proj.scopes[invoke_scope].kind = ScopeKind::Function(invoke_id);
 
-                [Vis::new(do_invoke_id, false), Vis::new(invoke_id, true)]
+                *this.proj.impls.get_mut(impl_id) = TraitImpl::Checked(CheckedImpl {
+                    scope: Some(this.current),
+                    assoc_types: Default::default(),
+                    type_params: Default::default(),
+                    tr: GenericTrait::from_type_args(&this.proj.scopes, fn_tr, [args_tuple, ret]),
+                    ty: closure_ty,
+                    span: Span::nowhere(),
+                    super_trait: false,
+                });
+                this.proj.scopes.get_mut(fn_tr).implementors.push(impl_id);
             });
 
-            this.proj.scopes.get_mut(closure_id).fns.extend(fns);
             (closure_id, closure_ty)
         });
 
@@ -2980,7 +2909,7 @@ impl TypeChecker<'_> {
                 let (init, ty) = if let Some(ty) = target
                     .and_then(|target| self.proj.types[target].as_user())
                     .filter(|ut| ut.id == vec)
-                    .and_then(|ut| ut.first_type_arg())
+                    .and_then(|ut| ut.first_type_arg(&self.proj.scopes))
                 {
                     (self.type_check(init, ty), ty)
                 } else {
@@ -3039,7 +2968,7 @@ impl TypeChecker<'_> {
                 let ty = if let Some(ty) = target
                     .and_then(|target| self.proj.types[target].as_user())
                     .filter(|ut| ut.id == vec)
-                    .and_then(|ut| ut.first_type_arg())
+                    .and_then(|ut| ut.first_type_arg(&self.proj.scopes))
                 {
                     ty
                 } else if let Some(expr) = elements.next() {
@@ -3067,7 +2996,7 @@ impl TypeChecker<'_> {
                 let ty = if let Some(ty) = target
                     .and_then(|target| self.proj.types[target].as_user())
                     .filter(|ut| ut.id == set)
-                    .and_then(|ut| ut.first_type_arg())
+                    .and_then(|ut| ut.first_type_arg(&self.proj.scopes))
                 {
                     ty
                 } else if let Some(expr) = elements.next() {
@@ -3082,7 +3011,7 @@ impl TypeChecker<'_> {
                 checked.extend(elements.map(|e| self.type_check(e, ty)));
                 CExpr::new(
                     self.make_lang_type(set, [ty], span),
-                    self.arena.alloc(CExprData::Set(checked, self.current)),
+                    self.arena.alloc(CExprData::Set(checked)),
                 )
             }
             PExprData::Map(elements) => {
@@ -3115,7 +3044,7 @@ impl TypeChecker<'_> {
                 );
                 CExpr::new(
                     self.make_lang_type(map, [k, v], span),
-                    self.arena.alloc(CExprData::Map(result, self.current)),
+                    self.arena.alloc(CExprData::Map(result)),
                 )
             }
             &PExprData::Range { start, end, inclusive: incl } => {
@@ -3142,11 +3071,7 @@ impl TypeChecker<'_> {
                 .collect();
 
                 let mut func = GenericFn::from_id_unknown(&self.proj.scopes, constructor);
-                func.ty_args.copy_args(&TypeArgs::in_order(
-                    &self.proj.scopes,
-                    ut_id,
-                    std::iter::repeat(TypeId::UNKNOWN),
-                ));
+                func.ty_args.copy_args(&TypeArgs::unknown(&self.proj.scopes.get(ut_id).item));
 
                 let (_, args, ret, _failed) =
                     self.check_fn_args(func, None, &call_args, target, span);
@@ -3165,7 +3090,7 @@ impl TypeChecker<'_> {
                         continue;
                     }
 
-                    let mut target_tr = LangType::Format;
+                    let mut target_tr = LangTrait::Format;
                     let mut target_fn = "fmt";
                     let mut upper = false;
                     match opts.as_ref().and_then(|opts| opts.typ) {
@@ -3177,7 +3102,7 @@ impl TypeChecker<'_> {
                                 "b" | "B" => "bin",
                                 "e" | "E" => "exp",
                                 "p" | "P" => {
-                                    target_tr = LangType::Pointer;
+                                    target_tr = LangTrait::Pointer;
                                     "ptr"
                                 }
                                 typ => {
@@ -3191,13 +3116,13 @@ impl TypeChecker<'_> {
                             upper = typ.chars().next().is_some_and(|ch| ch.is_ascii_uppercase());
                         }
                         Some(FormatType::Debug) => {
-                            target_tr = LangType::Debug;
+                            target_tr = LangTrait::Debug;
                             target_fn = "dbg";
                         }
                         None => {}
                     }
 
-                    let Some(target_tr) = self.get_lang_type_or_err(target_tr, span) else {
+                    let Some(target_tr) = self.get_lang_trait_or_err(target_tr, span) else {
                         continue;
                     };
 
@@ -3206,7 +3131,6 @@ impl TypeChecker<'_> {
                         expr.ty,
                         &GenericTrait::from_type_args(&self.proj.scopes, target_tr, []),
                         fmt,
-                        self.current,
                         |proj, id| TypeArgs::in_order(&proj.scopes, id, []),
                     ) else {
                         self.proj.diag.report(Error::doesnt_implement(
@@ -3249,11 +3173,8 @@ impl TypeChecker<'_> {
 
                 CExpr::new(
                     self.make_lang_type_by_name(LangType::FmtArgs, [], span),
-                    self.arena.alloc(CExprData::StringInterp {
-                        strings: strings.clone(),
-                        args: out,
-                        scope: self.current,
-                    }),
+                    self.arena
+                        .alloc(CExprData::StringInterp { strings: strings.clone(), args: out }),
                 )
             }
             &PExprData::ByteString(s) => {
@@ -3369,10 +3290,8 @@ impl TypeChecker<'_> {
                         );
                     }
 
-                    self.arena.typed(
-                        self.proj.types.insert(Type::Fn(func.clone())),
-                        CExprData::Fn(func, self.current),
-                    )
+                    self.arena
+                        .typed(self.proj.types.insert(Type::Fn(func.clone())), CExprData::Fn(func))
                 }
                 ResolvedValue::MemberFn(mut mfn) => {
                     let unknowns: HashSet<_> = mfn
@@ -3407,7 +3326,7 @@ impl TypeChecker<'_> {
 
                     self.arena.typed(
                         self.proj.types.insert(Type::Fn(mfn.func.clone())),
-                        CExprData::MemFn(mfn, self.current),
+                        CExprData::MemFn(mfn),
                     )
                 }
                 ResolvedValue::UnionConstructor(ut) => bail!(
@@ -3499,7 +3418,9 @@ impl TypeChecker<'_> {
                         if_branch = self.try_coerce(if_branch, out_type);
                         CExpr::option_null(out_type, &mut self.arena)
                     } else {
-                        out_type = TypeId::VOID;
+                        if out_type != TypeId::UNKNOWN {
+                            out_type = TypeId::VOID;
+                        }
                         CExpr::VOID
                     }
                 };
@@ -3600,7 +3521,7 @@ impl TypeChecker<'_> {
             }
             &PExprData::Return(expr) => self.check_return(expr, span),
             &PExprData::Tail(expr) => match &self.proj.scopes[self.current].kind {
-                ScopeKind::Function(_) | ScopeKind::Lambda(_, _) => self.check_return(expr, span),
+                ScopeKind::Function(_) | ScopeKind::Closure(_, _) => self.check_return(expr, span),
                 ScopeKind::Loop { .. } => self.type_check(expr, TypeId::VOID),
                 ScopeKind::Block(data) => self.check_yield(Some(expr), *data, self.current, span),
                 _ => self.error(Error::new("yield outside of block", expr.span)),
@@ -3760,12 +3681,12 @@ impl TypeChecker<'_> {
                 self.arena.typed(to_id, CExprData::As(expr))
             }
             PExprData::Error => CExpr::default(),
-            &PExprData::Lambda { policy, ref captures, ref params, ret, body } => {
+            &PExprData::Closure { policy, ref captures, ref params, ret, body } => {
                 let ret = ret
                     .map(|ret| self.resolve_typehint(ret))
                     .or_else(|| target.and_then(|t| self.infer_closure_type(t, None)));
-                self.enter(ScopeKind::Lambda(ret, policy.unwrap_or_default()), |this| {
-                    this.check_lambda(span, target, captures, params, ret, body)
+                self.enter(ScopeKind::Closure(ret, policy.unwrap_or_default()), |this| {
+                    this.check_closure(span, target, captures, params, ret, body)
                 })
             }
             &PExprData::Unsafe(expr) => {
@@ -3893,13 +3814,11 @@ impl TypeChecker<'_> {
         // }
 
         let mut candidates = vec![];
-        for ut in self.proj.types[ty]
-            .as_user()
-            .cloned()
-            .into_iter()
-            .chain(self.extensions_in_scope_for(ty))
+        for ut in self.proj.types[ty].as_user().cloned().into_iter().chain(self.extensions_for(ty))
         {
-            for f in self.proj.scopes.get(ut.id).subscripts.clone() {
+            let subscripts: Vec<_> =
+                self.proj.scopes.get(ut.id).get_subscripts(&self.proj.scopes).collect();
+            for f in subscripts {
                 self.resolve_proto(f);
                 let data = self.proj.scopes.get(f);
                 if assign != data.typ.is_assign_subscript()
@@ -4029,7 +3948,7 @@ impl TypeChecker<'_> {
 
         for (_, scope) in self.proj.scopes.walk(self.current) {
             match &scope.kind {
-                &ScopeKind::Lambda(target, _) => {
+                &ScopeKind::Closure(target, _) => {
                     if let Some(target) = target
                         && target.as_option_inner(&self.proj).is_none()
                     {
@@ -4072,14 +3991,14 @@ impl TypeChecker<'_> {
     fn check_return(&mut self, expr: PExpr, span: Span) -> CExpr {
         for (id, scope) in self.proj.scopes.walk(self.current) {
             match &scope.kind {
-                &ScopeKind::Lambda(target, policy) => {
+                &ScopeKind::Closure(target, policy) => {
                     let span = expr.span;
                     let mut expr = self.check_expr(expr, target);
                     self.proj.scopes[id].kind = if let Some(target) = target {
                         expr = self.type_check_checked(expr, target, span);
-                        ScopeKind::Lambda(Some(target), policy)
+                        ScopeKind::Closure(Some(target), policy)
                     } else {
-                        ScopeKind::Lambda(Some(expr.ty), policy)
+                        ScopeKind::Closure(Some(expr.ty), policy)
                     };
                     return self.arena.typed(TypeId::NEVER, CExprData::Return(expr));
                 }
@@ -4178,7 +4097,7 @@ impl TypeChecker<'_> {
     ) -> CExpr {
         let iter_span = iter.span;
         let iter = self.check_expr(iter, None);
-        let Some(iter_tr_id) = self.get_lang_type_or_err(LangType::Iterator, iter_span) else {
+        let Some(iter_tr_id) = self.get_lang_trait_or_err(LangTrait::Iterator, iter_span) else {
             return Default::default();
         };
 
@@ -4291,10 +4210,7 @@ impl TypeChecker<'_> {
                 out,
                 CExprData::Block(Block {
                     body: vec![
-                        CStmt::Let(
-                            CPattern { irrefutable: true, data: PatternData::Variable(iter_var) },
-                            Some(iter),
-                        ),
+                        CStmt::Let(PatternData::Variable(iter_var), Some(iter)),
                         CStmt::Expr(inner),
                     ],
                     scope: this.current,
@@ -4403,32 +4319,21 @@ impl TypeChecker<'_> {
                 // however, if you start editing a function call, it is possible for the span
                 // to end up here
                 self.check_dot_completions(member.span, id, true);
-                let Some(mut mfn) = self.lookup_member_fn(id, member.data, &generics, span) else {
+                let Some(res) = self.lookup_member_fn(id, member.data, &generics, span) else {
                     bail!(
                         self,
                         Error::no_method(self.proj.fmt_ty(id), strdata!(self, member.data), span)
                     );
                 };
-                self.check_hover(member.span, LspItem::Fn(mfn.func.id, None));
-                if mfn.typ.is_dynamic() && !self.proj.scopes.get(mfn.func.id).type_params.is_empty()
-                {
+                self.check_hover(member.span, res.func.id);
+                if res.dynamic && !self.proj.scopes.get(res.func.id).type_params.is_empty() {
                     self.error(Error::new(
                         "cannot call generic functions through a dynamic pointer",
                         span,
                     ))
                 }
 
-                let f = self.proj.scopes.get(mfn.func.id);
-                if !mfn.public && !self.can_access_privates(mfn.owner) {
-                    report_error!(
-                        self,
-                        span,
-                        "cannot access private method '{}' of type '{}'",
-                        strdata!(self, self.proj.scopes.get(mfn.func.id).name.data),
-                        self.proj.fmt_ty(id),
-                    )
-                }
-
+                let f = self.proj.scopes.get(res.func.id);
                 let Some(this_param) = f.params.first().filter(|p| p.label == Strings::THIS_PARAM)
                 else {
                     return report_error!(
@@ -4439,7 +4344,7 @@ impl TypeChecker<'_> {
                     );
                 };
 
-                if mfn.typ.is_dynamic() && !self.proj.types[this_param.ty].is_safe_ptr() {
+                if res.dynamic && !self.proj.types[this_param.ty].is_safe_ptr() {
                     return report_error!(
                         self,
                         span,
@@ -4480,15 +4385,14 @@ impl TypeChecker<'_> {
 
                 let recv = recv.auto_deref(&self.proj.types, this_param_ty, &mut self.arena);
                 let (func, args, ret, _) =
-                    self.check_fn_args(mfn.func, Some(recv), args, target, span);
-                mfn.func = func;
-                if mfn.typ.is_dynamic() {
-                    return self.arena.typed(ret, CExprData::CallDyn(mfn.func, args));
+                    self.check_fn_args(res.func, Some(recv), args, target, span);
+                if res.dynamic {
+                    return self.arena.typed(ret, CExprData::CallDyn(func, args));
                 } else {
                     return CExpr::member_call(
                         ret,
                         &self.proj.types,
-                        mfn,
+                        MemberFn { func, trait_fn: res.trait_fn },
                         args,
                         self.current,
                         span,
@@ -4804,16 +4708,21 @@ impl TypeChecker<'_> {
         failed
     }
 
-    fn check_bounds(&mut self, ty_args: &TypeArgs, ty: TypeId, id: UserTypeId, span: Span) -> bool {
+    fn check_bounds(
+        &mut self,
+        ty_args: &TypeArgs,
+        ty: TypeId,
+        id: TypeParamId,
+        span: Span,
+    ) -> bool {
         let mut failed = false;
-        self.resolve_impls(id);
-        for mut bound in self.proj.scopes.get(id).impls.clone().into_iter_checked() {
+        for mut bound in self.proj.scopes.get(id).iter_impls_owned(&self.proj, false) {
             bound.fill_templates(&self.proj.types, ty_args);
             if !self.implements_trait(ty, &bound) {
                 failed = true;
                 self.proj.diag.report(Error::doesnt_implement(
                     self.proj.fmt_ty(ty),
-                    self.proj.fmt_ut(&bound),
+                    self.proj.fmt_tr(&bound),
                     span,
                 ));
             }
@@ -4824,6 +4733,8 @@ impl TypeChecker<'_> {
     fn check_block(&mut self, body: &[PStmt]) -> Vec<CStmt> {
         let declared: Vec<_> =
             body.iter().flat_map(|stmt| self.declare_stmt(&mut vec![], stmt)).collect();
+
+        self.resolve_impls();
 
         self.enter_id_and_resolve(self.current, |this| {
             declared.into_iter().flat_map(|stmt| this.check_stmt(stmt)).collect()
@@ -4925,35 +4836,27 @@ impl TypeChecker<'_> {
         Some(id)
     }
 
-    fn resolve_dyn_ptr(&mut self, path: &Path) -> Option<GenericTrait> {
-        match self.resolve_type_path(path) {
-            ResolvedType::UserType(ut) => {
-                let data = self.proj.scopes.get(ut.id);
-                if data.kind.is_trait() {
-                    if path.fn_like && data.attrs.lang != Some(LangType::OpFn) {
-                        self.error(Error::function_like_tr(path.span()))
-                    }
+    fn get_lang_trait_or_err(&mut self, name: LangTrait, span: Span) -> Option<TraitId> {
+        let Some(id) = self.proj.scopes.lang_traits.get(&name).copied() else {
+            return self.error(Error::no_lang_item(name, span));
+        };
 
-                    Some(ut)
-                } else {
-                    bail!(
-                        self,
-                        Error::expected_found(
-                            "trait",
-                            format_args!("type '{}'", self.proj.fmt_ut(&ut)),
-                            path.final_component_span(),
-                        )
-                    )
+        Some(id)
+    }
+
+    fn resolve_trait_path(&mut self, path: &Path) -> Option<GenericTrait> {
+        match self.resolve_type_path(path) {
+            ResolvedType::Trait(tr) => {
+                if path.fn_like && self.proj.scopes.get(tr.id).attrs.lang != Some(LangTrait::OpFn) {
+                    self.error(Error::function_like_tr(path.span()))
                 }
+                Some(tr)
             }
-            ResolvedType::Builtin(ty) => bail!(
-                self,
-                Error::expected_found(
-                    "trait",
-                    format_args!("type '{}'", self.proj.fmt_ty(ty)),
-                    path.final_component_span(),
-                )
-            ),
+            ResolvedType::Type(ty) => self.error(Error::expected_found(
+                "trait",
+                format_args!("type '{}'", self.proj.fmt_ty(ty)),
+                path.span(),
+            )),
             ResolvedType::Error => None,
         }
     }
@@ -4971,21 +4874,15 @@ impl TypeChecker<'_> {
         let span = hint.span;
         match &self.parsed.hints.cget(hint.data) {
             TypeHintData::Path(path) => match self.resolve_type_path(path) {
-                ResolvedType::Builtin(ty) => ty,
-                ResolvedType::UserType(ut) => {
-                    if !self.proj.scopes.get(ut.id).kind.is_trait() {
-                        self.proj.types.insert(Type::User(ut))
-                    } else {
-                        bail!(
-                            self,
-                            Error::expected_found(
-                                "type",
-                                format_args!("trait '{}'", self.proj.fmt_ut(&ut)),
-                                path.final_component_span(),
-                            )
-                        )
-                    }
-                }
+                ResolvedType::Type(ty) => ty,
+                ResolvedType::Trait(tr) => bail!(
+                    self,
+                    Error::expected_found(
+                        "type",
+                        format_args!("trait '{}'", self.proj.fmt_tr(&tr)),
+                        path.final_component_span(),
+                    )
+                ),
                 ResolvedType::Error => TypeId::UNKNOWN,
             },
             &TypeHintData::Void => TypeId::VOID,
@@ -4994,11 +4891,11 @@ impl TypeChecker<'_> {
             &TypeHintData::RawPtr(ty) => create_ptr(self, Type::RawPtr, ty),
             &TypeHintData::RawMutPtr(ty) => create_ptr(self, Type::RawMutPtr, ty),
             TypeHintData::DynPtr(path) => self
-                .resolve_dyn_ptr(path)
+                .resolve_trait_path(path)
                 .map(|tr| self.proj.types.insert(Type::DynPtr(tr)))
                 .unwrap_or_default(),
             TypeHintData::DynMutPtr(path) => self
-                .resolve_dyn_ptr(path)
+                .resolve_trait_path(path)
                 .map(|tr| self.proj.types.insert(Type::DynMutPtr(tr)))
                 .unwrap_or_default(),
             &TypeHintData::Array(ty, count) => {
@@ -5268,71 +5165,18 @@ impl TypeChecker<'_> {
         false
     }
 
-    fn check_trait_dependencies(&mut self, id: UserTypeId) -> bool {
-        self.resolve_impls(id);
-
-        match self.proj.trait_deps.get(&id) {
-            Some(Dependencies::Resolved(_)) => return false,
-            Some(_) => return true,
-            None => {}
-        }
-
-        self.proj.trait_deps.insert(id, Dependencies::Resolving);
-
-        let mut deps = Vec::new();
-        let mut failed = false;
-        let ids: Vec<_> = self.proj.scopes.get(id).impls.iter_checked().map(|i| i.id).collect();
-        for id in ids {
-            deps.push(id);
-            if self.check_trait_dependencies(id) {
-                failed = true;
-            }
-            if let Some(Dependencies::Resolved(res)) = self.proj.trait_deps.get(&id) {
-                deps.extend(res.iter());
-            }
-        }
-
-        if failed {
-            self.proj.trait_deps.insert(id, Dependencies::Recursive);
-            true
-        } else {
-            self.proj.trait_deps.insert(id, Dependencies::Resolved(deps));
-            false
-        }
-    }
-
-    fn resolve_impls(&mut self, id: UserTypeId) {
-        fn resolve_impl(this: &mut TypeChecker, data: TraitImplData) -> Option<GenericTrait> {
-            match data {
-                TraitImplData::Path(scope, path) => {
-                    this.enter_id_and_resolve(scope, |this| match this.resolve_type_path(&path) {
-                        ResolvedType::UserType(ut) => {
-                            let data = this.proj.scopes.get(ut.id);
-                            if data.kind.is_trait() {
-                                if path.fn_like && data.attrs.lang != Some(LangType::OpFn) {
-                                    this.error(Error::function_like_tr(path.span()))
-                                }
-
-                                Some(ut)
-                            } else {
-                                this.error(Error::expected_found(
-                                    "trait",
-                                    format_args!("type '{}'", this.proj.fmt_ut(&ut)),
-                                    path.final_component_span(),
-                                ))
-                            }
-                        }
-                        ResolvedType::Builtin(ty) => this.error(Error::expected_found(
-                            "trait",
-                            format_args!("type '{}'", this.proj.fmt_ty(ty)),
-                            path.final_component_span(),
-                        )),
-                        ResolvedType::Error => Default::default(),
-                    })
-                }
-                TraitImplData::Operator { tr, ty_args, span, scope } => {
-                    this.enter_id_and_resolve(scope, |this| {
-                        let Some(tr_id) = this.proj.scopes.lang_types.get(&tr).copied() else {
+    fn resolve_impls(&mut self) {
+        fn resolve_impl(
+            this: &mut TypeChecker,
+            id: ImplId,
+            mut ty: TypeId,
+            UncheckedImpl { tr, type_params, assoc_types, span, scope, is_type_param: is_template }: UncheckedImpl,
+        ) -> Option<TraitImpl> {
+            let tr = this.enter_id_and_resolve(scope, |this| {
+                resolve_type!(this, ty);
+                match tr {
+                    UncheckedImplTrait::Lang(tr, ty_args) => {
+                        let Some(tr_id) = this.proj.scopes.lang_traits.get(&tr).copied() else {
                             return this.error(Error::no_lang_item(tr, span));
                         };
 
@@ -5340,40 +5184,152 @@ impl TypeChecker<'_> {
                             tr_id,
                             this.resolve_type_args(tr_id, &ty_args, true, span),
                         ))
-                    })
+                    }
+                    UncheckedImplTrait::Path(path) => this.resolve_trait_path(&path),
+                    UncheckedImplTrait::Known(tr) => Some(tr),
                 }
-                TraitImplData::Checked(ut) => Some(ut),
+            })?;
+            let scope = if let Some(id) = is_template {
+                this.resolve_super_traits(tr.id);
+                for sup in this.proj.scopes.walk_super_traits(&this.proj.types, tr.clone()) {
+                    if tr.id == sup.id {
+                        continue;
+                    }
+
+                    let sup_id = sup.id;
+                    let imp = this.proj.impls.alloc(TraitImpl::Checked(CheckedImpl {
+                        scope: None,
+                        tr: sup,
+                        ty,
+                        type_params: vec![],
+                        assoc_types: Default::default(),
+                        span,
+                        super_trait: true,
+                    }));
+                    this.proj.scopes.get_mut(id).impls.push(imp);
+                    this.proj.scopes.get_mut(sup_id).implementors.push(imp);
+                }
+                None
+            } else {
+                Some(scope)
+            };
+
+            let mut res_assoc_types = HashMap::default();
+            for (name, ty) in assoc_types {
+                // Bounds check will happen when the impl block gets checked
+                let tr_data = this.proj.scopes.get(tr.id);
+                let Some(&id) = tr_data.assoc_types.get(&name) else {
+                    this.proj.diag.report(Error::new(
+                        format!(
+                            "trait '{}' has no associated type '{}'",
+                            strdata!(this, tr_data.name.data),
+                            strdata!(this, name)
+                        ),
+                        ty.span,
+                    ));
+                    continue;
+                };
+
+                res_assoc_types.insert(
+                    id,
+                    ty.map(|mut ty| {
+                        resolve_type!(this, ty);
+                        ty
+                    }),
+                );
             }
+
+            this.proj.scopes.get_mut(tr.id).implementors.push(id);
+            Some(TraitImpl::Checked(CheckedImpl {
+                scope,
+                type_params,
+                tr,
+                ty,
+                assoc_types: res_assoc_types,
+                span,
+                super_trait: false,
+            }))
         }
 
-        let impls = match std::mem::take(&mut self.proj.scopes.get_mut(id).impls) {
-            TraitImpls::Unchecked(impls) => {
-                for i in 0..self.proj.scopes.get(id).type_params.len() {
-                    self.resolve_impls(self.proj.scopes.get(id).type_params[i]);
+        self.impl_resolve_phase = true;
+        for i in self.checked_impls..self.proj.impls.len() {
+            let id = ImplId::new(i);
+            let imp = match std::mem::replace(self.proj.impls.get_mut(id), TraitImpl::None) {
+                TraitImpl::Unchecked(ty, imp) => {
+                    resolve_impl(self, id, ty, imp).unwrap_or_default()
                 }
+                imp => imp,
+            };
+            *self.proj.impls.get_mut(id) = imp;
+        }
 
-                let mut result = Vec::with_capacity(impls.len());
-                for data in impls {
-                    let res = resolve_impl(self, data);
-                    if let Some(res) = &res {
-                        self.resolve_impls(res.id);
-                    }
-                    result.push(res);
-                }
-                TraitImpls::Checked(result)
-            }
-            other => other,
-        };
-
-        self.proj.scopes.get_mut(id).impls = impls;
+        self.checked_impls = self.proj.impls.len();
+        self.impl_resolve_phase = false;
+        self.cache.clear();
     }
 
-    fn resolve_alias(&mut self, span: Span, id: AliasId) {
-        self.check_hover(span, id.into());
-        for i in 0..self.proj.scopes.get(id).type_params.len() {
-            self.resolve_impls(self.proj.scopes.get(id).type_params[i]);
-        }
-        resolve_type!(self, self.proj.scopes.get_mut(id).ty);
+    fn resolve_super_traits(&mut self, id: TraitId) -> bool {
+        let tr = self.proj.scopes.get_mut(id);
+        let scope = tr.body_scope;
+        // Replace with checked in case `id` is recursive
+        let mut failed = false;
+        let trs = match std::mem::replace(&mut tr.super_traits, SuperTraits::Checking) {
+            traits @ SuperTraits::Checking => {
+                failed = true;
+                traits
+            }
+            traits @ SuperTraits::Checked(_) => traits,
+            SuperTraits::Unchecked(paths) => self.enter_id(scope, |this| {
+                let mut res_paths = Vec::with_capacity(paths.len());
+                for path in paths.iter() {
+                    let Some(dep) = this.resolve_trait_path(path) else {
+                        continue;
+                    };
+
+                    if this.resolve_super_traits(dep.id) {
+                        this.proj
+                            .diag
+                            .report(Error::recursive_trait(this.proj.scopes.get(id).name.span));
+                        failed = true;
+                    }
+
+                    res_paths.push(dep);
+                }
+                SuperTraits::Checked(res_paths)
+            }),
+        };
+        self.proj.scopes.get_mut(id).super_traits = trs;
+        failed
+    }
+
+    fn resolve_alias(&mut self, id: AliasId) -> TypeId {
+        let ty = if let Some(mut ty) = std::mem::take(&mut self.proj.scopes.get_mut(id).ty) {
+            resolve_type!(self, ty);
+            ty
+        } else {
+            self.error(Error::new(
+                "alias cannot reference itself in its declaration",
+                self.proj.scopes.get(id).name.span,
+            ))
+        };
+        self.proj.scopes.get_mut(id).ty = Some(ty);
+        ty
+    }
+
+    fn resolve_ext_type(&mut self, id: ExtensionId) -> TypeId {
+        let ty = if let Some(mut ty) =
+            std::mem::take(self.proj.scopes.get_mut(id).kind.as_extension_mut().unwrap())
+        {
+            resolve_type!(self, ty);
+            ty
+        } else {
+            self.error(Error::new(
+                "extension cannot reference itself in its declaration",
+                self.proj.scopes.get(id).name.span,
+            ))
+        };
+        *self.proj.scopes.get_mut(id).kind.as_extension_mut().unwrap() = Some(ty);
+        ty
     }
 
     fn resolve_proto(&mut self, id: FunctionId) {
@@ -5394,123 +5350,7 @@ impl TypeChecker<'_> {
             }
 
             resolve_type!(self, self.proj.scopes.get_mut(id).ret);
-
-            for i in 0..self.proj.scopes.get(id).type_params.len() {
-                self.resolve_impls(self.proj.scopes.get(id).type_params[i]);
-            }
         });
-    }
-
-    fn search(scopes: &Scopes, id: UserTypeId, method: StrId) -> Option<Vis<FunctionId>> {
-        scopes.get(id).fns.iter().find(|&&id| scopes.get(*id).name.data == method).copied()
-    }
-
-    fn do_lookup_member_fn(
-        &mut self,
-        inst: TypeId,
-        name: StrId,
-        generics: &[TypeHint],
-        span: Span,
-    ) -> Option<MemberFn> {
-        let finish = |this: &mut TypeChecker, id: FunctionId| {
-            this.resolve_type_args(id, generics, false, span)
-        };
-
-        fn finish_fn(
-            this: &mut TypeChecker,
-            inst: TypeId,
-            f: Vis<FunctionId>,
-            ut: &GenericUserType,
-            finish: impl FnOnce(&mut TypeChecker, FunctionId) -> TypeArgs + Clone,
-        ) -> Option<MemberFn> {
-            let scope = this.proj.scopes.get(f.id).scope;
-            let mut func = GenericFn::new(f.id, finish(this, f.id));
-            func.ty_args.copy_args(&ut.ty_args);
-            if let Some(&i) = this.proj.scopes[scope].kind.as_impl() {
-                func.ty_args
-                    .copy_args(&TypeArgs::unknown(&this.proj.scopes.get(ut.id).impl_blocks[i]));
-            }
-
-            Some(MemberFn {
-                func,
-                owner: this.proj.scopes.get(ut.id).scope,
-                typ: MemberFnType::Normal,
-                public: f.public,
-                inst,
-            })
-        }
-
-        fn search_impls(
-            this: &mut TypeChecker,
-            inst: TypeId,
-            name: StrId,
-            ut: &GenericUserType,
-            finish: impl FnOnce(&mut TypeChecker, FunctionId) -> TypeArgs + Clone,
-        ) -> Option<MemberFn> {
-            for tr in this.proj.scopes.get(ut.id).impls.clone().into_iter_checked() {
-                for imp in this.proj.scopes.walk_super_traits_ex(&this.proj.types, tr) {
-                    let Some(f) = TypeChecker::search(&this.proj.scopes, imp.id, name) else {
-                        continue;
-                    };
-
-                    let mut func = GenericFn::new(f.id, finish(this, f.id));
-                    func.ty_args.copy_args_with(&this.proj.types, &imp.ty_args, &ut.ty_args);
-                    func.ty_args
-                        .insert(*this.proj.scopes.get(imp.id).kind.as_trait().unwrap().0, inst);
-                    return Some(MemberFn {
-                        func,
-                        owner: this.proj.scopes.get(ut.id).scope,
-                        typ: MemberFnType::Trait(imp),
-                        public: f.public,
-                        inst,
-                    });
-                }
-            }
-
-            None
-        }
-
-        let ut = if let Type::User(ut) = &self.proj.types[inst] {
-            let ut = ut.clone();
-            self.resolve_impls(ut.id);
-            if let Some(f) = Self::search(&self.proj.scopes, ut.id, name)
-                .and_then(|f| finish_fn(self, inst, f, &ut, finish))
-            {
-                return Some(f);
-            }
-            Some(ut)
-        } else if let Some(tr) = self.proj.types[inst].as_dyn_pointee() {
-            let tr = tr.clone();
-            self.resolve_impls(tr.id);
-            let owner = self.proj.scopes.get(tr.id).scope;
-            for imp in self.proj.scopes.walk_super_traits_ex(&self.proj.types, tr) {
-                if let Some(f) = Self::search(&self.proj.scopes, imp.id, name) {
-                    let mut func = GenericFn::new(f.id, finish(self, f.id));
-                    func.ty_args.copy_args(&imp.ty_args);
-                    return Some(MemberFn {
-                        func,
-                        owner,
-                        typ: MemberFnType::Dynamic,
-                        public: f.public,
-                        inst,
-                    });
-                }
-            }
-            None
-        } else {
-            None
-        };
-
-        let exts = self.extensions_in_scope_for(inst);
-        if let Some(f) = exts.iter().find_map(|ext| {
-            let f = Self::search(&self.proj.scopes, ext.id, name);
-            f.and_then(|f| finish_fn(self, inst, f, ext, finish))
-        }) {
-            return Some(f);
-        }
-
-        // look through trait impls AFTER exhausting all concrete functions
-        ut.into_iter().chain(exts).find_map(|ut| search_impls(self, inst, name, &ut, finish))
     }
 
     fn lookup_member_fn(
@@ -5519,101 +5359,117 @@ impl TypeChecker<'_> {
         name: StrId,
         generics: &[TypeHint],
         span: Span,
-    ) -> Option<MemberFn> {
-        self.do_lookup_member_fn(inst, name, generics, span)
-            .inspect(|memfn| self.resolve_proto(memfn.func.id))
-    }
+    ) -> Option<LookupFnResult> {
+        // TODO: return multiple functions
+        let finish = |this: &mut TypeChecker, id: FunctionId| {
+            this.resolve_proto(id);
+            GenericFn::new(id, this.resolve_type_args(id, generics, false, span))
+        };
 
-    fn do_lookup_unk_trait_fn(
-        &mut self,
-        inst: TypeId,
-        wanted_tr: TraitId,
-        method: StrId,
-    ) -> Option<MemberFn> {
-        let search = |proj: &Project, ut: &GenericUserType| -> Option<MemberFn> {
-            for f in proj.scopes.get(ut.id).fns.clone() {
-                if proj.scopes.get(f.id).name.data == method {
-                    let scope = proj.scopes.get(f.id).scope;
-                    let Some(&idx) = proj.scopes[scope].kind.as_impl() else {
-                        continue;
-                    };
-                    let imp = proj.scopes.get(ut.id).impls.get_checked(idx)?;
-                    if imp.id != wanted_tr {
-                        return None;
-                    }
-
-                    let mut func = GenericFn::from_id_unknown(&proj.scopes, f.id);
-                    func.ty_args.copy_args(&ut.ty_args);
-                    func.ty_args
-                        .copy_args(&TypeArgs::unknown(&proj.scopes.get(ut.id).impl_blocks[idx]));
-                    return Some(MemberFn {
-                        func,
-                        owner: proj.scopes.get(ut.id).scope,
-                        typ: MemberFnType::Normal,
-                        public: f.public,
-                        inst,
-                    });
+        if let Some(tr) = self.proj.types[inst].as_dyn_pointee() {
+            let tr = tr.clone();
+            self.resolve_super_traits(tr.id);
+            for imp in self.proj.scopes.walk_super_traits(&self.proj.types, tr) {
+                let body = self.proj.scopes.get(imp.id).body_scope;
+                if let Some(f) = self.proj.scopes[body].find_fn(name) {
+                    let mut func = finish(self, f.id);
+                    func.ty_args.copy_args(&imp.ty_args);
+                    return Some(LookupFnResult { func, trait_fn: None, dynamic: true });
                 }
             }
-            None
-        };
-
-        let search_impls = |proj: &Project, ut: &GenericUserType| -> Option<MemberFn> {
-            for tr in proj.scopes.get(ut.id).impls.iter_checked() {
-                for tr in proj.scopes.walk_super_traits_ex(&proj.types, tr.clone()) {
-                    if wanted_tr != tr.id {
-                        continue;
-                    }
-
-                    let Some(f) = TypeChecker::search(&proj.scopes, tr.id, method) else {
-                        continue;
-                    };
-
-                    let mut func = GenericFn::from_id_unknown(&proj.scopes, f.id);
-                    func.ty_args.copy_args_with(&proj.types, &tr.ty_args, &ut.ty_args);
-                    func.ty_args.insert(*proj.scopes.get(tr.id).kind.as_trait().unwrap().0, inst);
-                    return Some(MemberFn {
-                        func,
-                        owner: proj.scopes.get(ut.id).scope,
-                        typ: MemberFnType::Trait(tr),
-                        public: f.public,
-                        inst,
-                    });
-                }
-            }
-
-            None
-        };
-
-        let ut = if let Type::User(ut) = &self.proj.types[inst] {
-            let ut = ut.clone();
-            self.resolve_impls(ut.id);
-
-            if let Some(f) = search(&self.proj, &ut) {
-                return Some(f);
-            }
-            Some(ut)
-        } else {
-            None
-        };
-
-        let exts = self.extensions_in_scope_for(inst);
-        if let Some(f) = exts.iter().find_map(|ext| search(&self.proj, ext)) {
-            return Some(f);
         }
 
-        // look through trait impls AFTER exhausting all concrete functions
-        ut.into_iter().chain(exts).find_map(|ut| search_impls(&self.proj, &ut))
+        let exts = self.extensions_for(inst);
+        let ut = self.proj.types[inst].as_user().cloned();
+        for ut in ut.as_ref().into_iter().chain(exts.iter()) {
+            let body = self.proj.scopes.get(ut.id).body_scope;
+            if let Some(f) = self.proj.scopes[body].find_fn(name) {
+                if !f.public && !self.can_access_privates(body) {
+                    continue;
+                }
+
+                let mut func = finish(self, f.id);
+                func.ty_args.copy_args(&ut.ty_args);
+                return Some(LookupFnResult { func, trait_fn: None, dynamic: false });
+            }
+        }
+
+        for ut in ut.as_ref().into_iter().chain(exts.iter()) {
+            for &impl_id in self.proj.scopes.get(ut.id).impls.iter() {
+                let Some(imp) = self.proj.impls.get(impl_id).as_checked() else {
+                    continue;
+                };
+
+                // Don't need to check super traits here as the implementation will already exist
+                // somewhere
+
+                let tr_data = self.proj.scopes.get(imp.tr.id);
+                let Some((f, trait_fn)) = imp
+                    .scope
+                    .and_then(|scope| self.proj.scopes[scope].find_fn(name).map(|f| (f, false)))
+                    .or_else(|| {
+                        self.proj.scopes[tr_data.body_scope].find_fn(name).map(|f| (f, true))
+                    })
+                else {
+                    continue;
+                };
+
+                let type_params = imp.type_params.clone();
+                let this = tr_data.this;
+                let (mut func, trait_fn) = if trait_fn {
+                    let tr = imp.tr.with_templates(&self.proj.types, &ut.ty_args);
+                    let mut func = finish(self, f.id);
+                    func.ty_args.insert(this, inst);
+                    func.ty_args.copy_args(&tr.ty_args);
+                    (func, Some((inst, tr)))
+                } else {
+                    (finish(self, f.id), None)
+                };
+
+                func.fill_templates(&self.proj.types, &ut.ty_args);
+                for &type_param in type_params.iter() {
+                    func.ty_args
+                        .entry(type_param)
+                        .or_insert(ut.ty_args.get(&type_param).copied().unwrap_or(TypeId::UNKNOWN));
+                }
+                return Some(LookupFnResult { func, trait_fn, dynamic: false });
+            }
+        }
+
+        None
     }
 
-    fn lookup_unk_trait_fn(
-        &mut self,
-        inst: TypeId,
-        wanted_tr: TraitId,
-        method: StrId,
-    ) -> Option<MemberFn> {
-        self.do_lookup_unk_trait_fn(inst, wanted_tr, method)
-            .inspect(|memfn| self.resolve_proto(memfn.func.id))
+    fn lookup_unk_trait_fn(&mut self, inst: TypeId, id: TraitId, name: StrId) -> Option<MemberFn> {
+        let (imp, my_ut) = self.find_trait_impl(inst, id)?;
+        let (fn_id, trait_fn) = if let Some(owner) = imp.scope
+            && let Some(imp_fn) = self.proj.scopes[owner].find_fn(name)
+        {
+            (imp_fn.id, false)
+        } else {
+            let body_scope = self.proj.scopes.get(id).body_scope;
+            let tr_fn = self.proj.scopes[body_scope].find_fn(name)?;
+            (tr_fn.id, true)
+        };
+
+        self.resolve_proto(fn_id);
+        let mut func = GenericFn::new(fn_id, TypeArgs::default());
+        if trait_fn {
+            func.ty_args.insert(self.proj.scopes.get(id).this, inst);
+            func.ty_args.copy_args(&imp.tr.ty_args);
+        }
+
+        {
+            let mut ty_args = TypeArgs::unknown(&imp.type_params[..]);
+            self.infer_type_args(&mut ty_args, imp.ty, inst);
+            if let Some(ut) = my_ut {
+                ty_args.copy_args(&ut.ty_args);
+            }
+
+            func.ty_args.copy_args(&ty_args);
+        }
+
+        let trait_fn = trait_fn.then_some((inst, imp.tr));
+        Some(MemberFn { func, trait_fn })
     }
 
     fn get_int_type_and_val(
@@ -5674,7 +5530,7 @@ impl TypeChecker<'_> {
             target
                 .and_then(|t| self.proj.types[t].as_user())
                 .filter(|t| Some(t.id) == self.proj.scopes.get_option_id())
-                .and_then(|target| target.first_type_arg())
+                .and_then(|target| target.first_type_arg(&self.proj.scopes))
         }
     }
 
@@ -5725,13 +5581,17 @@ impl TypeChecker<'_> {
             }
 
             let tr = ut_data
-                .impls
-                .iter_checked()
-                .find(|tr| this.proj.scopes.get(tr.id).attrs.lang == Some(LangType::OpFn))
+                .iter_impls(&this.proj, true)
+                .map(|imp| &imp.tr)
+                .find(|tr| this.proj.scopes.get(tr.id).attrs.lang == Some(LangTrait::OpFn))
                 .unwrap();
 
-            let args = this.proj.types[tr.ty_args[0]].as_user().unwrap();
-            let ret = tr.ty_args[1].with_templates(&this.proj.types, &ut.ty_args);
+            let args =
+                this.proj.types[tr.get_type_arg(0, &this.proj.scopes).unwrap()].as_user().unwrap();
+            let ret = tr
+                .get_type_arg(1, &this.proj.scopes)
+                .unwrap()
+                .with_templates(&this.proj.types, &ut.ty_args);
             if args.ty_args.len() != f.params.len() || ret != f.ret {
                 return false;
             }
@@ -5743,28 +5603,36 @@ impl TypeChecker<'_> {
                 .all(|(l, &r)| l == r)
         }
 
+        fn can_upcast(this: &TypeChecker, lhs: &GenericTrait, rhs: &GenericTrait) -> bool {
+            this.proj
+                .scopes
+                .walk_super_traits(&this.proj.types, lhs.clone())
+                .iter()
+                .any(|lhs| lhs == rhs)
+        }
+
         match (&self.proj.types[expr.ty], &self.proj.types[target]) {
             (Type::Never, Type::Never) => Ok(expr),
             (Type::Never, _) => Ok(self.arena.typed(target, CExprData::NeverCoerce(expr))),
             (Type::Unknown, _) | (_, Type::Unknown) => Ok(CExpr::new(target, expr.data)),
             (Type::DynPtr(lhs), Type::DynPtr(rhs))
             | (Type::DynMutPtr(lhs), Type::DynMutPtr(rhs) | Type::DynPtr(rhs)) => {
-                if lhs == rhs || self.has_direct_impl(&lhs.clone(), &rhs.clone()) {
-                    Ok(self.arena.typed(target, CExprData::DynCoerce(expr, self.current)))
+                if lhs == rhs || can_upcast(self, lhs, rhs) {
+                    Ok(self.arena.typed(target, CExprData::DynCoerce(expr)))
                 } else {
                     Err(expr)
                 }
             }
             (&Type::Ptr(lhs), Type::DynPtr(rhs)) => {
                 if self.implements_trait(lhs, &rhs.clone()) {
-                    Ok(self.arena.typed(target, CExprData::DynCoerce(expr, self.current)))
+                    Ok(self.arena.typed(target, CExprData::DynCoerce(expr)))
                 } else {
                     Err(expr)
                 }
             }
             (Type::MutPtr(lhs), Type::DynPtr(rhs) | Type::DynMutPtr(rhs)) => {
                 if self.implements_trait(*lhs, &rhs.clone()) {
-                    Ok(self.arena.typed(target, CExprData::DynCoerce(expr, self.current)))
+                    Ok(self.arena.typed(target, CExprData::DynCoerce(expr)))
                 } else {
                     Err(expr)
                 }
@@ -5778,7 +5646,7 @@ impl TypeChecker<'_> {
                 }
             }
             (Type::User(lhs), Type::FnPtr(rhs)) if can_closure_to_fn_ptr(self, lhs, rhs) => {
-                Ok(self.arena.typed(target, CExprData::ClosureCoerce(expr, self.current)))
+                Ok(self.arena.typed(target, CExprData::ClosureToFnPtr(expr)))
             }
             (lhs, rhs) if may_ptr_coerce(&self.proj.types, lhs, rhs) => {
                 Ok(CExpr::new(target, expr.data))
@@ -5813,7 +5681,7 @@ impl TypeChecker<'_> {
         let rhs = self.proj.types[rhs].as_user()?;
         if lhs.id == span_mut
             && rhs.id == span
-            && lhs.ty_args.get_index(0)?.1 == rhs.ty_args.get_index(0)?.1
+            && lhs.get_type_arg(0, &self.proj.scopes) == rhs.get_type_arg(0, &self.proj.scopes)
         {
             Some(())
         } else {
@@ -5827,19 +5695,11 @@ impl TypeChecker<'_> {
     fn insert_pattern_var(
         &mut self,
         typ: PatternType,
-        mut name: Located<StrId>,
+        name: Located<StrId>,
         ty: TypeId,
         mutable: bool,
         has_hint: bool,
-    ) -> Option<VariableId> {
-        let mut good = true;
-        let mut no_redef = typ != PatternType::Regular;
-        if name.data == Strings::UNDERSCORE {
-            name.data = Strings::EMPTY;
-            good = false;
-            no_redef = false;
-        }
-
+    ) -> VariableId {
         let id = self.insert(
             Variable {
                 name,
@@ -5851,12 +5711,12 @@ impl TypeChecker<'_> {
                 ..Default::default()
             },
             false,
-            no_redef,
+            typ != PatternType::Regular && name.data != Strings::UNDERSCORE,
         );
         if let Some(listen) = &mut self.listening_vars {
             listen.push(id);
         }
-        good.then_some(id)
+        id
     }
 
     fn check_match_coverage<'a>(
@@ -6094,8 +5954,8 @@ impl TypeChecker<'_> {
         let mut result = Vec::new();
         for (i, patt) in patterns.iter().enumerate() {
             if let Pattern::Rest(var) = patt.data {
-                let id = var.and_then(|(m, name)| {
-                    self.insert_pattern_var(typ, name, TypeId::UNKNOWN, m, false)
+                let id = var.map(|(mutable, name)| {
+                    self.insert_pattern_var(typ, name, TypeId::UNKNOWN, mutable, false)
                 });
 
                 if rest.is_some() {
@@ -6139,12 +5999,12 @@ impl TypeChecker<'_> {
             match self.proj.types.get(target.strip_references(&self.proj.types)) {
                 &Type::Array(ty, len) => (ty, len),
                 Type::User(ut) if Some(ut.id) == span_id => {
-                    let inner = ut.first_type_arg().unwrap();
+                    let inner = ut.first_type_arg(&self.proj.scopes).unwrap();
                     let ptr = self.proj.types.insert(Type::Ptr(inner));
                     return self.check_slice_pattern(ptr, inner, patterns, span_id.unwrap(), typ);
                 }
                 Type::User(ut) if Some(ut.id) == span_mut_id => {
-                    let inner = ut.first_type_arg().unwrap();
+                    let inner = ut.first_type_arg(&self.proj.scopes).unwrap();
                     if matches!(self.proj.types[target], Type::Ptr(_) | Type::MutPtr(_)) {
                         let ptr = target.matched_inner_type(&self.proj.types, inner);
                         let id = if self.proj.types[ptr].is_ptr() {
@@ -6184,7 +6044,7 @@ impl TypeChecker<'_> {
         let mut result = Vec::new();
         for (i, patt) in patterns.iter().enumerate() {
             if let Pattern::Rest(var) = patt.data {
-                let id = var.and_then(|(mutable, name)| {
+                let id = var.map(|(mutable, name)| {
                     self.insert_pattern_var(typ, name, TypeId::UNKNOWN, mutable, false)
                 });
 
@@ -6456,7 +6316,7 @@ impl TypeChecker<'_> {
             if i == 0 {
                 prev_vars = vars
                     .into_iter()
-                    .filter(|&v| self.proj.scopes.get(v).name.data != Strings::EMPTY)
+                    .filter(|&v| self.proj.scopes.get(v).name.data != Strings::UNDERSCORE)
                     .map(|v| (self.proj.scopes.get(v).name.data, v))
                     .collect();
                 continue;
@@ -6465,7 +6325,7 @@ impl TypeChecker<'_> {
             let mut prev_vars = prev_vars.clone();
             for &id in vars.iter() {
                 let var = self.proj.scopes.get(id);
-                if var.name.data == Strings::EMPTY {
+                if var.name.data == Strings::UNDERSCORE {
                     continue;
                 }
 
@@ -6550,14 +6410,9 @@ impl TypeChecker<'_> {
                             inner: TypeId::UNKNOWN,
                             borrows: false,
                         }),
-                        Err(Some(_)) => {
-                            let Some(var) =
-                                self.insert_pattern_var(typ, ident, scrutinee, mutable, has_hint)
-                            else {
-                                return CPattern::irrefutable(PatternData::Void);
-                            };
-                            CPattern::irrefutable(PatternData::Variable(var))
-                        }
+                        Err(Some(_)) => CPattern::irrefutable(PatternData::Variable(
+                            self.insert_pattern_var(typ, ident, scrutinee, mutable, has_hint),
+                        )),
                         Err(None) => Default::default(),
                     }
                 } else {
@@ -6583,18 +6438,9 @@ impl TypeChecker<'_> {
                     typ,
                 )
             }
-            &Pattern::MutBinding(name) => {
-                let Some(var) = self.insert_pattern_var(
-                    typ,
-                    Located::new(span, name),
-                    scrutinee,
-                    true,
-                    has_hint,
-                ) else {
-                    return CPattern::irrefutable(PatternData::Void);
-                };
-                CPattern::irrefutable(PatternData::Variable(var))
-            }
+            &Pattern::MutBinding(name) => CPattern::irrefutable(PatternData::Variable(
+                self.insert_pattern_var(typ, Located::new(span, name), scrutinee, true, has_hint),
+            )),
             Pattern::Struct(sub) => self.check_struct_pattern(scrutinee, mutable, sub, span, typ),
             &Pattern::String(value) => {
                 let string = self.make_lang_type_by_name(LangType::String, [], span);
@@ -6868,12 +6714,12 @@ impl TypeChecker<'_> {
 
                     let scope = match value.map(|v| v.id) {
                         Some(TypeItem::Module(next)) => {
-                            self.check_hover(ident.span, next.into());
+                            self.check_hover(ident.span, next);
                             next
                         }
                         Some(TypeItem::Type(id)) => {
                             in_type = true;
-                            self.check_hover(ident.span, id.into());
+                            self.check_hover(ident.span, id);
                             self.proj.scopes.get(id).body_scope
                         }
                         _ => return resolve_later(self, Some(*ident)),
@@ -6937,7 +6783,7 @@ impl TypeChecker<'_> {
                 };
 
                 if path.components.is_empty() {
-                    ResolvedType::Builtin(ty)
+                    ResolvedType::Type(ty)
                 } else if path.components.len() == 1
                     && let Type::User(ut) = &self.proj.types[ty]
                 {
@@ -6957,7 +6803,7 @@ impl TypeChecker<'_> {
                     if let Some((name, _)) = rest.first() {
                         return named_error!(self, Error::no_symbol, name.data, name.span);
                     }
-                    return ResolvedType::Builtin(self.proj.types.insert(builtin));
+                    return ResolvedType::Type(self.proj.types.insert(builtin));
                 }
 
                 let Some(item) = self.find_in_tns(name.data) else {
@@ -6969,9 +6815,9 @@ impl TypeChecker<'_> {
                     );
                 };
 
+                self.check_hover(name.span, item.id);
                 match item.id {
                     TypeItem::Type(id) => {
-                        self.check_hover(name.span, id.into());
                         let ty_args = self.resolve_type_args(id, ty_args, true, name.span);
                         if rest.is_empty() {
                             if self.proj.scopes.get(id).kind.is_extension() {
@@ -6985,11 +6831,27 @@ impl TypeChecker<'_> {
                                 ));
                             }
 
-                            return ResolvedType::UserType(GenericUserType::new(id, ty_args));
+                            return ResolvedType::user(
+                                &self.proj.types,
+                                GenericUserType::new(id, ty_args),
+                            );
                         }
 
                         if rest.len() == 1 {
                             return self.find_associated_type(id, rest[0].0, &rest[0].1);
+                        }
+
+                        self.resolve_type_path_in(
+                            rest,
+                            ty_args,
+                            self.proj.scopes.get(id).body_scope,
+                            span,
+                        )
+                    }
+                    TypeItem::Trait(id) => {
+                        let ty_args = self.resolve_type_args(id, ty_args, true, name.span);
+                        if rest.is_empty() {
+                            return ResolvedType::Trait(GenericTrait::new(id, ty_args));
                         }
 
                         self.resolve_type_path_in(
@@ -7004,7 +6866,6 @@ impl TypeChecker<'_> {
                             return named_error!(self, Error::no_symbol, name.data, name.span);
                         }
 
-                        self.check_hover(name.span, id.into());
                         if !ty_args.is_empty() {
                             return self.error(Error::new(
                                 "modules cannot be parameterized with type arguments",
@@ -7015,19 +6876,16 @@ impl TypeChecker<'_> {
                         self.resolve_type_path_in(rest, Default::default(), id, span)
                     }
                     TypeItem::Alias(id) => {
-                        self.resolve_alias(name.span, id);
+                        let ty = self.resolve_alias(id);
                         let ty_args = self.resolve_type_args(id, ty_args, true, name.span);
-                        let ty =
-                            self.proj.scopes.get(id).ty.with_templates(&self.proj.types, &ty_args);
+                        let ty = ty.with_templates(&self.proj.types, &ty_args);
                         if !rest.is_empty() {
                             self.error(Error::new(
                                 "this operation is not yet supported with type aliases",
                                 span,
                             ))
-                        } else if let Some(ut) = self.proj.types[ty].as_user() {
-                            ResolvedType::UserType(ut.clone())
                         } else {
-                            ResolvedType::Builtin(ty)
+                            ResolvedType::Type(ty)
                         }
                     }
                 }
@@ -7058,9 +6916,9 @@ impl TypeChecker<'_> {
                 named_error!(self, Error::private, name.data, name.span)
             }
 
+            self.check_hover(name.span, *item);
             match *item {
                 TypeItem::Type(id) => {
-                    self.check_hover(name.span, id.into());
                     let ty = self.proj.scopes.get(id);
                     scope = ty.body_scope;
 
@@ -7077,13 +6935,26 @@ impl TypeChecker<'_> {
                             ));
                         }
 
-                        return ResolvedType::UserType(GenericUserType::new(id, args));
+                        return ResolvedType::user(
+                            &self.proj.types,
+                            GenericUserType::new(id, args),
+                        );
+                    }
+
+                    ty_args.copy_args(&args);
+                }
+                TypeItem::Trait(id) => {
+                    let ty = self.proj.scopes.get(id);
+                    scope = ty.body_scope;
+
+                    let args = self.resolve_type_args(id, args, true, name.span);
+                    if done {
+                        return ResolvedType::Trait(GenericTrait::new(id, args));
                     }
 
                     ty_args.copy_args(&args);
                 }
                 TypeItem::Module(id) => {
-                    self.check_hover(name.span, id.into());
                     if done {
                         return named_error!(self, Error::no_symbol, name.data, name.span);
                     }
@@ -7098,20 +6969,18 @@ impl TypeChecker<'_> {
                     scope = id;
                 }
                 TypeItem::Alias(id) => {
-                    self.resolve_alias(name.span, id);
+                    let ty = self.resolve_alias(id);
                     let args = self.resolve_type_args(id, args, true, name.span);
                     ty_args.copy_args(&args);
 
-                    let ty = self.proj.scopes.get(id).ty.with_templates(&self.proj.types, &ty_args);
+                    let ty = ty.with_templates(&self.proj.types, &ty_args);
                     if !done {
                         self.error(Error::new(
                             "this operation is not yet supported with type aliases",
                             name.span,
                         ))
-                    } else if let Some(ut) = self.proj.types[ty].as_user() {
-                        return ResolvedType::UserType(ut.clone());
                     } else {
-                        return ResolvedType::Builtin(ty);
+                        return ResolvedType::Type(ty);
                     }
                 }
             }
@@ -7121,6 +6990,12 @@ impl TypeChecker<'_> {
     }
 
     fn resolve_value_path(&mut self, path: &Path, target: Option<TypeId>) -> ResolvedValue {
+        if let Some(ident) = path.as_identifier()
+            && ident.data == Strings::UNDERSCORE
+        {
+            return ResolvedValue::NotFound(ident);
+        }
+
         let span = path.span();
         match path.origin {
             PathOrigin::Root(_) => self.resolve_value_path_in(
@@ -7149,35 +7024,32 @@ impl TypeChecker<'_> {
                     match self.find_in_vns(name.data).map(|f| f.id) {
                         Some(ValueItem::Fn(id)) => {
                             self.resolve_proto(id);
-                            self.check_hover(name.span, id.into());
+                            self.check_hover(name.span, id);
                             let mut ty_args = self.resolve_type_args(id, ty_args, false, name.span);
                             if let Some(id) = self.proj.scopes.get(id).constructor {
-                                ty_args.copy_args(&TypeArgs::in_order(
-                                    &self.proj.scopes,
-                                    id,
-                                    std::iter::repeat(TypeId::UNKNOWN),
-                                ));
+                                ty_args
+                                    .copy_args(&TypeArgs::unknown(&self.proj.scopes.get(id).item));
                             }
 
                             ResolvedValue::Fn(GenericFn::new(id, ty_args))
                         }
                         Some(ValueItem::StructConstructor(id, init)) => {
                             self.resolve_proto(init);
-                            self.check_hover(name.span, init.into());
+                            self.check_hover(name.span, init);
                             ResolvedValue::Fn(GenericFn::new(
                                 init,
                                 self.resolve_type_args(id, ty_args, false, name.span),
                             ))
                         }
                         Some(ValueItem::UnionConstructor(id)) => {
-                            self.check_hover(name.span, id.into());
+                            self.check_hover(name.span, id);
                             ResolvedValue::UnionConstructor(GenericUserType::new(
                                 id,
                                 self.resolve_type_args(id, ty_args, false, name.span),
                             ))
                         }
                         Some(ValueItem::Var(id)) => {
-                            self.check_hover(name.span, id.into());
+                            self.check_hover(name.span, id);
                             resolve_type!(self, self.proj.scopes.get_mut::<VariableId>(id).ty);
                             if !ty_args.is_empty() {
                                 return self.error(Error::new(
@@ -7196,28 +7068,30 @@ impl TypeChecker<'_> {
                         ),
                     }
                 } else {
-                    match self.find_in_tns(name.data).map(|t| t.id) {
-                        Some(TypeItem::Type(id)) => {
-                            self.check_hover(name.span, id.into());
-                            let mut ty_args = self.resolve_type_args(id, ty_args, false, name.span);
-                            if let UserTypeKind::Trait { this, .. } = self.proj.scopes.get(id).kind
-                            {
-                                ty_args.insert(this, TypeId::UNKNOWN);
-                            } else {
-                                let ty = Type::User(GenericUserType::new(id, ty_args));
-                                let id = self.proj.types.insert(ty);
-                                return self.resolve_value_path_from_type(id, rest, span);
-                            }
+                    let Some(item) = self.find_in_tns(name.data).map(|t| t.id) else {
+                        return self.resolve_value_path_in(
+                            &path.components,
+                            Default::default(),
+                            ScopeId::ROOT,
+                            span,
+                        );
+                    };
 
-                            self.resolve_value_path_in(
-                                rest,
-                                ty_args,
-                                self.proj.scopes.get(id).body_scope,
-                                span,
-                            )
+                    self.check_hover(name.span, item);
+                    match item {
+                        TypeItem::Type(id) => {
+                            let ty_args = self.resolve_type_args(id, ty_args, false, name.span);
+                            let ty = Type::User(GenericUserType::new(id, ty_args));
+                            let id = self.proj.types.insert(ty);
+                            self.resolve_value_path_from_type(id, rest, span)
                         }
-                        Some(TypeItem::Module(id)) => {
-                            self.check_hover(name.span, id.into());
+                        TypeItem::Trait(id) => {
+                            let mut ty_args = self.resolve_type_args(id, ty_args, false, name.span);
+                            let tr_data = self.proj.scopes.get(id);
+                            ty_args.insert(tr_data.this, TypeId::UNKNOWN);
+                            self.resolve_value_path_in(rest, ty_args, tr_data.body_scope, span)
+                        }
+                        TypeItem::Module(id) => {
                             if !ty_args.is_empty() {
                                 return self.error(Error::new(
                                     "modules cannot be parameterized with type arguments",
@@ -7227,23 +7101,12 @@ impl TypeChecker<'_> {
 
                             self.resolve_value_path_in(rest, Default::default(), id, span)
                         }
-                        Some(TypeItem::Alias(id)) => {
-                            self.resolve_alias(name.span, id);
+                        TypeItem::Alias(id) => {
+                            let ty = self.resolve_alias(id);
                             let ty_args = self.resolve_type_args(id, ty_args, false, name.span);
-                            let ty = self
-                                .proj
-                                .scopes
-                                .get(id)
-                                .ty
-                                .with_templates(&self.proj.types, &ty_args);
+                            let ty = ty.with_templates(&self.proj.types, &ty_args);
                             self.resolve_value_path_from_type(ty, rest, span)
                         }
-                        None => self.resolve_value_path_in(
-                            &path.components,
-                            Default::default(),
-                            ScopeId::ROOT,
-                            span,
-                        ),
                     }
                 }
             }
@@ -7277,11 +7140,7 @@ impl TypeChecker<'_> {
                     if self.proj.scopes.get(id).kind.is_union() {
                         good = true;
                     }
-                    func.ty_args.copy_args(&TypeArgs::in_order(
-                        &self.proj.scopes,
-                        id,
-                        std::iter::repeat(TypeId::UNKNOWN),
-                    ));
+                    func.ty_args.copy_args(&TypeArgs::unknown(&self.proj.scopes.get(id).item));
                 }
 
                 if !good {
@@ -7343,23 +7202,23 @@ impl TypeChecker<'_> {
                 named_error!(self, Error::private, name.data, name.span)
             }
 
+            self.check_hover(name.span, *item);
             match *item {
                 TypeItem::Type(id) => {
-                    self.check_hover(name.span, id.into());
                     ty_args.copy_args(&self.resolve_type_args(id, args, false, name.span));
 
-                    let ty = self.proj.scopes.get(id);
-                    scope = ty.body_scope;
-                    if let UserTypeKind::Trait { this, .. } = ty.kind {
-                        ty_args.insert(this, TypeId::UNKNOWN);
-                    } else {
-                        let ty = Type::User(GenericUserType::new(id, ty_args));
-                        let id = self.proj.types.insert(ty);
-                        return self.resolve_value_path_from_type(id, &data[i + 1..], total_span);
-                    }
+                    let ty = Type::User(GenericUserType::new(id, ty_args));
+                    let id = self.proj.types.insert(ty);
+                    return self.resolve_value_path_from_type(id, &data[i + 1..], total_span);
+                }
+                TypeItem::Trait(id) => {
+                    ty_args.copy_args(&self.resolve_type_args(id, args, false, name.span));
+
+                    let tr_data = self.proj.scopes.get(id);
+                    scope = tr_data.body_scope;
+                    ty_args.insert(tr_data.this, TypeId::UNKNOWN);
                 }
                 TypeItem::Module(id) => {
-                    self.check_hover(name.span, id.into());
                     if !args.is_empty() {
                         return self.error(Error::new(
                             "modules cannot be parameterized with type arguments",
@@ -7370,9 +7229,9 @@ impl TypeChecker<'_> {
                     scope = id;
                 }
                 TypeItem::Alias(id) => {
-                    self.resolve_alias(name.span, id);
+                    let ty = self.resolve_alias(id);
                     ty_args.copy_args(&self.resolve_type_args(id, args, false, name.span));
-                    let ty = self.proj.scopes.get(id).ty.with_templates(&self.proj.types, &ty_args);
+                    let ty = ty.with_templates(&self.proj.types, &ty_args);
                     return self.resolve_value_path_from_type(ty, &data[i + 1..], total_span);
                 }
             }
@@ -7392,23 +7251,23 @@ impl TypeChecker<'_> {
         match *item {
             ValueItem::Fn(id) => {
                 self.resolve_proto(id);
-                self.check_hover(span, id.into());
+                self.check_hover(span, id);
                 ty_args.copy_args(&self.resolve_type_args(id, last_args, false, span));
                 ResolvedValue::Fn(GenericFn::new(id, ty_args))
             }
             ValueItem::StructConstructor(id, init) => {
                 self.resolve_proto(init);
-                self.check_hover(span, init.into());
+                self.check_hover(span, init);
                 ty_args.copy_args(&self.resolve_type_args(id, last_args, false, span));
                 ResolvedValue::Fn(GenericFn::new(init, ty_args))
             }
             ValueItem::UnionConstructor(id) => {
-                self.check_hover(span, id.into());
+                self.check_hover(span, id);
                 ty_args.copy_args(&self.resolve_type_args(id, last_args, false, span));
                 ResolvedValue::UnionConstructor(GenericUserType::new(id, ty_args))
             }
             ValueItem::Var(id) => {
-                self.check_hover(span, id.into());
+                self.check_hover(span, id);
                 resolve_type!(self, self.proj.scopes.get_mut(id).ty);
                 if !last_args.is_empty() {
                     self.error(Error::new(
@@ -7431,25 +7290,15 @@ impl TypeChecker<'_> {
         let ((name, args), rest) = rest.split_first().unwrap();
         self.check_dot_completions(total_span, ty, false);
 
-        let Some(mfn) = self.lookup_member_fn(ty, name.data, args, name.span) else {
+        let Some(res) = self.lookup_member_fn(ty, name.data, args, name.span) else {
             return ResolvedValue::NotFound(*name);
         };
 
-        self.check_hover(name.span, mfn.func.id.into());
+        self.check_hover(name.span, res.func.id);
         if let Some((name, _)) = rest.first() {
             return ResolvedValue::NotFound(*name);
         }
-
-        if !mfn.public && !self.can_access_privates(mfn.owner) {
-            report_error!(
-                self,
-                name.span,
-                "cannot access private method '{}' of type '{}'",
-                strdata!(self, self.proj.scopes.get(mfn.func.id).name.data),
-                self.proj.fmt_ty(ty)
-            )
-        }
-        ResolvedValue::MemberFn(mfn)
+        ResolvedValue::MemberFn(res.into())
     }
 
     fn resolve_type_args<T: ItemId>(
@@ -7471,14 +7320,19 @@ impl TypeChecker<'_> {
         }
 
         let mut ty_args = TypeArgs::unknown(&self.proj.scopes.get(id).item);
-        let in_scope = &self.extensions_in_scope(self.current);
-        for (i, arg) in params.iter().enumerate().take(args.len()) {
-            let id = self.resolve_typehint(args[i]);
-            self.do_insert_ty_arg(in_scope, &mut ty_args, *arg, id);
+        for (&type_param, &arg) in params.iter().zip(args.iter()) {
+            let ty = self.resolve_typehint(arg);
+            if !typehint && !self.impl_resolve_phase {
+                self.do_insert_ty_arg(&mut ty_args, type_param, ty);
+            } else {
+                ty_args.insert(type_param, ty);
+            }
         }
 
-        for (&id, &ty) in ty_args.iter() {
-            self.check_bounds(&ty_args, ty, id, span);
+        if !self.impl_resolve_phase {
+            for (&id, &ty) in ty_args.iter() {
+                self.check_bounds(&ty_args, ty, id, span);
+            }
         }
 
         ty_args
@@ -7507,19 +7361,13 @@ impl TypeChecker<'_> {
         }
 
         let mut candidates = HashSet::new();
-        self.resolve_impls(ut);
-
-        for tr in self.proj.scopes.get(ut).impls.iter_checked() {
-            for tr in self.proj.scopes.walk_super_traits(tr.id) {
-                let UserTypeKind::Trait { assoc_types, .. } = &self.proj.scopes.get(tr).kind else {
-                    unreachable!();
-                };
-
-                if let Some(id) = assoc_types.get(&name.data) {
-                    candidates.insert(*id);
-                }
+        for imp in self.proj.scopes.get(ut).iter_impls(&self.proj, true) {
+            if let Some(id) = self.proj.scopes.get(imp.tr.id).assoc_types.get(&name.data) {
+                candidates.insert(*id);
             }
         }
+
+        // TODO: look through extensions too?
 
         if candidates.is_empty() {
             return named_error!(self, Error::no_symbol, name.data, name.span);
@@ -7532,28 +7380,25 @@ impl TypeChecker<'_> {
 
         let id = candidates.into_iter().next().unwrap();
         self.check_hover(name.span, LspItem::Type(id));
-        ResolvedType::UserType(GenericUserType::new(
-            id,
-            self.resolve_type_args(id, args, true, name.span),
-        ))
+
+        let ut = GenericUserType::new(id, self.resolve_type_args(id, args, true, name.span));
+        ResolvedType::user(&self.proj.types, ut)
     }
 
     fn resolve_this_type(&mut self, span: Span) -> Option<TypeId> {
         let current = self.current_function();
         for (_, scope) in self.proj.scopes.walk(self.current) {
             match scope.kind {
+                ScopeKind::Trait(id) => {
+                    check_hover!(self, span, id);
+                    let this_id = self.proj.scopes.get(id).this;
+                    let ut = GenericUserType::from_id(&self.proj.scopes, &self.proj.types, this_id);
+                    return Some(self.proj.types.insert(Type::User(ut)));
+                }
                 ScopeKind::UserType(id) => {
-                    check_hover!(self, span, id.into());
-                    match &self.proj.scopes.get(id).kind {
-                        &UserTypeKind::Trait { this: this_ty, .. } => {
-                            let ut = GenericUserType::from_id(
-                                &self.proj.scopes,
-                                &self.proj.types,
-                                this_ty,
-                            );
-                            return Some(self.proj.types.insert(Type::User(ut)));
-                        }
-                        UserTypeKind::Extension(ty) => return Some(*ty),
+                    check_hover!(self, span, id);
+                    match self.proj.scopes.get(id).kind {
+                        UserTypeKind::Extension(_) => return Some(self.resolve_ext_type(id)),
                         _ => {
                             let ut =
                                 GenericUserType::from_id(&self.proj.scopes, &self.proj.types, id);
@@ -7627,21 +7472,21 @@ impl TypeChecker<'_> {
                 Some(lhs)
             }
             CExprData::Call { callee, .. } => {
-                let CExprData::Fn(func, _) = self.arena.get(callee.data) else {
+                let CExprData::Fn(func) = self.arena.get(callee.data) else {
                     return self.error(Error::no_consteval(span));
                 };
 
                 let f = self.proj.scopes.get(func.id);
                 match f.attrs.intrinsic {
                     Some(Intrinsic::SizeOf) => {
-                        let ty = func.first_type_arg().unwrap();
+                        let ty = func.first_type_arg(&self.proj.scopes).unwrap();
                         // TODO: make sure the ty has had resolve_members()
                         // and resolve_dependencies() called on it and doesn't have any template args
                         let (sz, _) = ty.size_and_align(&self.proj.scopes, &self.proj.types);
                         Some(ConstValue { ty: TypeId::USIZE, val: ComptimeInt::from(sz) })
                     }
                     Some(Intrinsic::AlignOf) => {
-                        let ty = func.first_type_arg().unwrap();
+                        let ty = func.first_type_arg(&self.proj.scopes).unwrap();
                         // TODO: make sure the ty has had resolve_members()
                         // and resolve_dependencies() called on it and doesn't have any template args
                         let (_, align) = ty.size_and_align(&self.proj.scopes, &self.proj.types);
@@ -7664,9 +7509,32 @@ impl TypeChecker<'_> {
 }
 
 impl TypeChecker<'_> {
-    fn extensions_in_scope_for(&mut self, ty: TypeId) -> Vec<GenericExtension> {
-        let exts = self.extensions_in_scope(self.current);
-        self.do_extensions_in_scope_for(&exts, ty)
+    fn extensions_for(&mut self, ty: TypeId) -> Vec<GenericExtension> {
+        if ty == TypeId::UNKNOWN {
+            return vec![];
+        }
+
+        if let Some(checked) = self.cache.get(&ty) {
+            return checked.clone();
+        }
+
+        self.cache.insert(ty, vec![]);
+
+        let in_scope: Vec<_> = self
+            .proj
+            .scopes
+            .types()
+            .filter_map(|(id, ut)| ut.kind.is_extension().then_some(id))
+            .collect();
+        let res: Vec<_> = in_scope
+            .into_iter()
+            .flat_map(|id| {
+                let for_ty = self.resolve_ext_type(id);
+                self.applies_to(id, for_ty, ty)
+            })
+            .collect();
+        self.cache.insert(ty, res.clone());
+        res
     }
 
     fn implements_trait(&mut self, ty: TypeId, bound: &GenericTrait) -> bool {
@@ -7675,18 +7543,7 @@ impl TypeChecker<'_> {
             return true;
         }
 
-        let exts = self.extensions_in_scope(self.current);
-        self.do_implements_trait(&exts, ty, bound)
-    }
-
-    fn has_direct_impl(&mut self, ut: &GenericUserType, bound: &GenericTrait) -> bool {
-        let exts = self.extensions_in_scope(self.current);
-        self.do_has_direct_impl(&exts, ut, bound)
-    }
-
-    fn infer_type_args(&mut self, item: &mut TypeArgs, src: TypeId, target: TypeId) {
-        let exts = self.extensions_in_scope(self.current);
-        self.do_infer_type_args(&exts, item, src, target)
+        self.do_implements_trait(ty, bound).is_some()
     }
 
     fn infer_call_type_args(
@@ -7697,8 +7554,7 @@ impl TypeChecker<'_> {
         use_current_call_args: bool,
     ) {
         if !use_current_call_args || self.current_call_ty_args.is_some() {
-            let exts = self.extensions_in_scope(self.current);
-            self.do_infer_type_args_ex(&exts, item, src, target, |this, ty_args, target| {
+            self.do_infer_type_args(item, src, target, |this, ty_args, target| {
                 !shouldnt_infer_with(
                     &this.proj,
                     this.current_call_ty_args.as_ref().unwrap_or(ty_args),
@@ -7712,20 +7568,8 @@ impl TypeChecker<'_> {
 }
 
 impl SharedStuff for TypeChecker<'_> {
-    fn do_resolve_impls(&mut self, id: UserTypeId) {
-        self.resolve_impls(id);
-    }
-
-    fn resolve_ext_type(&mut self, id: ExtensionId) -> TypeId {
-        resolve_type!(self, *self.proj.scopes.get_mut(id).kind.as_extension_mut().unwrap())
-    }
-
     fn proj(&self) -> &Project {
         &self.proj
-    }
-
-    fn extension_cache(&mut self) -> &mut ExtensionCache {
-        &mut self.cache
     }
 
     fn get_tuple(&mut self, ty_args: Vec<TypeId>) -> TypeId {
@@ -7735,335 +7579,46 @@ impl SharedStuff for TypeChecker<'_> {
 }
 
 pub trait SharedStuff {
-    fn resolve_ext_type(&mut self, id: ExtensionId) -> TypeId;
-    fn do_resolve_impls(&mut self, id: UserTypeId);
     fn proj(&self) -> &Project;
-    fn extension_cache(&mut self) -> &mut ExtensionCache;
     fn get_tuple(&mut self, ty_args: Vec<TypeId>) -> TypeId;
-
-    // ------
 
     fn lookup_trait_fn(
         &mut self,
         inst: TypeId,
-        wanted_tr: &GenericTrait,
-        method: StrId,
-        scope: ScopeId,
+        tr: &GenericTrait,
+        name: StrId,
         finish: impl FnOnce(&Project, FunctionId) -> TypeArgs + Copy,
     ) -> Option<MemberFn> {
-        let in_scope = &self.extensions_in_scope(scope);
-        let search = |this: &mut Self, ut: &GenericUserType| -> Option<MemberFn> {
-            for f in this.proj().scopes.get(ut.id).fns.clone() {
-                if this.proj().scopes.get(f.id).name.data == method {
-                    let scope = this.proj().scopes.get(f.id).scope;
-                    let Some(idx) = this.proj().scopes[scope].kind.as_impl().cloned() else {
-                        continue;
-                    };
-                    let mut imp = this.proj().scopes.get(ut.id).impls.get_checked(idx).cloned()?;
-                    imp.fill_templates(&this.proj().types, &ut.ty_args);
-
-                    let imp_ty_args =
-                        this.do_is_impl_usable(in_scope, ut.id, idx, &mut imp, wanted_tr)?;
-                    if &imp != wanted_tr {
-                        continue;
-                    }
-
-                    let mut func = GenericFn::new(f.id, finish(this.proj(), f.id));
-                    func.ty_args.copy_args(&ut.ty_args);
-                    func.ty_args.copy_args(&imp_ty_args);
-                    return Some(MemberFn {
-                        func,
-                        owner: this.proj().scopes.get(ut.id).scope,
-                        typ: MemberFnType::Normal,
-                        public: f.public,
-                        inst,
-                    });
-                }
-            }
-
-            None
-        };
-
-        let check_impl = |proj: &Project,
-                          mut imp: GenericTrait,
-                          ut: Option<&GenericUserType>|
-         -> Option<MemberFn> {
-            imp.ty_args.copy_args(&wanted_tr.ty_args);
-            if wanted_tr != &imp {
-                return None;
-            }
-
-            let f = TypeChecker::search(&proj.scopes, imp.id, method)?;
-            let mut func = GenericFn::new(f.id, finish(proj, f.id));
-            if let Some(ut) = ut {
-                func.ty_args.copy_args_with(&proj.types, &imp.ty_args, &ut.ty_args);
-            } else {
-                func.ty_args.copy_args(&imp.ty_args);
-            }
-
-            func.ty_args.insert(*proj.scopes.get(imp.id).kind.as_trait().unwrap().0, inst);
-            Some(MemberFn {
-                func,
-                owner: proj.scopes.get(imp.id).scope,
-                typ: MemberFnType::Trait(imp),
-                public: f.public,
-                inst,
-            })
-        };
-
-        let ut = if let Type::User(ut) = &self.proj().types[inst] {
-            let ut = ut.clone();
-            self.do_resolve_impls(ut.id);
-
-            if let Some(f) = search(self, &ut) {
-                return Some(f);
-            }
-            Some(ut)
-        } else {
-            None
-        };
-
-        let exts = self.do_extensions_in_scope_for(in_scope, inst);
-        if let Some(f) = exts.iter().find_map(|ext| search(self, ext)) {
-            return Some(f);
-        }
-
-        for imp in self.get_trait_impls(inst).into_iter_checked() {
-            if let Some(f) = check_impl(self.proj(), imp, ut.as_ref()) {
-                return Some(f);
-            }
-        }
-
-        for ext in exts {
-            for imp in self.proj().scopes.get(ext.id).impls.clone().into_iter_checked() {
-                if let Some(f) = check_impl(self.proj(), imp, Some(&ext)) {
-                    return Some(f);
-                }
-            }
-        }
-
-        None
-    }
-
-    // ------
-
-    fn extensions_in_scope(&self, scope: ScopeId) -> Vec<ExtensionId> {
-        fn get_tns_extensions<'a>(
-            scopes: &'a Scopes,
-            tns: &'a HashMap<StrId, Vis<TypeItem>>,
-        ) -> impl Iterator<Item = UserTypeId> + use<'a> {
-            tns.iter().flat_map(|s| {
-                s.1.as_type().filter(|&&id| scopes.get(id).kind.is_extension()).cloned()
-            })
-        }
-
-        let mut exts = vec![];
-        let scopes = &self.proj().scopes;
-        for (_, scope) in scopes.walk(scope) {
-            exts.extend(get_tns_extensions(scopes, &scope.tns));
-            if matches!(scope.kind, ScopeKind::Module(_)) {
-                break;
-            }
-        }
-
-        exts.extend(get_tns_extensions(scopes, &self.proj().autouse_tns));
-        exts.sort();
-
-        // TODO: this is a hack. ideally the order of extensions shouldn't matter but for now
-        // process this extension last so any other Debug impl will be recognized first
-        if let Some(dbg_idx) = exts.iter().position(|id| {
-            matches!(self.proj().scopes.get(*id).attrs.lang, Some(LangType::FallbackDebug))
-        }) {
-            let last = exts.len() - 1;
-            exts.swap(dbg_idx, last);
-        }
-
-        exts
-    }
-
-    // ------
-
-    fn do_extensions_in_scope_for(
-        &mut self,
-        in_scope: &[ExtensionId],
-        ty: TypeId,
-    ) -> Vec<GenericExtension> {
-        if ty == TypeId::UNKNOWN {
-            return vec![];
-        }
-
-        let map = self.extension_cache().entry(in_scope.to_vec()).or_default();
-        if let Some(checked) = map.get(&ty) {
-            return checked.clone();
-        }
-
-        // TODO: this breaks extensions being able to check impls from other extensions
-        //       (like in tests/ext/circular.ctl)
-        map.insert(ty, vec![]);
-
-        let res: Vec<_> =
-            in_scope.iter().flat_map(|id| self.applies_to(in_scope, ty, *id)).collect();
-        self.extension_cache().get_mut(in_scope).unwrap().insert(ty, res.clone());
-        res
-    }
-
-    fn applies_to(
-        &mut self,
-        in_scope: &[ExtensionId],
-        ty: TypeId,
-        ext: ExtensionId,
-    ) -> Option<GenericExtension> {
-        let ext_ty_id = self.resolve_ext_type(ext);
-        self.do_resolve_impls(ext);
-
-        let mut ext = GenericExtension::from_id_unknown(&self.proj().scopes, ext);
-        self.do_infer_type_args(in_scope, &mut ext.ty_args, ext_ty_id, ty);
-        if ext_ty_id.with_templates(&self.proj().types, &ext.ty_args) != ty {
-            return None;
-        }
-
-        for (&id, &arg) in ext.ty_args.iter() {
-            if arg == TypeId::UNKNOWN {
-                return None;
-            }
-            for mut bound in self.proj().scopes.get(id).impls.clone().into_iter_checked() {
-                bound.fill_templates(&self.proj().types, &ext.ty_args);
-                if !self.do_implements_trait(in_scope, arg, &bound) {
-                    return None;
-                }
-            }
-        }
-
-        Some(ext)
-    }
-
-    fn do_implements_trait(
-        &mut self,
-        in_scope: &[ExtensionId],
-        ty: TypeId,
-        bound: &GenericTrait,
-    ) -> bool {
-        for (i, mut tr) in self.get_trait_impls(ty).into_iter_checked_enumerate() {
-            if let Type::User(ut) = &self.proj().types[ty]
-                && self.do_is_impl_usable(in_scope, ut.id, i, &mut tr, bound).is_none()
-            {
-                continue;
-            }
-
-            self.do_resolve_impls(tr.id);
-            for mut tr in self
-                .proj()
-                .scopes
-                .walk_super_traits_ex(&self.proj().types, tr)
-                .into_iter()
-                .filter(|tr| tr.id == bound.id)
-            {
-                if let Type::User(ut) = &self.proj().types[ty] {
-                    tr.fill_templates(&self.proj().types, &ut.ty_args);
-                }
-                if &tr == bound {
-                    return true;
-                }
-            }
-        }
-
-        for ext in self.do_extensions_in_scope_for(in_scope, ty) {
-            if self.do_has_direct_impl(in_scope, &ext, bound) {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    fn do_is_impl_usable(
-        &mut self,
-        in_scope: &[ExtensionId],
-        ut: UserTypeId,
-        idx: usize,
-        tr: &mut GenericTrait,
-        bound: &GenericTrait,
-    ) -> Option<TypeArgs> {
-        if let Some(block) = self.proj().scopes.get(ut).impl_blocks.get(idx) {
-            let mut ty_args = TypeArgs::unknown(block);
-            if ty_args.is_empty() {
-                return Some(ty_args);
-            } else if bound.id != tr.id {
-                return None;
-            }
-
-            // trait Trait<T>
-            // impl<X> Trait<X>
-
-            // bound:  Trait<T = int>
-            // tr:     Trait<T = X>
-
-            // ty_args: [X = int]
-            for (arg, val) in tr.ty_args.iter_mut() {
-                let Type::User(ut) = &self.proj().types[*val] else {
-                    return None;
-                };
-
-                ty_args.insert(ut.id, bound.ty_args[arg]);
-                *val = bound.ty_args[arg];
-            }
-
-            for (&arg, &val) in ty_args.iter() {
-                if val == TypeId::UNKNOWN {
-                    continue;
-                }
-
-                if !self.satisfies_bounds(in_scope, &ty_args, val, arg) {
-                    return None;
-                }
-            }
-
-            Some(ty_args)
-        } else {
-            Some(Default::default())
-        }
-    }
-
-    fn do_has_direct_impl(
-        &mut self,
-        in_scope: &[ExtensionId],
-        ut: &GenericUserType,
-        bound: &GenericTrait,
-    ) -> bool {
-        self.do_resolve_impls(ut.id);
-        for (i, mut tr) in self.proj().scopes.get(ut.id).impls.clone().into_iter_checked_enumerate()
+        let (impl_scope, args) = self.do_implements_trait(inst, tr)?;
+        let proj = self.proj();
+        let (fn_id, trait_fn) = if let Some(owner) = impl_scope
+            && let Some(imp_fn) = proj.scopes[owner].find_fn(name)
         {
-            if self.do_is_impl_usable(in_scope, ut.id, i, &mut tr, bound).is_none() {
-                continue;
-            }
+            (imp_fn.id, None)
+        } else {
+            let body_scope = proj.scopes.get(tr.id).body_scope;
+            let tr_fn = proj.scopes[body_scope].find_fn(name)?;
+            (tr_fn.id, Some((inst, tr.clone())))
+        };
 
-            for mut tr in self
-                .proj()
-                .scopes
-                .walk_super_traits_ex(&self.proj().types, tr)
-                .into_iter()
-                .filter(|tr| tr.id == bound.id)
-            {
-                tr.fill_templates(&self.proj().types, &ut.ty_args);
-                if &tr == bound {
-                    return true;
-                }
-            }
+        let this = proj.scopes.get(tr.id).this;
+        let mut func = GenericFn::new(fn_id, finish(proj, fn_id));
+        if let Some((inst, tr)) = &trait_fn {
+            func.ty_args.insert(this, *inst);
+            func.ty_args.copy_args(&tr.ty_args);
         }
-        false
+        func.ty_args.copy_args(&args);
+        Some(MemberFn { func, trait_fn })
     }
 
-    fn satisfies_bounds(
-        &mut self,
-        in_scope: &[ExtensionId],
-        ty_args: &TypeArgs,
-        ty: TypeId,
-        id: UserTypeId,
-    ) -> bool {
-        self.do_resolve_impls(id);
-        for mut bound in self.proj().scopes.get(id).impls.clone().into_iter_checked() {
+    fn infer_type_args(&mut self, ty_args: &mut TypeArgs, src: TypeId, target: TypeId) {
+        self.do_infer_type_args(ty_args, src, target, |_, _, _| true);
+    }
+
+    fn satisfies_bounds(&mut self, ty_args: &TypeArgs, id: TypeParamId, ty: TypeId) -> bool {
+        for mut bound in self.proj().scopes.get(id).iter_impls_owned(self.proj(), false) {
             bound.fill_templates(&self.proj().types, ty_args);
-            if !self.do_implements_trait(in_scope, ty, &bound) {
+            if self.do_implements_trait(ty, &bound).is_none() {
                 return false;
             }
         }
@@ -8072,23 +7627,12 @@ pub trait SharedStuff {
 
     fn do_infer_type_args(
         &mut self,
-        in_scope: &[ExtensionId],
-        ty_args: &mut TypeArgs,
-        src: TypeId,
-        target: TypeId,
-    ) {
-        self.do_infer_type_args_ex(in_scope, ty_args, src, target, |_, _, _| true);
-    }
-
-    fn do_infer_type_args_ex(
-        &mut self,
-        in_scope: &[ExtensionId],
         ty_args: &mut TypeArgs,
         mut src: TypeId,
         mut target: TypeId,
         mut is_valid: impl FnMut(&Self, &TypeArgs, TypeId) -> bool + Copy,
     ) {
-        use indexmap::map::Entry;
+        use std::collections::btree_map::Entry;
 
         loop {
             match (&self.proj().types[src], &self.proj().types[target]) {
@@ -8103,108 +7647,149 @@ pub trait SharedStuff {
                     src = *gi;
                     target = *ti;
                 }
-                (Type::FnPtr(src), Type::FnPtr(target)) => {
-                    let src = src.clone();
-                    let target = target.clone();
-                    for (&src, &target) in src.params.iter().zip(target.params.iter()) {
-                        self.do_infer_type_args_ex(in_scope, ty_args, src, target, is_valid);
-                    }
-
-                    self.do_infer_type_args_ex(in_scope, ty_args, src.ret, target.ret, is_valid);
-                    break;
-                }
-                (
-                    Type::DynPtr(src) | Type::DynMutPtr(src),
-                    Type::DynPtr(target) | Type::DynMutPtr(target),
-                ) => {
-                    if src.id != target.id {
-                        break;
-                    }
-
-                    let src = src.clone();
-                    let target = target.clone();
-                    for (&src, &target) in src.ty_args.values().zip(target.ty_args.values()) {
-                        self.do_infer_type_args_ex(in_scope, ty_args, src, target, is_valid);
-                    }
-                    break;
-                }
-                (Type::User(src), target_ty) => {
-                    // TODO: T => ?T
-                    if let Entry::Occupied(entry) = ty_args.entry(src.id) {
-                        if entry.get() != &TypeId::UNKNOWN || !is_valid(self, ty_args, target) {
-                            return;
-                        }
-
-                        self.do_insert_ty_arg(in_scope, ty_args, src.id, target);
-                    } else if let Type::User(target) = target_ty
-                        && src.id == target.id
-                    {
-                        let src = src.clone();
-                        let target = target.clone();
-                        for (&src, &target) in src.ty_args.values().zip(target.ty_args.values()) {
-                            self.do_infer_type_args_ex(in_scope, ty_args, src, target, is_valid);
-                        }
-                    }
-
-                    break;
-                }
                 _ => break,
             }
         }
+
+        match (&self.proj().types[src], &self.proj().types[target]) {
+            (Type::FnPtr(src), Type::FnPtr(target)) => {
+                let src = src.clone();
+                let target = target.clone();
+                for (&src, &target) in src.params.iter().zip(target.params.iter()) {
+                    self.do_infer_type_args(ty_args, src, target, is_valid);
+                }
+
+                self.do_infer_type_args(ty_args, src.ret, target.ret, is_valid);
+            }
+            (
+                Type::DynPtr(src) | Type::DynMutPtr(src),
+                Type::DynPtr(target) | Type::DynMutPtr(target),
+            ) => {
+                if src.id != target.id {
+                    return;
+                }
+
+                let src = src.clone();
+                let target = target.clone();
+                for (&src, &target) in src.ty_args.values().zip(target.ty_args.values()) {
+                    self.do_infer_type_args(ty_args, src, target, is_valid);
+                }
+            }
+            (Type::User(src), target_ty) => {
+                // TODO: T => ?T
+                if let Entry::Occupied(entry) = ty_args.entry(src.id) {
+                    if entry.get() != &TypeId::UNKNOWN || !is_valid(self, ty_args, target) {
+                        return;
+                    }
+
+                    self.do_insert_ty_arg(ty_args, src.id, target);
+                } else if let Type::User(target) = target_ty
+                    && src.id == target.id
+                {
+                    let src = src.clone();
+                    let target = target.clone();
+                    for (&src, &target) in src.ty_args.values().zip(target.ty_args.values()) {
+                        self.do_infer_type_args(ty_args, src, target, is_valid);
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
-    fn do_insert_ty_arg(
-        &mut self,
-        in_scope: &[ExtensionId],
-        ty_args: &mut TypeArgs,
-        key: UserTypeId,
-        val: TypeId,
-    ) {
+    fn do_insert_ty_arg(&mut self, ty_args: &mut TypeArgs, key: TypeParamId, val: TypeId) {
         ty_args.insert(key, val);
-
-        self.do_resolve_impls(key);
-        for tr in self.proj().scopes.get(key).impls.clone().into_iter_checked() {
+        for tr in self.proj().scopes.get(key).iter_impls_owned(self.proj(), false) {
             if tr.ty_args.is_empty() {
                 continue;
             }
 
-            if let Some(mine) = self.find_trait_impl(in_scope, tr.id, val) {
-                for (&src, &target) in tr.ty_args.values().zip(mine.ty_args.values()) {
-                    self.do_infer_type_args(in_scope, ty_args, src, target);
+            if let Some((imp, _)) = self.find_trait_impl(val, tr.id) {
+                for (&src, &target) in tr.ty_args.values().zip(imp.tr.ty_args.values()) {
+                    self.infer_type_args(ty_args, src, target);
                 }
             }
         }
     }
 
-    fn get_trait_impls(&mut self, id: TypeId) -> TraitImpls {
-        if let Some(ut) = self.proj().types[id].as_user() {
-            let id = ut.id;
-            self.do_resolve_impls(id);
-            return self.proj().scopes.get(id).impls.clone();
+    /// For the source:
+    /// ```
+    /// trait Bar<I, J, K> {}
+    ///
+    /// struct Foo<T> {
+    ///     impl<U> Bar<T, U, int> { /* ScopeId(5) */ }
+    /// }
+    /// ```
+    ///
+    /// Given `ty` = `Foo<T = int>`, `bound` = `Bar<I = int, J = str, K = int>`
+    ///
+    /// Returns `Some((Some(ScopeId(5)), TypeArgs(T = int, U = str)))`
+    fn do_implements_trait(
+        &mut self,
+        ty: TypeId,
+        bound: &GenericTrait,
+    ) -> Option<(Option<ScopeId>, TypeArgs)> {
+        // println!("---- {}", self.proj().fmt_tr(bound));
+        // println!("Ty:     {}", self.proj().fmt_ty(ty));
+        'outer: for (imp, ut) in self.find_trait_impls(ty, bound.id) {
+            // ty     = Foo<T = int>
+            // bound  = Bar<I = int, J = str, K = int>
+            // imp.tr = Bar<I = T  , J = U  , K = int>
+            let mut ty_args = TypeArgs::unknown(&imp.type_params[..]);
+            // println!("  imp.ty: {}", self.proj().fmt_ty(imp.ty));
+            // println!("  imp.tr: {}", self.proj().fmt_tr(&imp.tr));
+            self.infer_type_args(&mut ty_args, imp.ty, ty);
+            for (type_param, &val) in imp.tr.ty_args.iter() {
+                self.infer_type_args(&mut ty_args, val, bound.ty_args[type_param]);
+            }
+
+            if let Some(ut) = ut {
+                ty_args.copy_args(&ut.ty_args);
+            }
+
+            if bound != &imp.tr.with_templates(&self.proj().types, &ty_args) {
+                continue;
+            }
+
+            for (&type_param, &val) in ty_args.iter() {
+                if val == TypeId::UNKNOWN || !self.satisfies_bounds(&ty_args, type_param, val) {
+                    continue 'outer;
+                }
+            }
+
+            // println!("--- Yep");
+            return Some((imp.scope, ty_args));
         }
 
+        // println!("--- Nope");
+        None
+    }
+
+    fn compiler_implemented_tr(&mut self, id: TypeId, tr: TraitId) -> Option<GenericTrait> {
         let proj = self.proj();
         let scopes = &proj.scopes;
 
-        let mut trs = vec![];
-        let mut add_if = |cond: bool, lang: LangType| {
-            if cond && let Some(&tr_id) = scopes.lang_types.get(&lang) {
-                trs.push(Some(GenericTrait::new(tr_id, TypeArgs::default())));
-            }
-        };
+        let default_if = |cond: bool| cond.then(|| GenericTrait::new(tr, TypeArgs::default()));
+        let is_same_tr = |lang: LangTrait| scopes.lang_traits.get(&lang) == Some(&tr);
 
         let ty = &proj.types[id];
-        add_if(ty.is_numeric(), LangType::Numeric);
-
-        if let Some(value) = ty.as_integral(false) {
-            add_if(value.signed, LangType::Signed);
-            add_if(!value.signed, LangType::Unsigned);
-            add_if(true, LangType::Integral);
-        } else if let Type::Array(id, _) = ty
-            && let Some(&tr_id) = scopes.lang_types.get(&LangType::Array)
-        {
-            trs.push(Some(GenericTrait::from_type_args(scopes, tr_id, [*id])));
-        } else if let Some(&tr_id) = scopes.lang_types.get(&LangType::FnPtr) {
+        if is_same_tr(LangTrait::Tuple) {
+            return default_if(ty.as_user().is_some_and(|ut| scopes.get(ut.id).kind.is_tuple()));
+        } else if is_same_tr(LangTrait::Numeric) {
+            return default_if(ty.is_numeric());
+        } else if is_same_tr(LangTrait::Integral) {
+            return default_if(ty.as_integral(false).is_some());
+        } else if is_same_tr(LangTrait::Signed) {
+            return default_if(ty.as_integral(false).is_some_and(|v| v.signed));
+        } else if is_same_tr(LangTrait::Unsigned) {
+            return default_if(ty.as_integral(false).is_some_and(|v| !v.signed));
+        } else if is_same_tr(LangTrait::Array) {
+            if let Type::Array(id, _) = ty {
+                return Some(GenericTrait::from_type_args(scopes, tr, [*id]));
+            }
+        } else if is_same_tr(LangTrait::DynPtr) {
+            return default_if(matches!(ty, Type::DynPtr(_) | Type::DynMutPtr(_)));
+        } else if is_same_tr(LangTrait::FnPtr) {
             match ty {
                 Type::Fn(f) => 'out: {
                     let data = scopes.get(f.id);
@@ -8212,112 +7797,181 @@ pub trait SharedStuff {
                         break 'out;
                     }
 
-                    let ret = data.ret.with_templates(&self.proj().types, &f.ty_args);
+                    let ret = data.ret.with_templates(&proj.types, &f.ty_args);
                     let args = data
                         .params
                         .iter()
                         .map(|p| p.ty.with_templates(&proj.types, &f.ty_args))
                         .collect();
                     let args = self.get_tuple(args);
-                    trs.push(Some(GenericTrait::from_type_args(
+                    return Some(GenericTrait::from_type_args(
                         &self.proj().scopes,
-                        tr_id,
+                        tr,
                         [args, ret],
-                    )));
+                    ));
                 }
                 Type::FnPtr(f) if !f.is_extern && !f.is_unsafe => {
                     let ret = f.ret;
                     let args = self.get_tuple(f.params.clone());
-                    trs.push(Some(GenericTrait::from_type_args(
+                    return Some(GenericTrait::from_type_args(
                         &self.proj().scopes,
-                        tr_id,
+                        tr,
                         [args, ret],
-                    )));
+                    ));
                 }
                 _ => {}
             }
         }
 
-        TraitImpls::Checked(trs)
+        None
     }
 
-    fn find_trait_impl(
+    /// Find impls of `tr` where `ty` is compatible with `imp.ty`
+    /// TODOX: return ImplId
+    fn find_trait_impls(
         &mut self,
-        in_scope: &[ExtensionId],
-        wanted_tr: TraitId,
         ty: TypeId,
-    ) -> Option<GenericTrait> {
-        let impls = self.get_trait_impls(ty);
-        if let Some(tr) = impls.into_iter_checked().find(|tr| tr.id == wanted_tr) {
-            if let Some(ut) = self.proj().types[ty].as_user() {
-                return Some(tr.with_templates(&self.proj().types, &ut.ty_args));
-            }
-            return Some(tr);
+        tr: TraitId,
+    ) -> Vec<(CheckedImpl, Option<GenericUserType>)> {
+        let mut res = vec![];
+        if let Some(def) = self.compiler_implemented_tr(ty, tr) {
+            let imp = CheckedImpl {
+                scope: None,
+                assoc_types: Default::default(),
+                type_params: Default::default(),
+                tr: def,
+                ty,
+                span: Span::nowhere(),
+                super_trait: false,
+            };
+            res.push((imp, None));
         }
 
-        // TODO: find multiple?
-        for ext in self.do_extensions_in_scope_for(in_scope, ty) {
-            self.do_resolve_impls(ext.id);
-            let Some(tr) =
-                self.proj().scopes.get(ext.id).impls.iter_checked().find(|tr| tr.id == wanted_tr)
+        let implementors = self.proj().scopes.get(tr).implementors.clone();
+
+        let mut fallback_debug = None;
+        for implementor in implementors {
+            let Some(imp) = self.proj().impls.get(implementor).as_checked() else {
+                continue;
+            };
+
+            // TODO: fast path for imp.ty == ty
+            if imp.ty == ty {
+                res.push((imp.clone(), None));
+                continue;
+            }
+
+            let Some(ut) = imp
+                .scope
+                .and_then(|scope| self.proj().scopes[scope].parent)
+                .and_then(|scope| self.proj().scopes[scope].kind.as_user_type().copied())
             else {
                 continue;
             };
 
-            return Some(tr.with_templates(&self.proj().types, &ext.ty_args));
+            let imp = imp.clone();
+            if let Some(ut) = self.applies_to(ut, imp.ty, ty) {
+                // XXX: HACK! Force the fallback debug impl to be the last one checked so any other
+                // Debug impl will override it
+                if self.proj().scopes.get(ut.id).attrs.lang == Some(LangType::FallbackDebug) {
+                    fallback_debug = Some((imp, Some(ut)));
+                } else {
+                    res.push((imp, Some(ut)));
+                }
+            }
         }
 
-        None
+        if let Some(delay) = fallback_debug {
+            res.push(delay);
+        }
+
+        res
+    }
+
+    // TODO: Assumes `ty` only has one impl
+    // TODO: the two callers of this function do not properly handle the case where the impl is
+    //       generic
+    fn find_trait_impl(
+        &mut self,
+        ty: TypeId,
+        tr: TraitId,
+    ) -> Option<(CheckedImpl, Option<GenericUserType>)> {
+        let (mut imp, ut) = self.find_trait_impls(ty, tr).into_iter().next()?;
+        if let Some(ut) = &ut {
+            imp.tr.fill_templates(&self.proj().types, &ut.ty_args);
+        }
+        Some((imp, ut))
+    }
+
+    fn applies_to(
+        &mut self,
+        owner: UserTypeId,
+        src_ty: TypeId,
+        ty: TypeId,
+    ) -> Option<GenericUserType> {
+        let mut ut = GenericUserType::from_id_unknown(&self.proj().scopes, owner);
+        self.infer_type_args(&mut ut.ty_args, src_ty, ty);
+        if src_ty.with_templates(&self.proj().types, &ut.ty_args) != ty {
+            return None;
+        }
+
+        for (&id, &arg) in ut.ty_args.iter() {
+            if arg == TypeId::UNKNOWN || !self.satisfies_bounds(&ut.ty_args, id, arg) {
+                return None;
+            }
+        }
+
+        Some(ut)
     }
 }
 
 impl TypeChecker<'_> {
     #[rustfmt::skip]
-    fn get_binary_op(&mut self, op: BinaryOp) -> Option<(LangType, StrId)> {
+    fn get_binary_op(&mut self, op: BinaryOp) -> Option<(LangTrait, StrId)> {
         let strings = &mut self.proj.strings;
         match op {
-            BinaryOp::Cmp => Some((LangType::OpCmp, strings.get_or_intern_static("cmp"))),
-            BinaryOp::Gt => Some((LangType::OpCmp, strings.get_or_intern_static("gt"))),
-            BinaryOp::GtEqual => Some((LangType::OpCmp, strings.get_or_intern_static("ge"))),
-            BinaryOp::Lt => Some((LangType::OpCmp, strings.get_or_intern_static("lt"))),
-            BinaryOp::LtEqual => Some((LangType::OpCmp, strings.get_or_intern_static("le"))),
-            BinaryOp::Equal => Some((LangType::OpEq, strings.get_or_intern_static("eq"))),
-            BinaryOp::NotEqual => Some((LangType::OpEq, strings.get_or_intern_static("ne"))),
-            BinaryOp::Add => Some((LangType::OpAdd, strings.get_or_intern_static("add"))),
-            BinaryOp::Sub => Some((LangType::OpSub, strings.get_or_intern_static("sub"))),
-            BinaryOp::Mul => Some((LangType::OpMul, strings.get_or_intern_static("mul"))),
-            BinaryOp::Div => Some((LangType::OpDiv, strings.get_or_intern_static("div"))),
-            BinaryOp::Rem => Some((LangType::OpRem, strings.get_or_intern_static("rem"))),
-            BinaryOp::BitAnd => Some((LangType::OpAnd, strings.get_or_intern_static("bit_and"))),
-            BinaryOp::BitOr => Some((LangType::OpOr, strings.get_or_intern_static("bit_or"))),
-            BinaryOp::Xor => Some((LangType::OpXor, strings.get_or_intern_static("xor"))),
-            BinaryOp::Shl => Some((LangType::OpShl, strings.get_or_intern_static("shl"))),
-            BinaryOp::Shr => Some((LangType::OpShr, strings.get_or_intern_static("shr"))),
-            BinaryOp::AddAssign => Some((LangType::OpAddAssign, strings.get_or_intern_static("add_assign"))),
-            BinaryOp::SubAssign => Some((LangType::OpSubAssign, strings.get_or_intern_static("sub_assign"))),
-            BinaryOp::MulAssign => Some((LangType::OpMulAssign, strings.get_or_intern_static("mul_assign"))),
-            BinaryOp::DivAssign => Some((LangType::OpDivAssign, strings.get_or_intern_static("div_assign"))),
-            BinaryOp::RemAssign => Some((LangType::OpRemAssign, strings.get_or_intern_static("rem_assign"))),
-            BinaryOp::BitAndAssign => Some((LangType::OpAndAssign, strings.get_or_intern_static("and_assign"))),
-            BinaryOp::BitOrAssign => Some((LangType::OpOrAssign, strings.get_or_intern_static("or_assign"))),
-            BinaryOp::XorAssign => Some((LangType::OpXorAssign, strings.get_or_intern_static("xor_assign"))),
-            BinaryOp::ShlAssign => Some((LangType::OpShlAssign, strings.get_or_intern_static("shl_assign"))),
-            BinaryOp::ShrAssign => Some((LangType::OpShrAssign, strings.get_or_intern_static("shr_assign"))),
-            BinaryOp::Call => Some((LangType::OpFn, strings.get_or_intern_static("invoke"))),
+            BinaryOp::Cmp => Some((LangTrait::OpCmp, strings.get_or_intern_static("cmp"))),
+            BinaryOp::Gt => Some((LangTrait::OpCmp, strings.get_or_intern_static("gt"))),
+            BinaryOp::GtEqual => Some((LangTrait::OpCmp, strings.get_or_intern_static("ge"))),
+            BinaryOp::Lt => Some((LangTrait::OpCmp, strings.get_or_intern_static("lt"))),
+            BinaryOp::LtEqual => Some((LangTrait::OpCmp, strings.get_or_intern_static("le"))),
+            BinaryOp::Equal => Some((LangTrait::OpEq, strings.get_or_intern_static("eq"))),
+            BinaryOp::NotEqual => Some((LangTrait::OpEq, strings.get_or_intern_static("ne"))),
+            BinaryOp::Add => Some((LangTrait::OpAdd, strings.get_or_intern_static("add"))),
+            BinaryOp::Sub => Some((LangTrait::OpSub, strings.get_or_intern_static("sub"))),
+            BinaryOp::Mul => Some((LangTrait::OpMul, strings.get_or_intern_static("mul"))),
+            BinaryOp::Div => Some((LangTrait::OpDiv, strings.get_or_intern_static("div"))),
+            BinaryOp::Rem => Some((LangTrait::OpRem, strings.get_or_intern_static("rem"))),
+            BinaryOp::BitAnd => Some((LangTrait::OpAnd, strings.get_or_intern_static("bit_and"))),
+            BinaryOp::BitOr => Some((LangTrait::OpOr, strings.get_or_intern_static("bit_or"))),
+            BinaryOp::Xor => Some((LangTrait::OpXor, strings.get_or_intern_static("xor"))),
+            BinaryOp::Shl => Some((LangTrait::OpShl, strings.get_or_intern_static("shl"))),
+            BinaryOp::Shr => Some((LangTrait::OpShr, strings.get_or_intern_static("shr"))),
+            BinaryOp::AddAssign => Some((LangTrait::OpAddAssign, strings.get_or_intern_static("add_assign"))),
+            BinaryOp::SubAssign => Some((LangTrait::OpSubAssign, strings.get_or_intern_static("sub_assign"))),
+            BinaryOp::MulAssign => Some((LangTrait::OpMulAssign, strings.get_or_intern_static("mul_assign"))),
+            BinaryOp::DivAssign => Some((LangTrait::OpDivAssign, strings.get_or_intern_static("div_assign"))),
+            BinaryOp::RemAssign => Some((LangTrait::OpRemAssign, strings.get_or_intern_static("rem_assign"))),
+            BinaryOp::BitAndAssign => Some((LangTrait::OpAndAssign, strings.get_or_intern_static("and_assign"))),
+            BinaryOp::BitOrAssign => Some((LangTrait::OpOrAssign, strings.get_or_intern_static("or_assign"))),
+            BinaryOp::XorAssign => Some((LangTrait::OpXorAssign, strings.get_or_intern_static("xor_assign"))),
+            BinaryOp::ShlAssign => Some((LangTrait::OpShlAssign, strings.get_or_intern_static("shl_assign"))),
+            BinaryOp::ShrAssign => Some((LangTrait::OpShrAssign, strings.get_or_intern_static("shr_assign"))),
+            BinaryOp::Call => Some((LangTrait::OpFn, strings.get_or_intern_static("invoke"))),
             _ => None,
         }
     }
 
-    fn get_unary_op(&mut self, op: UnaryOp) -> Option<(LangType, StrId)> {
+    fn get_unary_op(&mut self, op: UnaryOp) -> Option<(LangTrait, StrId)> {
         let strings = &mut self.proj.strings;
         match op {
-            UnaryOp::Neg => Some((LangType::OpNeg, strings.get_or_intern_static("neg"))),
-            UnaryOp::Not => Some((LangType::OpNot, strings.get_or_intern_static("not"))),
-            UnaryOp::Unwrap => Some((LangType::OpUnwrap, strings.get_or_intern_static("unwrap"))),
-            UnaryOp::PostDecrement => Some((LangType::OpDec, strings.get_or_intern_static("dec"))),
-            UnaryOp::PreDecrement => Some((LangType::OpDec, strings.get_or_intern_static("dec"))),
-            UnaryOp::PostIncrement => Some((LangType::OpInc, strings.get_or_intern_static("inc"))),
-            UnaryOp::PreIncrement => Some((LangType::OpInc, strings.get_or_intern_static("inc"))),
+            UnaryOp::Neg => Some((LangTrait::OpNeg, strings.get_or_intern_static("neg"))),
+            UnaryOp::Not => Some((LangTrait::OpNot, strings.get_or_intern_static("not"))),
+            UnaryOp::Unwrap => Some((LangTrait::OpUnwrap, strings.get_or_intern_static("unwrap"))),
+            UnaryOp::PostDecrement => Some((LangTrait::OpDec, strings.get_or_intern_static("dec"))),
+            UnaryOp::PreDecrement => Some((LangTrait::OpDec, strings.get_or_intern_static("dec"))),
+            UnaryOp::PostIncrement => Some((LangTrait::OpInc, strings.get_or_intern_static("inc"))),
+            UnaryOp::PreIncrement => Some((LangTrait::OpInc, strings.get_or_intern_static("inc"))),
             _ => None,
         }
     }

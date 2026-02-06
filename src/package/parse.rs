@@ -3,6 +3,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub use super::raw::PanicMode;
+
 use super::{constraint::ConstraintArgs, raw};
 
 #[derive(Debug)]
@@ -23,6 +25,7 @@ pub struct Dependency {
 #[derive(Debug, Clone)]
 pub struct Build {
     pub overflow_checks: bool,
+    pub panic_mode: PanicMode,
     pub dir: PathBuf,
     pub opt_level: usize,
     pub debug_info: bool,
@@ -42,6 +45,7 @@ impl Build {
             no_gc: false,
             no_bit_int: false,
             minify: false,
+            panic_mode: Default::default(),
         }
     }
 
@@ -54,6 +58,7 @@ impl Build {
             no_gc: false,
             no_bit_int: false,
             minify: false,
+            panic_mode: Default::default(),
         }
     }
 }
@@ -212,6 +217,7 @@ impl Config {
             debug_info: build_prop!(config, base, fallback, debug_info),
             no_gc: build_prop!(config, base, fallback, no_gc),
             no_bit_int: build_prop!(config, base, fallback, no_bit_int),
+            panic_mode: build_prop!(config, base, fallback, panic_mode),
             minify: false,
         };
 

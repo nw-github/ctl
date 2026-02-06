@@ -8,10 +8,10 @@ use crate::{
     nearest_pow_of_two,
     project::Project,
     sym::*,
-    typecheck::{ExtensionCache, MemberFn, MemberFnType, SharedStuff},
+    typecheck::{MemberFn, SharedStuff},
     typeid::{
-        BitSizeResult, FnPtr, GenericFn, GenericTrait, GenericUserType, Integer,
-        LayoutItemKind, Type, TypeArgs, TypeId, Types,
+        BitSizeResult, FnPtr, GenericFn, GenericTrait, GenericUserType, Integer, LayoutItemKind,
+        Type, TypeArgs, TypeId, Types,
     },
     write_de, writeln_de,
 };
@@ -112,29 +112,29 @@ impl TypeGen {
         writeln_de!(buffer, ");");
     }
 
-    fn gen_vtable_info(buf: &mut Buffer, tr: UserTypeId) {
-        let Some(Dependencies::Resolved(deps)) = buf.1.trait_deps.get(&tr) else {
-            panic!(
-                "ICE: Dyn pointer for trait '{}' has invalid dependencies",
-                buf.1.str(tr.name(&buf.1.scopes).data),
-            );
-        };
+    fn gen_vtable_info(buf: &mut Buffer, tr: TraitId) {
+        fn walk(proj: &Project, tr: TraitId, func: &mut impl FnMut(TraitId)) {
+            func(tr);
+            for dep in proj.scopes.get(tr).super_traits.iter_checked() {
+                walk(proj, dep.id, func);
+            }
+        }
 
         write_de!(buf, "enum {{");
 
         let mut offset = 0;
-        for id in std::iter::once(tr).chain(deps.iter().cloned()) {
+        walk(buf.1, tr, &mut |dep| {
             buf.emit_vtable_prefix(tr);
-            buf.emit_vtable_prefix(id);
+            buf.emit_vtable_prefix(dep);
             write_de!(buf, "{VTABLE_TRAIT_START}={offset},");
 
-            for f in vtable_methods(&buf.1.scopes, &buf.1.types, id) {
+            for f in vtable_methods(&buf.1.scopes, &buf.1.types, dep) {
                 buf.emit_vtable_prefix(tr);
-                buf.emit_vtable_fn_name(f.id);
+                buf.emit_vtable_fn_name(f);
                 write_de!(buf, "={offset},");
                 offset += 1;
             }
-        }
+        });
 
         buf.emit_vtable_prefix(tr);
         writeln_de!(buf, "{VTABLE_TRAIT_LEN}={offset}}};");
@@ -151,16 +151,21 @@ impl TypeGen {
         };
 
         let type_name = Buffer::format(defs.1, |buf| buf.emit_type_name(ut));
+        let ut_data = decls.1.scopes.get(ut.id);
         if let Some(inner) = ut.can_omit_tag(&defs.1.scopes, &defs.1.types) {
             write_de!(defs, "typedef ");
             defs.emit_type(inner);
+            writeln_de!(defs, " {type_name};");
+            return;
+        } else if ut_data.attrs.layout == Layout::Transparent {
+            write_de!(defs, "typedef ");
+            defs.emit_type(ut_data.members[0].ty.with_templates(&defs.1.types, &ut.ty_args));
             writeln_de!(defs, " {type_name};");
             return;
         }
 
         writeln_de!(decls, "typedef struct {type_name} {type_name};");
 
-        let ut_data = decls.1.scopes.get(ut.id);
         if ut_data.members.is_empty()
             && ut_data.kind.as_union().is_some_and(|u| u.variants.is_empty())
         {
@@ -280,6 +285,9 @@ impl TypeGen {
                 }
                 if matches!(types[inner], Type::Fn(_) | Type::FnPtr(_))
                     || inner.can_omit_tag(scopes, types).is_some()
+                    || types[inner]
+                        .as_user()
+                        .is_some_and(|ut| scopes.get(ut.id).attrs.layout == Layout::Transparent)
                 {
                     deps.insert(inner);
                 } else if matches!(
@@ -358,30 +366,24 @@ impl TypeGen {
 struct State {
     func: GenericFn,
     tmpvar: usize,
-    caller: ScopeId,
     emitted_names: HashMap<StrId, VariableId>,
 }
 
 impl State {
-    pub fn new(func: GenericFn, caller: ScopeId) -> Self {
-        Self { func, caller, tmpvar: 0, emitted_names: Default::default() }
-    }
-
-    pub fn in_body_scope(func: GenericFn, scopes: &Scopes) -> Self {
-        let scope = scopes.get(func.id).body_scope;
-        Self::new(func, scope)
+    pub fn new(func: GenericFn) -> Self {
+        Self { func, tmpvar: 0, emitted_names: Default::default() }
     }
 
     pub fn from_non_generic(id: FunctionId, scopes: &Scopes) -> Self {
-        Self::new(GenericFn::from_id(scopes, id), scopes.get(id).body_scope)
+        Self::new(GenericFn::from_id(scopes, id))
     }
 
-    pub fn with_inst(mut func: GenericFn, types: &Types, inst: TypeId, caller: ScopeId) -> Self {
+    pub fn with_inst(mut func: GenericFn, types: &Types, inst: TypeId) -> Self {
         if let Type::User(ut) = &types[inst] {
             func.ty_args.copy_args(&ut.ty_args);
         }
 
-        Self::new(func, caller)
+        Self::new(func)
     }
 
     pub fn tmpvar(&mut self) -> String {
@@ -459,11 +461,11 @@ impl<'a> Buffer<'a> {
             }
             Type::DynPtr(tr) => {
                 self.emit("d");
-                self.emit_type_name(tr);
+                self.emit_trait_name(tr);
             }
             Type::DynMutPtr(tr) => {
                 self.emit("D");
-                self.emit_type_name(tr);
+                self.emit_trait_name(tr);
             }
             Type::FnPtr(f) => self.emit_fnptr_name(f),
             Type::Fn(f) => self.emit_fn_type_name(f),
@@ -485,7 +487,12 @@ impl<'a> Buffer<'a> {
     }
 
     fn emit_fnptr_name(&mut self, f: &FnPtr) {
-        write_de!(self, "N");
+        match (f.is_extern, f.is_unsafe) {
+            (true, true) => write_de!(self, "E"),
+            (true, false) => write_de!(self, "e"),
+            (false, true) => write_de!(self, "u"),
+            (false, false) => write_de!(self, "N"),
+        }
         for &param in f.params.iter() {
             self.write_len_prefixed(&Buffer::format(self.1, |b| b.emit_mangled_name(param)));
         }
@@ -557,6 +564,11 @@ impl<'a> Buffer<'a> {
         }
     }
 
+    fn emit_trait_name(&mut self, tr: &GenericTrait) {
+        write_de!(self, "T");
+        self.scope_emit_mangled_name(self.1.scopes.get(tr.id).body_scope, &tr.ty_args);
+    }
+
     fn emit_array_struct_name(&mut self, ty: TypeId, size: usize) {
         write_de!(self, "A{size}");
         self.emit_mangled_name(ty);
@@ -566,7 +578,7 @@ impl<'a> Buffer<'a> {
         let f = &self.1.scopes.get(func.id);
         if let Some(name) = f.attrs.macro_name.or(f.attrs.link_name) {
             return self.emit_str(name);
-        } else if f.is_extern && f.body.is_none() {
+        } else if f.attrs.no_mangle {
             return self.emit_str(f.name.data);
         }
 
@@ -581,7 +593,7 @@ impl<'a> Buffer<'a> {
         }
     }
 
-    fn emit_vtable_prefix(&mut self, tr: UserTypeId) {
+    fn emit_vtable_prefix(&mut self, tr: TraitId) {
         self.emit(if self.1.conf.build.minify { "v" } else { "$vtable_" });
         if self.1.conf.build.minify {
             write_de!(self, "t{tr}");
@@ -627,24 +639,12 @@ impl<'a> Buffer<'a> {
 
     fn scope_emit_mangled_name(&mut self, id: ScopeId, ty_args: &TypeArgs) {
         let mut parts = vec![];
-        let mut imp = None;
         for (_id, scope) in self.1.scopes.walk(id) {
-            match &scope.kind {
-                &ScopeKind::Function(id) => parts.push(self.raw_get_mangled_name(id, ty_args)),
-                &ScopeKind::UserType(id) => {
-                    let ut = self.1.scopes.get(id);
-                    if let Some(imp) = imp.take().and_then(|i| ut.impls.get_checked(i)) {
-                        let name = Buffer::format(self.1, |name| {
-                            name.emit_type_name(&imp.with_templates(&self.1.types, ty_args));
-                        });
-                        parts.push(Buffer::format(self.1, |data| {
-                            write_de!(data, "I");
-                            data.write_len_prefixed(&name);
-                        }));
-                    } else if let Some(this) =
-                        ut.kind.as_trait().and_then(|(this, _, _)| ty_args.get(this))
-                    {
-                        let name = Buffer::format(self.1, |b| b.emit_mangled_name(*this));
+            match scope.kind {
+                ScopeKind::Function(id) => parts.push(self.raw_get_mangled_name(id, ty_args)),
+                ScopeKind::Trait(id) => {
+                    if let Some(&this) = ty_args.get(&self.1.scopes.get(id).this) {
+                        let name = Buffer::format(self.1, |b| b.emit_mangled_name(this));
                         parts.push(Buffer::format(self.1, |data| {
                             write_de!(data, "S");
                             data.write_len_prefixed(&name);
@@ -652,7 +652,17 @@ impl<'a> Buffer<'a> {
                     }
                     parts.push(self.raw_get_mangled_name(id, ty_args));
                 }
-                &ScopeKind::Impl(i) => imp = Some(i),
+                ScopeKind::UserType(id) => parts.push(self.raw_get_mangled_name(id, ty_args)),
+                ScopeKind::Impl(id) => {
+                    let imp = &self.1.impls.get(id).as_checked().unwrap().tr;
+                    let name = Buffer::format(self.1, |name| {
+                        name.emit_trait_name(&imp.with_templates(&self.1.types, ty_args));
+                    });
+                    parts.push(Buffer::format(self.1, |data| {
+                        write_de!(data, "I");
+                        data.write_len_prefixed(&name);
+                    }));
+                }
                 ScopeKind::Module(name) => {
                     parts.push(Buffer::format(self.1, |data| {
                         data.write_len_prefixed(self.1.str(name.data));
@@ -848,8 +858,9 @@ macro_rules! hoist_point {
 macro_rules! usebuf {
     ($self: expr, $buf: expr, $body: expr) => {{
         std::mem::swap(&mut $self.buffer, $buf);
-        $body;
+        let res = $body;
         std::mem::swap(&mut $self.buffer, $buf);
+        res
     }};
 }
 
@@ -868,7 +879,12 @@ macro_rules! emit_type {
 struct Vtable {
     tr: GenericTrait,
     ty: TypeId,
+}
+
+struct DeferState {
+    referenced_vars: HashSet<VariableId>,
     scope: ScopeId,
+    params: String,
 }
 
 pub struct Codegen<'a> {
@@ -882,13 +898,14 @@ pub struct Codegen<'a> {
     cur_loop: ScopeId,
     vtables: Buffer<'a>,
     arrays: Buffer<'a>,
+    defer_buf: Buffer<'a>,
     emitted_vtables: HashSet<Vtable>,
-    defers: Vec<(ScopeId, Vec<Expr>)>,
+    defers: Vec<(ScopeId, Vec<(String, String)>)>,
     tg: TypeGen,
     str_interp: StrInterp,
     source: CachingSourceProvider,
-    ext_cache: ExtensionCache,
     arena: ExprArena,
+    defer_state: Option<DeferState>,
 }
 
 impl<'a> Codegen<'a> {
@@ -914,13 +931,14 @@ impl<'a> Codegen<'a> {
             temporaries: Buffer::new(proj),
             vtables: Buffer::new(proj),
             arrays: Buffer::new(proj),
+            defer_buf: Buffer::new(proj),
             cur_block: Default::default(),
             cur_loop: Default::default(),
             emitted_vtables: Default::default(),
             defers: Default::default(),
             tg: Default::default(),
-            ext_cache: Default::default(),
             source: CachingSourceProvider::new(),
+            defer_state: None,
         };
         let main = this.gen_c_main();
         let mut static_defs = Buffer::new(proj);
@@ -928,17 +946,19 @@ impl<'a> Codegen<'a> {
         let mut prototypes = Buffer::new(proj);
         let mut emitted_fns = HashSet::new();
         let mut emitted_statics = HashSet::new();
-        let static_state = &mut State::new(
-            GenericFn::from_id(&this.proj.scopes, FunctionId::RESERVED),
-            ScopeId::ROOT,
-        );
+        let static_state =
+            &mut State::new(GenericFn::from_id(&this.proj.scopes, FunctionId::RESERVED));
 
         while !this.funcs.is_empty() || !this.statics.is_empty() {
             let diff = this.funcs.difference(&emitted_fns).cloned().collect::<Vec<_>>();
             emitted_fns.extend(this.funcs.drain());
 
             for mut state in diff {
-                this.emit_fn(&mut state, &mut prototypes);
+                let data = this.emit_fn(&mut state, &mut prototypes);
+                this.buffer.emit(this.defer_buf.take().finish());
+                if let Some(data) = data {
+                    this.buffer.emit(data);
+                }
             }
 
             for var in std::mem::take(&mut this.statics) {
@@ -947,7 +967,6 @@ impl<'a> Codegen<'a> {
                 }
 
                 this.proj.static_deps.dfs(var, &mut emitted_statics, |id| {
-                    static_state.caller = this.proj.scopes.get(id).scope;
                     usebuf!(this, &mut static_defs, {
                         this.emit_var_decl(id, static_state);
                         writeln_de!(this.buffer, ";");
@@ -972,6 +991,14 @@ impl<'a> Codegen<'a> {
         let functions = this.buffer.take();
         if this.proj.conf.build.no_bit_int {
             this.buffer.emit("#define CTL_NOBITINT 1\n");
+        }
+
+        if this.proj.conf.build.panic_mode.is_unwind() {
+            this.buffer.emit("#define CTL_HAS_UNWIND 1\n");
+        }
+
+        if !this.proj.conf.build.debug_info {
+            this.buffer.emit("#define NDEBUG 1\n");
         }
 
         this.buffer.emit("#ifdef __clang__\n");
@@ -1020,22 +1047,21 @@ impl<'a> Codegen<'a> {
             write_de!(self.buffer, "[");
             self.buffer.emit_vtable_prefix(vtable.tr.id);
             write_de!(self.buffer, "{VTABLE_TRAIT_LEN}]={{");
-            for tr in self.proj.scopes.walk_super_traits_ex(&self.proj.types, vtable.tr.clone()) {
+            for tr in self.proj.scopes.walk_super_traits(&self.proj.types, vtable.tr.clone()) {
                 for f in vtable_methods(&self.proj.scopes, &self.proj.types, tr.id) {
                     write_de!(self.buffer, "[");
                     self.buffer.emit_vtable_prefix(vtable.tr.id);
-                    self.buffer.emit_vtable_fn_name(f.id);
+                    self.buffer.emit_vtable_fn_name(f);
                     write_de!(self.buffer, "]=(VirtualFn)");
                     let func = self.find_implementation(
                         vtable.ty,
                         &tr,
-                        self.proj.scopes.get(f.id).name.data,
-                        vtable.scope,
+                        self.proj.scopes.get(f).name.data,
                         |_, _| Default::default(),
                     );
                     self.buffer.emit_fn_name(&func);
                     write_de!(self.buffer, ",");
-                    self.funcs.insert(State::new(func, vtable.scope));
+                    self.funcs.insert(State::new(func));
                 }
             }
             writeln_de!(self.buffer, "}};");
@@ -1046,27 +1072,19 @@ impl<'a> Codegen<'a> {
     }
 
     fn gen_c_main(&mut self) -> Option<String> {
-        const MAIN: &str = "int main(int argc, char **argv){$ctl_stdlib_init(argc, argv);";
+        const MAIN: &str = "int main(int argc, char **argv){$ctl_stdlib_init(argc, (s8 **)argv);";
 
         if self.proj.conf.in_test_mode() {
             self.buffer.emit(MAIN);
             self.gen_test_main();
+            self.buffer.emit("$ctl_stdlib_deinit();return 0;}\n");
             return Some(self.buffer.take().finish());
         }
 
         let main = State::from_non_generic(self.proj.main?, &self.proj.scopes);
-        let returns = self.proj.types[self.proj.scopes.get(main.func.id).ret].is_integral();
-
         self.buffer.emit(MAIN);
-        if returns {
-            self.buffer.emit("return ");
-        }
         self.buffer.emit_fn_name(&main.func);
-        if returns {
-            self.buffer.emit("();$ctl_stdlib_deinit();}\n");
-        } else {
-            self.buffer.emit("();$ctl_stdlib_deinit();return 0;}\n");
-        }
+        self.buffer.emit("();$ctl_stdlib_deinit();return 0;}\n");
         self.funcs.insert(main);
         Some(self.buffer.take().finish())
     }
@@ -1151,27 +1169,26 @@ impl<'a> Codegen<'a> {
             self.buffer.emit_fn_name(&runner.func);
             write_de!(self.buffer, "(");
             self.emit_cast(self.proj.scopes.get(runner.func.id).params[0].ty);
-            writeln_de!(
-                self.buffer,
-                "{{.ptr=tests,.len={test_count}}});$ctl_stdlib_deinit();return 0;}}"
-            );
+            writeln_de!(self.buffer, "{{.ptr=tests,.len={test_count}}});");
             self.funcs.insert(runner);
         });
     }
 
-    fn emit_fn(&mut self, state: &mut State, prototypes: &mut Buffer<'a>) {
+    fn emit_fn(&mut self, state: &mut State, prototypes: &mut Buffer<'a>) -> Option<String> {
         let func = self.proj.scopes.get(state.func.id);
         if func.attrs.macro_name.is_some() {
-            return;
+            return None;
         }
 
         usebuf!(self, prototypes, {
             self.emit_prototype(state, true);
             writeln_de!(self.buffer, ";");
         });
-        if let Some(body) = func.body {
-            let void_return =
-                func.ret.with_templates(&self.proj.types, &state.func.ty_args).is_void_like();
+        let body = func.body?;
+        let void_return =
+            func.ret.with_templates(&self.proj.types, &state.func.ty_args).is_void_like();
+        let mut data = Buffer::new(self.proj);
+        usebuf!(self, &mut data, {
             let (unused, thisptr) = self.emit_prototype(state, false);
             write_de!(self.buffer, "{{");
             for id in unused {
@@ -1196,13 +1213,13 @@ impl<'a> Codegen<'a> {
                 let Some(patt) = param
                     .patt
                     .as_checked()
-                    .filter(|patt| !matches!(patt.data, PatternData::Variable(_)))
+                    .filter(|patt| !matches!(patt, PatternData::Variable(_)))
                 else {
                     continue;
                 };
 
                 let ty = param.ty.with_templates(&self.proj.types, &state.func.ty_args);
-                self.emit_pattern_bindings(state, &patt.data, self.proj.str(param.label), ty);
+                self.emit_pattern_bindings(state, patt, self.proj.str(param.label), ty);
             }
 
             hoist_point!(self, {
@@ -1215,7 +1232,9 @@ impl<'a> Codegen<'a> {
                     writeln_de!(self.buffer, ";}}");
                 }
             });
-        }
+        });
+
+        Some(data.finish())
     }
 
     fn emit_expr_stmt(&mut self, expr: Expr, state: &mut State) {
@@ -1233,7 +1252,7 @@ impl<'a> Codegen<'a> {
         match stmt {
             Stmt::Expr(expr) => hoist_point!(self, self.emit_expr_stmt(expr, state)),
             Stmt::Let(patt, value) => hoist_point!(self, {
-                if let PatternData::Variable(id) = patt.data {
+                if let PatternData::Variable(id) = patt {
                     if !self.proj.scopes.get(id).unused {
                         let ty = self.emit_var_decl(id, state);
                         if let Some(mut expr) = value {
@@ -1249,10 +1268,76 @@ impl<'a> Codegen<'a> {
                     let ty = value.ty.with_templates(&self.proj.types, &state.func.ty_args);
                     value.ty = ty;
                     let tmp = self.emit_tmpvar(value, state);
-                    self.emit_pattern_bindings(state, &patt.data, &tmp, ty);
+                    self.emit_pattern_bindings(state, &patt, &tmp, ty);
                 }
             }),
-            Stmt::Defer(expr) => self.defers.last_mut().unwrap().1.push(expr),
+            Stmt::Defer(expr, scope) => {
+                let mut expr_buf = Buffer::new(self.proj);
+                let defer_state = usebuf!(self, &mut expr_buf, {
+                    let old = self.defer_state.replace(DeferState {
+                        referenced_vars: Default::default(),
+                        scope,
+                        params: state.tmpvar(),
+                    });
+                    hoist_point!(self, self.emit_expr_stmt(expr, state));
+                    std::mem::replace(&mut self.defer_state, old).unwrap()
+                });
+
+                let fn_name = Buffer::format(self.proj, |buf| {
+                    buf.emit_fn_name(&state.func);
+                    write_de!(buf, "$defer{scope}$");
+                });
+
+                let struct_name = format!("{fn_name}params");
+
+                let mut fn_buf = Buffer::new(self.proj);
+                usebuf!(self, &mut fn_buf, {
+                    write_de!(self.buffer, "typedef struct {{");
+                    for &id in defer_state.referenced_vars.iter() {
+                        let ty = self
+                            .proj
+                            .scopes
+                            .get(id)
+                            .ty
+                            .with_templates(&self.proj.types, &state.func.ty_args);
+                        self.emit_type(ty);
+                        let var = self.proj.scopes.get(id);
+                        if !var.mutable {
+                            let mutable = self.proj.types[ty]
+                                .as_user()
+                                .is_some_and(|ut| self.proj.scopes.get(ut.id).interior_mutable);
+                            self.buffer.emit(if !mutable { " const" } else { "/*const*/" });
+                        }
+                        write_de!(self.buffer, "*");
+                        self.emit_var_name(id, state);
+                        writeln_de!(self.buffer, ";");
+                    }
+                    writeln_de!(
+                        self.buffer,
+                        "}} {struct_name};static void {fn_name}(void *data){{{struct_name}*{}=({struct_name}*)data;{}}}",
+                        defer_state.params,
+                        expr_buf.finish(),
+                    );
+                });
+
+                self.defer_buf.emit(fn_buf.finish());
+
+                write_de!(
+                    self.buffer,
+                    "CTL_CLEANUP({fn_name}){struct_name} {}={{",
+                    defer_state.params
+                );
+                for &id in defer_state.referenced_vars.iter() {
+                    write_de!(self.buffer, ".");
+                    self.emit_var_name(id, state);
+                    write_de!(self.buffer, "=&");
+                    self.emit_var_access(id, state);
+                    write_de!(self.buffer, ",");
+                }
+                writeln_de!(self.buffer, "}};");
+
+                self.defers.last_mut().unwrap().1.push((fn_name, defer_state.params));
+            }
             Stmt::Guard { cond, body } => hoist_point!(self, {
                 write_de!(self.buffer, "if(!(");
                 self.emit_expr_inline(cond, state);
@@ -1297,7 +1382,7 @@ impl<'a> Codegen<'a> {
                     write_de!(self.buffer, ")");
                 }
             },
-            &ExprData::DynCoerce(mut inner, scope) => {
+            &ExprData::DynCoerce(mut inner) => {
                 inner.ty = inner.ty.with_templates(&self.proj.types, &state.func.ty_args);
 
                 let to_tr = self
@@ -1313,7 +1398,7 @@ impl<'a> Codegen<'a> {
                     write_de!(self.buffer, "{{.self=");
                     self.emit_expr(inner, state);
                     write_de!(self.buffer, ",.vtable=");
-                    let vtable = Vtable { tr: to_tr, ty: from, scope };
+                    let vtable = Vtable { tr: to_tr, ty: from };
 
                     self.emit_vtable_name(&vtable);
                     self.emit_vtable(vtable);
@@ -1385,17 +1470,16 @@ impl<'a> Codegen<'a> {
 
                 write_de!(self.buffer, "((");
                 self.buffer.emit_dyn_fn_type(func);
-                let id = func.id;
                 let recv = hoist!(self, self.emit_tmpvar(recv, state));
                 write_de!(self.buffer, "){recv}.vtable[");
                 self.buffer.emit_vtable_prefix(tr);
-                self.buffer.emit_vtable_fn_name(id);
+                self.buffer.emit_vtable_fn_name(func.id);
                 write_de!(self.buffer, "])({recv}.self");
                 if args.is_empty() {
                     write_de!(self.buffer, ")");
                 } else {
                     write_de!(self.buffer, ",");
-                    self.finish_emit_fn_args(state, id, args);
+                    self.finish_emit_fn_args(state, func.id, args);
                 }
                 if expr.ty.is_void_like() {
                     write_de!(self.buffer, ")");
@@ -1481,14 +1565,14 @@ impl<'a> Codegen<'a> {
                     write_de!(self.buffer, "for(usize i=0;i<{len};i++){{");
                     hoist_point!(self, {
                         write_de!(self.buffer, "((");
-                        self.emit_type(ut.first_type_arg().unwrap());
+                        self.emit_type(ut.first_type_arg(&self.proj.scopes).unwrap());
                         write_de!(self.buffer, "*){tmp}.ptr)[i]=");
                         self.emit_expr_inline(init, state);
                         writeln_de!(self.buffer, ";}}{tmp}.len={len};");
                     });
                 });
             }
-            &ExprData::Set(ref args, scope) => {
+            ExprData::Set(args) => {
                 let ut = self.proj.types[expr.ty].as_user().unwrap();
                 if args.is_empty() {
                     return self.emit_new(ut);
@@ -1508,7 +1592,6 @@ impl<'a> Codegen<'a> {
                         ),
                         &self.proj.types,
                         expr.ty,
-                        scope,
                     );
 
                     for val in args {
@@ -1520,7 +1603,7 @@ impl<'a> Codegen<'a> {
                     self.funcs.insert(insert);
                 });
             }
-            ExprData::Map(args, scope) => {
+            ExprData::Map(args) => {
                 let ut = self.proj.types[expr.ty].as_user().unwrap();
                 if args.is_empty() {
                     return self.emit_new(ut);
@@ -1539,7 +1622,6 @@ impl<'a> Codegen<'a> {
                         ),
                         &self.proj.types,
                         expr.ty,
-                        *scope,
                     );
 
                     self.emit_with_capacity(expr.ty, &tmp, ut, args.len());
@@ -1574,47 +1656,26 @@ impl<'a> Codegen<'a> {
                 for byte in self.proj.strings.resolve_byte_str(*value) {
                     write_de!(self.arrays, "\\x{byte:x}");
                 }
-                write_de!(self.arrays, "\"}};");
+                writeln_de!(self.arrays, "\"}};");
 
                 write_de!(self.buffer, "&$BSTR{}", expr.data.as_raw());
             }
             ExprData::Void => self.buffer.emit(VOID_INSTANCE),
-            &ExprData::Fn(ref func, scope) => {
+            ExprData::Fn(func) => {
                 let func = func.with_templates(&self.proj.types, &state.func.ty_args);
                 self.buffer.emit_fn_name(&func);
-                self.funcs.insert(State::new(func, scope));
+                self.funcs.insert(State::new(func));
             }
-            ExprData::MemFn(mfn, scope) => self.emit_member_fn(state, mfn.clone(), *scope),
-            &ExprData::Var(id) => {
-                let var = self.proj.scopes.get(id);
-                match var.kind {
-                    VariableKind::Static => _ = self.statics.insert(id),
-                    VariableKind::Const => {
-                        return self.emit_expr(
-                            var.value.expect("ICE: emitting const with no value"),
-                            state,
-                        );
-                    }
-                    VariableKind::Normal => {}
-                    VariableKind::Capture => {
-                        // TODO: use the actual VariableId for the current `this`
-                        return write_de!(
-                            self.buffer,
-                            "$this->{}",
-                            member_name(self.proj, var.name.data)
-                        );
-                    }
-                }
-                self.emit_var_name(id, state);
-            }
+            ExprData::MemFn(mfn) => self.emit_member_fn(state, mfn.clone()),
+            &ExprData::Var(id) => self.emit_var_access(id, state),
             ExprData::Instance(members) => self.emit_instance(state, expr.ty, &members.clone()),
             ExprData::VariantInstance(name, members) => {
                 self.emit_union_instance(state, expr.ty, *name, &members.clone())
             }
             &ExprData::Member { source, member } => {
-                if let Some(ut) = self.proj.types[source.ty].as_user()
-                    && self.proj.scopes.get(ut.id).kind.is_packed_struct()
-                {
+                let ut = self.proj.types[source.ty].as_user().unwrap();
+                let ut_data = self.proj.scopes.get(ut.id);
+                if ut_data.kind.is_packed_struct() {
                     let tmp = tmpbuf!(self, state, |tmp| {
                         let ptr = self.proj.types.insert(Type::Ptr(source.ty));
                         self.emit_type(ptr);
@@ -1626,7 +1687,9 @@ impl<'a> Codegen<'a> {
                     self.emit_bitfield_read(&format!("(*{tmp})"), ut, member, expr.ty);
                 } else {
                     self.emit_expr(source, state);
-                    write_de!(self.buffer, ".{}", member_name(self.proj, member));
+                    if ut_data.attrs.layout != Layout::Transparent {
+                        write_de!(self.buffer, ".{}", member_name(self.proj, member));
+                    }
                 }
             }
             ExprData::Block(block) => enter_block!(self, block.scope, expr.ty, |name| {
@@ -1696,15 +1759,14 @@ impl<'a> Codegen<'a> {
             }
             &ExprData::Return(mut expr) => never_expr!(self, {
                 expr.ty = expr.ty.with_templates(&self.proj.types, &state.func.ty_args);
-                let void = expr.ty.is_void_like();
                 let tmp = self.emit_tmpvar(expr, state);
-                let str = if void {
+                let str = if expr.ty.is_void_like() {
                     write_de!(self.buffer, "(void){tmp};");
                     "return".into()
                 } else {
                     format!("return {tmp}")
                 };
-                self.leave_scope(state, &str, self.proj.scopes.get(state.func.id).body_scope);
+                self.leave_scope(&str, self.proj.scopes.get(state.func.id).body_scope);
             }),
             &ExprData::Yield(expr, scope) => never_expr!(self, {
                 write_de!(self.buffer, "{SCOPE_VAR_PREFIX}{scope}=");
@@ -1712,7 +1774,7 @@ impl<'a> Codegen<'a> {
                 writeln_de!(self.buffer, ";");
 
                 // if scope != self.cur_block {
-                self.leave_scope(state, &format!("goto {SCOPE_VAR_PREFIX}{scope}"), scope);
+                self.leave_scope(&format!("goto {SCOPE_VAR_PREFIX}{scope}"), scope);
                 // }
             }),
             &ExprData::Break(expr, scope) => never_expr!(self, {
@@ -1720,16 +1782,16 @@ impl<'a> Codegen<'a> {
                 self.emit_expr_inline(expr, state);
                 writeln_de!(self.buffer, ";");
                 if self.cur_loop == scope {
-                    self.leave_scope(state, "break", scope);
+                    self.leave_scope("break", scope);
                 } else {
-                    self.leave_scope(state, &format!("goto {SCOPE_VAR_PREFIX}{scope}"), scope);
+                    self.leave_scope(&format!("goto {SCOPE_VAR_PREFIX}{scope}"), scope);
                 }
             }),
             &ExprData::Continue(scope) => never_expr!(self, {
                 if self.cur_loop == scope {
-                    self.leave_scope(state, "continue", scope);
+                    self.leave_scope("continue", scope);
                 } else {
-                    self.leave_scope(state, &format!("goto {LOOP_CONT_PREFIX}{scope}"), scope);
+                    self.leave_scope(&format!("goto {LOOP_CONT_PREFIX}{scope}"), scope);
                 }
             }),
             &ExprData::Match { mut scrutinee, ref body, dummy_scope } => {
@@ -1797,8 +1859,8 @@ impl<'a> Codegen<'a> {
                 self.emit_cast(expr.ty);
                 write_de!(self.buffer, "{{.ptr={tmp}.ptr,.len={tmp}.len}}");
             }
-            &ExprData::StringInterp { ref strings, ref args, scope } => {
-                self.emit_string_interp(expr.ty, state, strings.clone(), args.clone(), scope)
+            ExprData::StringInterp { strings, args } => {
+                self.emit_string_interp(expr.ty, state, strings.clone(), args.clone())
             }
             &ExprData::AffixOperator { callee, ref mfn, scope, postfix, span } => {
                 let mfn = mfn.clone();
@@ -1852,7 +1914,7 @@ impl<'a> Codegen<'a> {
                 self.emit_expr(inner, state);
                 self.buffer.emit(")");
             }
-            &ExprData::ClosureCoerce(inner, scope) => {
+            &ExprData::ClosureToFnPtr(inner) => {
                 hoist!(self, {
                     write_de!(self.buffer, "(void)");
                     self.emit_expr_inline(inner, state);
@@ -1864,19 +1926,17 @@ impl<'a> Codegen<'a> {
                     .unwrap()
                     .with_templates(&self.proj.types, &state.func.ty_args);
                 // TODO: if the function pointer is extern, use/generate a wrapper
-                let f = self
+                let fid = self
                     .proj
                     .scopes
                     .get(closure.id)
-                    .fns
-                    .iter()
-                    .find(|f| self.proj.scopes.get(f.id).name.data == Strings::FN_CLOSURE_DO_INVOKE)
+                    .find_associated_fn(&self.proj.scopes, Strings::FN_CLOSURE_DO_INVOKE)
                     .unwrap();
 
-                let mut func = GenericFn::new(f.id, TypeArgs::default());
+                let mut func = GenericFn::new(fid, TypeArgs::default());
                 func.fill_templates(&self.proj.types, &closure.ty_args);
                 self.buffer.emit_fn_name(&func);
-                self.funcs.insert(State::new(func, scope));
+                self.funcs.insert(State::new(func));
             }
             ExprData::Error => panic!("ICE: ExprData::Error in gen_expr"),
         }
@@ -1887,24 +1947,23 @@ impl<'a> Codegen<'a> {
         self.emit_expr_inner(expr, state);
     }
 
-    fn emit_member_fn(&mut self, state: &mut State, mut mfn: MemberFn, scope: ScopeId) {
-        if let MemberFnType::Trait(mut tr) = mfn.typ {
-            let inst = mfn.inst.with_templates(&self.proj.types, &state.func.ty_args);
+    fn emit_member_fn(&mut self, state: &mut State, mut mfn: MemberFn) {
+        if let Some((inst, mut tr)) = mfn.trait_fn {
+            let inst = inst.with_templates(&self.proj.types, &state.func.ty_args);
             tr.fill_templates(&self.proj.types, &state.func.ty_args);
             mfn.func = self.find_implementation(
                 inst,
                 &tr,
                 self.proj.scopes.get(mfn.func.id).name.data,
-                state.caller,
                 |proj, id| {
-                    TypeArgs::in_order(&proj.scopes, id, mfn.func.ty_args.0.iter().map(|kv| *kv.1))
+                    TypeArgs::in_order(&proj.scopes, id, mfn.func.ordered_iter(&self.proj.scopes))
                 },
             );
         }
 
         mfn.func.fill_templates(&self.proj.types, &state.func.ty_args);
         self.buffer.emit_fn_name(&mfn.func);
-        self.funcs.insert(State::new(mfn.func, scope));
+        self.funcs.insert(State::new(mfn.func));
     }
 
     fn emit_instance(&mut self, state: &mut State, ty: TypeId, members: &IndexMap<StrId, Expr>) {
@@ -1918,22 +1977,24 @@ impl<'a> Codegen<'a> {
                     self.emit_bitfield_write(&tmp, ut, name, value.ty, &expr);
                 }
             });
+        } else if self.proj.scopes.get(ut.id).attrs.layout == Layout::Transparent {
+            self.emit_cast(ty);
+            self.emit_expr_inline(members[0], state);
+            return;
         }
 
-        self.emit_cast(ty);
-        write_de!(self.buffer, "{{");
-        if members.is_empty() {
-            write_de!(self.buffer, "CTL_DUMMY_INIT");
-        }
+        tmpbuf_emit!(self, state, |tmp| {
+            self.emit_type(ty);
+            writeln_de!(self.buffer, " {tmp};");
 
-        for (&name, value) in members {
-            let mut value = *value;
-            value.ty = value.ty.with_templates(&self.proj.types, &state.func.ty_args);
-            write_de!(self.buffer, ".{}=", member_name(self.proj, name));
-            self.emit_expr(value, state);
-            write_de!(self.buffer, ",");
-        }
-        write_de!(self.buffer, "}}");
+            for (&name, value) in members {
+                let mut value = *value;
+                value.ty = value.ty.with_templates(&self.proj.types, &state.func.ty_args);
+                write_de!(self.buffer, "{tmp}.{}=", member_name(self.proj, name));
+                self.emit_expr(value, state);
+                writeln_de!(self.buffer, ";");
+            }
+        });
     }
 
     fn emit_union_instance(
@@ -2192,7 +2253,7 @@ impl<'a> Codegen<'a> {
                 }
 
                 let is_lvalue = match self.arena.get(lhs.data) {
-                    ExprData::Deref { .. } | ExprData::Fn(_, _) | ExprData::MemFn(_, _) => true,
+                    ExprData::Deref { .. } | ExprData::Fn(_) | ExprData::MemFn(_) => true,
                     ExprData::Var(id) => !self.proj.scopes.get(*id).kind.is_const(),
                     ExprData::Member { source, .. } => !source.ty.is_packed_struct(self.proj),
                     _ => false,
@@ -2226,7 +2287,6 @@ impl<'a> Codegen<'a> {
                             self.emit_expr_inner(opt, state);
                         });
                         self.leave_scope(
-                            state,
                             &buffer.finish(),
                             self.proj.scopes.get(state.func.id).body_scope,
                         );
@@ -2293,43 +2353,28 @@ impl<'a> Codegen<'a> {
         writeln_de!(self.buffer, ";break;");
     }
 
-    fn leave_scope(&mut self, state: &mut State, exit: &str, scope: ScopeId) {
-        let mut emitted = false;
-        for i in (0..self.defers.len()).rev() {
-            for j in (0..self.defers[i].1.len()).rev() {
-                if !emitted {
-                    write_nm!(self, "/* begin defers {scope:?} */");
-                    emitted = true;
-                }
-
-                hoist_point!(self, self.emit_expr_stmt(self.defers[i].1[j], state));
+    fn leave_scope(&mut self, exit: &str, scope: ScopeId) {
+        for (block_scope, defers) in self.defers.iter().rev() {
+            for (func_name, params_name) in defers.iter().rev() {
+                writeln_de!(self.buffer, "CTL_EXEC_DEFER({func_name}, {params_name});");
             }
 
-            if self.defers[i].0 == scope {
+            if block_scope == &scope {
                 break;
             }
-        }
-        if emitted {
-            write_nm!(self, "/* end defers {scope:?} */");
         }
         writeln_de!(self.buffer, "{exit};");
     }
 
     fn emit_new(&mut self, ut: &GenericUserType) {
-        // FIXME: this should technically use the scope that is creating the literal, but since
-        // none of the constructors for literals use trait functions in any way, it doesn't matter
-        // right now
-        let new_state = State::in_body_scope(
-            GenericFn::new(
-                self.proj
-                    .scopes
-                    .get(ut.id)
-                    .find_associated_fn(&self.proj.scopes, Strings::FN_NEW)
-                    .unwrap(),
-                ut.ty_args.clone(),
-            ),
-            &self.proj.scopes,
-        );
+        let new_state = State::new(GenericFn::new(
+            self.proj
+                .scopes
+                .get(ut.id)
+                .find_associated_fn(&self.proj.scopes, Strings::FN_NEW)
+                .unwrap(),
+            ut.ty_args.clone(),
+        ));
 
         self.buffer.emit_fn_name(&new_state.func);
         write_de!(self.buffer, "()");
@@ -2345,20 +2390,14 @@ impl<'a> Codegen<'a> {
     ) {
         self.emit_type(ty);
         write_de!(self.buffer, " {tmp}=");
-        // FIXME: this should technically use the scope that is creating the literal, but since
-        // none of the constructors for literals use trait functions in any way, it doesn't matter
-        // right now
-        let state = State::in_body_scope(
-            GenericFn::new(
-                self.proj
-                    .scopes
-                    .get(ut.id)
-                    .find_associated_fn(&self.proj.scopes, Strings::FN_WITH_CAPACITY)
-                    .unwrap(),
-                ut.ty_args.clone(),
-            ),
-            &self.proj.scopes,
-        );
+        let state = State::new(GenericFn::new(
+            self.proj
+                .scopes
+                .get(ut.id)
+                .find_associated_fn(&self.proj.scopes, Strings::FN_WITH_CAPACITY)
+                .unwrap(),
+            ut.ty_args.clone(),
+        ));
 
         self.buffer.emit_fn_name(&state.func);
         writeln_de!(self.buffer, "({len});");
@@ -2389,7 +2428,7 @@ impl<'a> Codegen<'a> {
                 write_de!(
                     self.buffer,
                     "(usize){}",
-                    func.first_type_arg()
+                    func.first_type_arg(&self.proj.scopes)
                         .unwrap()
                         .size_and_align(&self.proj.scopes, &self.proj.types)
                         .0
@@ -2399,7 +2438,7 @@ impl<'a> Codegen<'a> {
                 write_de!(
                     self.buffer,
                     "(usize){}",
-                    func.first_type_arg()
+                    func.first_type_arg(&self.proj.scopes)
                         .unwrap()
                         .size_and_align(&self.proj.scopes, &self.proj.types)
                         .1
@@ -2505,10 +2544,15 @@ impl<'a> Codegen<'a> {
             }
             Intrinsic::TypeId => {
                 self.emit_cast(ret);
-                write_de!(self.buffer, "{{.tag={}}}", func.first_type_arg().unwrap().as_raw());
+                write_de!(
+                    self.buffer,
+                    "{{.tag={}ull}}",
+                    func.first_type_arg(&self.proj.scopes).unwrap().as_raw()
+                );
             }
             Intrinsic::TypeName => {
-                let name = self.proj.fmt_ty(func.first_type_arg().unwrap()).to_string();
+                let name =
+                    self.proj.fmt_ty(func.first_type_arg(&self.proj.scopes).unwrap()).to_string();
                 write_de!(self.buffer, "{}", StringLiteral(&name))
             }
             Intrinsic::ReadVolatile => {
@@ -2535,12 +2579,10 @@ impl<'a> Codegen<'a> {
             Intrinsic::SourceLocation => {
                 let func =
                     self.proj.scopes.walk(scope).find_map(|s| s.1.kind.as_function().copied());
-                let sl_typ = self.proj.types[ret].as_user().unwrap().id;
+                let sl_typ = ret.as_pointee(&self.proj.types).unwrap();
+                let sl_utid = self.proj.types[sl_typ].as_user().unwrap().id;
                 let func_strid = self.proj.strings.get("func").unwrap();
-                let option_typ = self.proj.scopes.get(sl_typ).members.get(&func_strid).unwrap().ty;
-
-                self.buffer.emit("(");
-                self.emit_cast(ret);
+                let option_typ = self.proj.scopes.get(sl_utid).members.get(&func_strid).unwrap().ty;
 
                 let range = self
                     .source
@@ -2551,21 +2593,43 @@ impl<'a> Codegen<'a> {
 
                 // TODO: Compiler options like --remap-path-prefix & flag to omit source information
                 let path = self.proj.diag.file_path(span.file).to_string_lossy().to_string();
-                write_de!(
-                    self.buffer,
-                    "{{.file={},.line={},.col={},.func=",
-                    StringLiteral(&path),
-                    range.map(|s| s.start.line).unwrap_or_default() + 1,
-                    range.map(|s| s.start.character).unwrap_or_default() + 1,
-                );
-                let opt = if let Some(func) = func {
-                    let str = self.function_name(func, state);
-                    Expr::option_some(option_typ, str, &mut self.arena)
-                } else {
-                    Expr::option_null(option_typ, &mut self.arena)
-                };
-                self.emit_expr_inline(opt, state);
-                self.buffer.emit("})");
+                let name = tmpbuf!(self, state, |tmp| {
+                    write_de!(self.buffer, "static const ");
+                    self.emit_type(sl_typ);
+                    write_de!(
+                        self.buffer,
+                        " {tmp}={{.file={},.line={},.col={},.func=",
+                        StringLiteral(&path),
+                        range.map(|s| s.start.line).unwrap_or_default() + 1,
+                        range.map(|s| s.start.character).unwrap_or_default() + 1,
+                    );
+                    self.emit_cast(option_typ);
+                    let ut =
+                        self.proj.scopes.get(self.proj.types[option_typ].as_user().unwrap().id);
+                    let union = ut.kind.as_union().unwrap();
+                    // TODO: when the enum variant optimization eventually optimizes ?str, this
+                    // will need to change
+                    if let Some(func) = func {
+                        let str = self.function_name(func, state);
+                        write_de!(self.buffer, "{{.{UNION_TAG_NAME}=");
+                        self.emit_literal(
+                            union.discriminant(Strings::SOME).unwrap().clone(),
+                            union.tag,
+                        );
+                        write_de!(self.buffer, ",.Some={}}}", StringLiteral(&str));
+                    } else {
+                        write_de!(self.buffer, "{{.{UNION_TAG_NAME}=");
+                        self.emit_literal(
+                            union.discriminant(Strings::NULL).unwrap().clone(),
+                            union.tag,
+                        );
+                        write_de!(self.buffer, "}}");
+                    };
+                    writeln_de!(self.buffer, "}};");
+                    tmp
+                });
+
+                write_de!(self.buffer, "&{name}");
             }
             Intrinsic::PtrAddSigned
             | Intrinsic::PtrAddUnsigned
@@ -2594,7 +2658,7 @@ impl<'a> Codegen<'a> {
                 formatter.ty = formatter.ty.with_templates(&self.proj.types, &state.func.ty_args);
 
                 let real_ty = arg.ty.as_pointee(&self.proj.types).unwrap();
-                let dbg_args = self.dbg_args(formatter.ty, state, scope);
+                let dbg_args = self.dbg_args(formatter.ty, state);
                 hoist!(self, {
                     let arg = self.emit_tmpvar(arg, state);
                     let fmt = self.emit_tmpvar(formatter, state);
@@ -2605,8 +2669,6 @@ impl<'a> Codegen<'a> {
                             &format!("(*{arg})"),
                             &fmt,
                             state,
-                            scope,
-                            span,
                             0,
                         );
                     });
@@ -2638,11 +2700,28 @@ impl<'a> Codegen<'a> {
                 }
                 write_de!(self.buffer, ")");
             }
+            Intrinsic::InstancePtrOf => {
+                self.emit_expr_inline(args.into_iter().next().unwrap().1, state);
+                write_de!(self.buffer, ".self");
+            }
+            Intrinsic::VTableOf => {
+                self.emit_cast(ret);
+                write_de!(self.buffer, "{{.ptr=");
+                self.emit_expr_inline(args.into_iter().next().unwrap().1, state);
+                write_de!(self.buffer, ".vtable,.len=");
+                let tr = self.proj.types[func.first_type_arg(&self.proj.scopes).unwrap()]
+                    .as_dyn_pointee()
+                    .unwrap()
+                    .id;
+                self.buffer.emit_vtable_prefix(tr);
+                write_de!(self.buffer, "{VTABLE_TRAIT_LEN}}}");
+            }
+            Intrinsic::CurrentFrameAddr => {
+                writeln_de!(self.buffer, "__builtin_frame_address(0)")
+            }
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::only_used_in_recursion)]
     fn emit_builtin_dbg(
         &mut self,
         args: &BuiltinDbgArgs,
@@ -2650,16 +2729,14 @@ impl<'a> Codegen<'a> {
         arg: &str,
         fmt: &str,
         state: &mut State,
-        scope: ScopeId,
-        span: Span,
         lvl: usize,
     ) {
-        if let Some(mfn) = self
-            .lookup_trait_fn(arg_ty, &args.dbg_tr, args.dbg_fn, scope, |_, _| TypeArgs::default())
+        if let Some(mfn) =
+            self.lookup_trait_fn(arg_ty, &args.dbg_tr, args.dbg_fn, |_, _| TypeArgs::default())
         {
             let owner = self.proj.scopes[self.proj.scopes.get(mfn.func.id).scope].parent.unwrap();
             if self.proj.scopes[owner].kind.as_user_type().copied() != args.fallback_dbg_ext {
-                self.emit_member_fn(state, mfn, scope);
+                self.emit_member_fn(state, mfn);
                 return writeln_de!(self.buffer, "(&{arg},{fmt});");
             }
         }
@@ -2695,12 +2772,12 @@ impl<'a> Codegen<'a> {
                     buf.emit_fn_name(func);
                     write_de!(buf, "}}");
                 });
-                self.emit_builtin_dbg(args, ty, &ptr, fmt, state, scope, span, 0);
+                self.emit_builtin_dbg(args, ty, &ptr, fmt, state, 0);
             }
             Type::FnPtr(_) => {
                 let ty = self.proj.types.insert(Type::RawPtr(TypeId::VOID));
                 let ptr = format!("(void const*){{{arg}}}");
-                self.emit_builtin_dbg(args, ty, &ptr, fmt, state, scope, span, 0);
+                self.emit_builtin_dbg(args, ty, &ptr, fmt, state, 0);
             }
             Type::User(ut) => {
                 let ut_data = self.proj.scopes.get(ut.id);
@@ -2708,8 +2785,8 @@ impl<'a> Codegen<'a> {
                     if ut.can_omit_tag(&self.proj.scopes, &self.proj.types).is_some() {
                         write_de!(self.buffer, "if ({arg}) {{");
                         write_str!("Some(");
-                        let ty = ut.ty_args[0];
-                        self.emit_builtin_dbg(args, ty, arg, fmt, state, scope, span, lvl + 1);
+                        let ty = ut.get_type_arg(0, &self.proj.scopes).unwrap();
+                        self.emit_builtin_dbg(args, ty, arg, fmt, state, lvl + 1);
                         write_str!(")");
                         write_de!(self.buffer, "}}else{{");
                         write_str!("null");
@@ -2726,7 +2803,7 @@ impl<'a> Codegen<'a> {
                         if let Some(ty) = variant.ty {
                             let ty = ty.with_templates(&self.proj.types, &ut.ty_args);
                             let buf = format!("{arg}.{}", member_name(self.proj, name));
-                            self.emit_builtin_dbg(args, ty, &buf, fmt, state, scope, span, lvl + 1);
+                            self.emit_builtin_dbg(args, ty, &buf, fmt, state, lvl + 1);
                         }
                         writeln_de!(self.buffer, "break;}}");
                     }
@@ -2766,10 +2843,12 @@ impl<'a> Codegen<'a> {
                             writeln_de!(self.buffer, ";");
                             tmp
                         })
-                    } else {
+                    } else if ut_data.attrs.layout != Layout::Transparent {
                         format!("{arg}.{}", member_name(self.proj, name))
+                    } else {
+                        arg.to_string()
                     };
-                    self.emit_builtin_dbg(args, ty, &buf, fmt, state, scope, span, lvl + 1);
+                    self.emit_builtin_dbg(args, ty, &buf, fmt, state, lvl + 1);
                 }
 
                 if !is_tuple && !ut_data.members.is_empty() {
@@ -2781,21 +2860,6 @@ impl<'a> Codegen<'a> {
                 } else {
                     write_str!(")");
                 }
-            }
-            Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
-                if self.proj.types[arg_ty].is_dyn_mut_ptr() {
-                    write_str_fmt!("*dyn mut {} {{self: ", self.proj.fmt_ut(tr));
-                } else {
-                    write_str_fmt!("*dyn {} {{self: ", self.proj.fmt_ut(tr));
-                }
-
-                let ty = self.proj.types.insert(Type::RawPtr(TypeId::VOID));
-                let self_ptr = format!("(void const*){{{arg}.self}}");
-                let vtable_ptr = format!("(void const*){{{arg}.vtable}}");
-                self.emit_builtin_dbg(args, ty, &self_ptr, fmt, state, scope, span, 0);
-                write_str!(", vtable: ");
-                self.emit_builtin_dbg(args, ty, &vtable_ptr, fmt, state, scope, span, 0);
-                write_str!("}");
             }
             _ => panic!("ICE: attempt to emit_builtin_dbg for '{}'", self.proj.fmt_ty(arg_ty)),
         }
@@ -2824,9 +2888,8 @@ impl<'a> Codegen<'a> {
         if !self.proj.conf.build.minify {
             write_de!(self.buffer, "_");
         }
-        self.buffer.emit_type_name(&vtable.tr);
+        self.buffer.emit_trait_name(&vtable.tr);
         self.buffer.emit(if self.proj.conf.build.minify { "v" } else { "_$vtable" });
-        write_de!(self.buffer, "{}", vtable.scope);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3131,17 +3194,13 @@ impl<'a> Codegen<'a> {
             }
         });
 
-        let (id, defers) = self.defers.pop().unwrap();
+        let (_, defers) = self.defers.pop().unwrap();
         if std::mem::replace(&mut self.emitted_never_in_this_block, old) {
             return;
         }
 
-        if !defers.is_empty() {
-            write_nm!(self, "/* begin defers {id:?} */");
-            for expr in defers.into_iter().rev() {
-                hoist_point!(self, self.emit_expr_stmt(expr, state));
-            }
-            write_nm!(self, "/* end defers {id:?} */");
+        for (func_name, params_name) in defers.into_iter().rev() {
+            writeln_de!(self.buffer, "CTL_EXEC_DEFER({func_name}, {params_name});");
         }
     }
 
@@ -3181,6 +3240,10 @@ impl<'a> Codegen<'a> {
 
         if !is_prototype && f.attrs.cold {
             write_de!(self.buffer, "CTL_COLD ");
+        }
+
+        if f.attrs.malloc {
+            write_de!(self.buffer, "CTL_MALLOC ");
         }
 
         if ret == TypeId::NEVER {
@@ -3224,18 +3287,15 @@ impl<'a> Codegen<'a> {
                 if !override_with_voidptr {
                     self.emit_type(ty);
                 }
-            } else if let ParamPattern::Checked(Pattern {
-                data: PatternData::Variable(id), ..
-            }) = &param.patt
-            {
+            } else if let ParamPattern::Checked(PatternData::Variable(id)) = param.patt {
                 if override_with_voidptr {
                     let tmp = state.tmpvar();
                     self.buffer.emit(&tmp);
-                    thisptr = FirstParam::OverriddenVar { tmp, id: *id };
+                    thisptr = FirstParam::OverriddenVar { tmp, id };
                 } else {
-                    self.emit_var_decl(*id, state);
-                    if self.proj.scopes.get(*id).unused {
-                        unused.push(*id);
+                    self.emit_var_decl(id, state);
+                    if self.proj.scopes.get(id).unused {
+                        unused.push(id);
                     }
                 }
             } else {
@@ -3278,7 +3338,9 @@ impl<'a> Codegen<'a> {
             if var.is_extern {
                 self.buffer.emit_str(var.attrs.link_name.unwrap_or(var.name.data))
             } else {
-                self.buffer.emit(full_name(self.proj, var.scope, var.name.data));
+                self.buffer.emit("CTL$");
+                self.buffer.scope_emit_mangled_name(var.scope, &TypeArgs::default());
+                self.buffer.write_len_prefixed(self.proj.str(var.name.data));
             }
         } else {
             write_de!(self.buffer, "$");
@@ -3340,7 +3402,7 @@ impl<'a> Codegen<'a> {
 
             let (size, _) = ty.size_and_align(&self.proj.scopes, &self.proj.types);
             write_de!(self.buffer, "CTL_MEMCPY({tmp},&");
-            self.emit_expr_inline(rhs, state);
+            self.emit_expr(rhs, state);
             writeln_de!(self.buffer, ",{size});");
         });
         self.buffer.emit(VOID_INSTANCE);
@@ -3569,7 +3631,6 @@ impl<'a> Codegen<'a> {
         state: &mut State,
         strings: Vec<StrId>,
         args: Vec<(Expr, FormatOpts)>,
-        scope: ScopeId,
     ) {
         self.emit_cast(ty);
         write_de!(self.buffer, "{{.parts={{.len={},.ptr=", strings.len());
@@ -3604,7 +3665,7 @@ impl<'a> Codegen<'a> {
                 write_de!(self.buffer, "{{.value=&");
                 self.emit_tmpvar_ident(expr, state);
                 write_de!(self.buffer, ",.format=");
-                self.emit_member_fn(state, opts.func, scope);
+                self.emit_member_fn(state, opts.func);
                 write_de!(self.buffer, ",.opts=");
                 let inst = ExprData::Instance(
                     [
@@ -3675,14 +3736,12 @@ impl<'a> Codegen<'a> {
         inst: TypeId,
         tr: &GenericTrait,
         method: StrId,
-        scope: ScopeId,
         finish: impl FnOnce(&Project, FunctionId) -> TypeArgs + Copy,
     ) -> GenericFn {
-        let Some(mfn) = self.lookup_trait_fn(inst, tr, method, scope, finish) else {
+        let Some(mfn) = self.lookup_trait_fn(inst, tr, method, finish) else {
             panic!(
-                "searching from scope: '{}', cannot find implementation for method '{}::{}' for type '{}'",
-                full_name_pretty(self.proj, scope, false),
-                self.proj.fmt_ut(tr),
+                "cannot find implementation for method '{}::{}' for type '{}'",
+                self.proj.fmt_tr(tr),
                 self.proj.str(method),
                 self.proj.fmt_ty(inst)
             )
@@ -3691,9 +3750,8 @@ impl<'a> Codegen<'a> {
         let picked = self.proj.scopes.get(mfn.func.id);
         if !picked.has_body {
             panic!(
-                "searching from scope: '{}', get_member_fn_ex picked invalid function for implementation for method '{}::{}' for type '{}' (picked {}::{})",
-                full_name_pretty(self.proj, scope, false),
-                self.proj.fmt_ut(tr),
+                "get_member_fn_ex picked invalid function for implementation for method '{}::{}' for type '{}' (picked {}::{})",
+                self.proj.fmt_tr(tr),
                 self.proj.str(method),
                 self.proj.fmt_ty(inst),
                 full_name_pretty(self.proj, picked.scope, false),
@@ -3713,7 +3771,7 @@ impl<'a> Codegen<'a> {
         if ind != 0 { format!("({:*<1$}{src})", "", ind) } else { src.into() }
     }
 
-    fn function_name(&mut self, id: FunctionId, state: &State) -> Expr {
+    fn function_name(&self, id: FunctionId, state: &State) -> String {
         let print_type_params = |result: &mut String, params: &[UserTypeId]| {
             if !params.is_empty() {
                 result.push('<');
@@ -3744,30 +3802,23 @@ impl<'a> Codegen<'a> {
 
         res += self.proj.str(func.name.data);
         print_type_params(&mut res, &func.type_params);
-        self.arena.typed(self.str_interp.string_ty.unwrap(), ExprData::GeneratedString(res))
+        res
     }
 
-    fn dbg_args(
-        &mut self,
-        formatter_ty: TypeId,
-        state: &mut State,
-        scope: ScopeId,
-    ) -> BuiltinDbgArgs {
+    fn dbg_args(&mut self, formatter_ty: TypeId, state: &mut State) -> BuiltinDbgArgs {
         let dbg_fn = self.proj.strings.get("dbg").unwrap();
-        let dbg = self.proj.scopes.lang_types[&LangType::Debug];
-        let dbg_tr = GenericUserType::new(dbg, TypeArgs::default());
+        let dbg = self.proj.scopes.lang_traits[&LangTrait::Debug];
+        let dbg_tr = GenericTrait::new(dbg, TypeArgs::default());
 
         let write_str_fn = self.proj.strings.get("write_str").unwrap();
-        let write = self.proj.scopes.lang_types[&LangType::Write];
-        let write_tr = GenericUserType::new(write, TypeArgs::default());
+        let write = self.proj.scopes.lang_traits[&LangTrait::Write];
+        let write_tr = GenericTrait::new(write, TypeArgs::default());
 
         let fallback_dbg_ext = self.proj.scopes.lang_types.get(&LangType::FallbackDebug).copied();
 
         let real_formatter = formatter_ty.as_pointee(&self.proj.types).unwrap();
         let mut formatter_write_str = self
-            .lookup_trait_fn(real_formatter, &write_tr, write_str_fn, scope, |_, _| {
-                TypeArgs::default()
-            })
+            .lookup_trait_fn(real_formatter, &write_tr, write_str_fn, |_, _| TypeArgs::default())
             .unwrap()
             .func;
 
@@ -3775,7 +3826,7 @@ impl<'a> Codegen<'a> {
         let fn_name = Buffer::format(self.proj, |buf| {
             buf.emit_fn_name(&formatter_write_str);
         });
-        self.funcs.insert(State::new(formatter_write_str, scope));
+        self.funcs.insert(State::new(formatter_write_str));
 
         BuiltinDbgArgs { dbg_fn, dbg_tr, formatter_write_str: fn_name, fallback_dbg_ext }
     }
@@ -3845,21 +3896,58 @@ impl<'a> Codegen<'a> {
 
         self.buffer.emit(result);
     }
+
+    fn emit_var_access(&mut self, id: VariableId, state: &mut State) {
+        let var = self.proj.scopes.get(id);
+        let mut is_local = false;
+        let mut this_ptr = None;
+        match var.kind {
+            VariableKind::Static => _ = self.statics.insert(id),
+            VariableKind::Const => {
+                return self
+                    .emit_expr(var.value.expect("ICE: emitting const with no value"), state);
+            }
+            VariableKind::Normal => is_local = true,
+            VariableKind::Capture => {
+                is_local = true;
+                this_ptr = Some(
+                    *self.proj.scopes.get(state.func.id).params[0]
+                        .patt
+                        .as_checked()
+                        .unwrap()
+                        .as_variable()
+                        .unwrap(),
+                );
+            }
+        }
+
+        if is_local
+            && let Some(defer_state) = &mut self.defer_state
+            && !self.proj.scopes.is_child_of(var.scope, defer_state.scope)
+        {
+            write_de!(self.buffer, "(*{}->", defer_state.params);
+            if let Some(this_ptr) = this_ptr {
+                defer_state.referenced_vars.insert(this_ptr);
+                self.emit_var_name(this_ptr, state);
+                write_de!(self.buffer, ")");
+                write_de!(self.buffer, "->{}", member_name(self.proj, var.name.data));
+            } else {
+                defer_state.referenced_vars.insert(id);
+                self.emit_var_name(id, state);
+                write_de!(self.buffer, ")");
+            }
+        } else if let Some(this_ptr) = this_ptr {
+            self.emit_var_name(this_ptr, state);
+            write_de!(self.buffer, "->{}", member_name(self.proj, var.name.data));
+        } else {
+            self.emit_var_name(id, state);
+        }
+    }
 }
 
 impl SharedStuff for Codegen<'_> {
-    fn resolve_ext_type(&mut self, id: ExtensionId) -> TypeId {
-        *self.proj.scopes.get(id).kind.as_extension().unwrap()
-    }
-
-    fn do_resolve_impls(&mut self, _: UserTypeId) {}
-
     fn proj(&self) -> &Project {
         self.proj
-    }
-
-    fn extension_cache(&mut self) -> &mut crate::typecheck::ExtensionCache {
-        &mut self.ext_cache
     }
 
     fn get_tuple(&mut self, ty_args: Vec<TypeId>) -> TypeId {
@@ -3895,20 +3983,22 @@ struct BitfieldAccess {
 }
 
 struct BuiltinDbgArgs {
-    dbg_tr: GenericUserType,
+    dbg_tr: GenericTrait,
     dbg_fn: StrId,
     formatter_write_str: String,
     fallback_dbg_ext: Option<ExtensionId>,
 }
 
-fn vtable_methods(scopes: &Scopes, types: &Types, tr: UserTypeId) -> Vec<Vis<FunctionId>> {
-    scopes
-        .get(tr)
-        .fns
-        .iter()
-        .filter(move |f| scopes.get(f.id).is_dyn_compatible(scopes, types, tr))
-        .copied()
-        .collect()
+fn vtable_methods(scopes: &Scopes, types: &Types, tr: TraitId) -> Vec<FunctionId> {
+    let mut funcs = vec![];
+    for item in scopes[scopes.get(tr).body_scope].vns.iter() {
+        if let Some(&id) = item.1.as_fn()
+            && scopes.get(id).is_dyn_compatible(scopes, types, tr)
+        {
+            funcs.push(id);
+        }
+    }
+    funcs
 }
 
 fn member_name(proj: &Project, name: StrId) -> String {

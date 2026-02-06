@@ -38,7 +38,7 @@ pub fn eprint<T: fmt::Format>(args: T) {
     fmt::write(&mut Stderr(), args);
 }
 
-pub fn dbg<T>(t: T, here: SourceLocation = SourceLocation::here()): T {
+pub fn dbg<T>(t: T, here: *SourceLocation = SourceLocation::here()): T {
     eprintln("dbg() at {here}:\n\t{t:?}");
     t
 }

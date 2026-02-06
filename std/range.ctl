@@ -1,4 +1,5 @@
-use std::reflect::*;
+use std::reflect::Integral;
+use std::ops::{Inc, Cmp};
 
 pub trait RangeBounds<T> {
     fn begin(this): Bound<T>;
@@ -77,47 +78,42 @@ pub struct RangeFull {
     }
 }
 
-pub mod ext {
-    use super::*;
-    use std::ops::*;
-
-    pub extension RangeFromExt<T: Integral> for RangeFrom<T> {
-        impl Iterator<T> {
-            fn next(mut this): ?T {
-                this.start < this.start.wrapping_add(1.cast()) then this.start++
-            }
+extension<T: Integral> RangeFrom<T> {
+    impl Iterator<T> {
+        fn next(mut this): ?T {
+            this.start < this.start.wrapping_add(1.cast()) then this.start++
         }
     }
+}
 
-    pub extension RangeExt<T: Inc + Cmp<T>> for Range<T> {
-        impl Iterator<T> {
-            fn next(mut this): ?T => this.start < this.end then this.start++;
-        }
-
-        pub fn contains(this, rhs: *T): bool => this.start <= rhs and this.end > rhs;
+extension<T: Inc + Cmp<T>> Range<T> {
+    impl Iterator<T> {
+        fn next(mut this): ?T => this.start < this.end then this.start++;
     }
 
-    pub extension RangeInclusiveExt<T: Integral> for RangeInclusive<T> {
-        impl Iterator<T> {
-            fn next(mut this): ?T {
-                if this.start < this.end {
-                    this.start++
-                } else if this.start == this.end {
-                    // This wouldn't work for u0 but that doesn't compile anyway
-                    if this.end.checked_sub(1.cast()) is ?end {
-                        this.end = end;
-                        this.start
-                    } else {
-                        let val = this.start;
-                        this.start++;
-                        val
-                    }
+    pub fn contains(this, rhs: *T): bool => this.start <= rhs and this.end > rhs;
+}
+
+extension<T: Integral> RangeInclusive<T> {
+    impl Iterator<T> {
+        fn next(mut this): ?T {
+            if this.start < this.end {
+                this.start++
+            } else if this.start == this.end {
+                // This wouldn't work for u0 but that doesn't compile anyway
+                if this.end.checked_sub(1.cast()) is ?end {
+                    this.end = end;
+                    this.start
+                } else {
+                    let val = this.start;
+                    this.start++;
+                    val
                 }
             }
         }
-
-        pub fn contains(this, rhs: *T): bool => this.start <= rhs and this.end >= rhs;
     }
+
+    pub fn contains(this, rhs: *T): bool => this.start <= rhs and this.end >= rhs;
 }
 
 unittest "range inclusive" {

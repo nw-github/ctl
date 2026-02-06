@@ -23,7 +23,12 @@ struct Pointers<T> {
 
 extern fn sprintf(dst: ^mut c_char, fmt: ^c_char, ...): c_int;
 
-fn addrs(p: *dyn std::any::Any): [^void; 2] => unsafe (&raw p).cast::<[^void; 2]>().read();
+fn addrs(p: *dyn std::any::Any): [^void; 2] {
+    [
+        std::intrin::instance_ptr_of(p),
+        std::intrin::vtable_of(p).as_raw() as ^void
+    ]
+}
 
 unittest "automatic debug impl" {
     let s = Struct(

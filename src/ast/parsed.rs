@@ -87,17 +87,16 @@ pub enum StmtData {
     UnsafeUnion(Struct),
     Trait {
         public: bool,
-        sealed: bool,
-        name: Located<StrId>,
+        is_sealed: bool,
         is_unsafe: bool,
+        name: Located<StrId>,
         type_params: TypeParams,
-        impls: Vec<Path>,
+        super_traits: Vec<Path>,
         functions: Vec<Located<Fn>>,
         assoc_types: TypeParams,
     },
     Extension {
-        public: bool,
-        name: Located<StrId>,
+        span: Span,
         ty: TypeHint,
         type_params: TypeParams,
         impls: Vec<Located<ImplBlock>>,
@@ -220,7 +219,7 @@ pub enum ExprData {
         inclusive: bool,
     },
     Continue(Option<Located<StrId>>),
-    Lambda {
+    Closure {
         policy: Option<DefaultCapturePolicy>,
         captures: Vec<Capture>,
         params: Vec<(Located<Pattern>, Option<TypeHint>)>,

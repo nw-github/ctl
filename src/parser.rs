@@ -196,11 +196,12 @@ impl<'a> Parser<'a> {
                 })
             }
             Token::Extension => {
-                self.next();
+                let span = self.next().span;
+                self.invalid_here(tk_public);
                 self.invalid_here(tk_unsafe);
                 self.invalid_here(tk_extern);
 
-                Ok(Stmt { attrs, data: self.extension(tk_public.is_some(), earliest_span) })
+                Ok(Stmt { attrs, data: self.extension(earliest_span, span) })
             }
             Token::Mod => {
                 self.next();
@@ -726,7 +727,7 @@ impl<'a> Parser<'a> {
                 self.expect(Token::LBrace);
                 self.csv_expr(Vec::new(), Token::RBrace, span, Self::expression, ExprData::Set)
             }
-            Token::BitOr => self.lambda_expr(span),
+            Token::BitOr | Token::BitOrAssign => self.closure_expr(data, span),
             Token::Return => {
                 let (span, expr) = if !self.is_range_end(EvalContext::Normal) {
                     let expr = self.expression();
@@ -848,10 +849,7 @@ impl<'a> Parser<'a> {
                 self.invalid_here(bang);
 
                 let ty = self.type_hint();
-                self.arena.expr(
-                    left.span.extended_to(ty.span),
-                    ExprData::As { expr: left, ty },
-                )
+                self.arena.expr(left.span.extended_to(ty.span), ExprData::As { expr: left, ty })
             }
             Token::Dot => {
                 let token = self.peek();
@@ -1090,15 +1088,52 @@ impl<'a> Parser<'a> {
         self.arena.expr(block.span, ExprData::Block(block.data, label))
     }
 
-    fn lambda_expr(&mut self, head: Span) -> Expr {
+    fn closure_expr(&mut self, token: Token, head: Span) -> Expr {
+        use std::cell::Cell;
+
         let mut captures = vec![];
-        let mut policy = None;
-        let mut set_policy = |this: &mut Self, new_policy: DefaultCapturePolicy, span: Span| {
-            if policy.replace(new_policy).is_some() {
+        let policy = Cell::new(None);
+        let set_policy = |this: &mut Self, new_policy: DefaultCapturePolicy, span: Span| {
+            if policy.replace(Some(new_policy)).is_some() {
                 this.error_no_sync(Error::new("duplicate capture policy", span));
             }
         };
 
+        let by_value_helper = |this: &mut Self, start: Span, captures: &mut Vec<Capture>| {
+            let mutable = this.next_if(Token::Mut);
+            let ident = this.next_if_map(|_, next| match next.data {
+                Token::Ident(i) => Some(Located::new(next.span, i)),
+                Token::This => Some(Located::new(next.span, Strings::THIS_PARAM)),
+                _ => None,
+            });
+            let span = start.extended_to(ident.map(|m| m.span).or(mutable).unwrap_or(start));
+            let mutable = mutable.is_some();
+            if let Some(ident) = ident
+                && this.next_if(Token::Assign).is_some()
+            {
+                captures.push(Capture::New { mutable, ident, expr: this.expression() });
+                return;
+            }
+
+            match (mutable, ident) {
+                (true, None) => set_policy(this, DefaultCapturePolicy::ByValMut, span),
+                (false, None) => set_policy(this, DefaultCapturePolicy::ByVal, span),
+                (true, Some(ident)) => captures.push(Capture::ByValMut(ident)),
+                (false, Some(ident)) => captures.push(Capture::ByVal(ident)),
+            }
+        };
+
+        if token == Token::BitOrAssign {
+            let mut span = Span { ..head };
+            span.pos += 1;
+            span.len -= 1;
+            by_value_helper(self, span, &mut captures);
+            if !self.matches(Token::BitOr) {
+                self.expect(Token::Comma);
+            }
+        }
+
+        let mut params = vec![];
         self.csv(vec![], Token::BitOr, head, |this| match this.peek().data {
             Token::Ampersand => {
                 let start = this.next();
@@ -1118,61 +1153,24 @@ impl<'a> Parser<'a> {
                     (false, Some(ident)) => captures.push(Capture::ByPtr(ident)),
                 }
             }
-            Token::Mut => {
-                this.next();
-                let ident = this.expect_ident("expected capture name");
-                if this.next_if(Token::Assign).is_some() {
-                    captures.push(Capture::New { mutable: true, ident, expr: this.expression() });
-                } else {
-                    captures.push(Capture::ByValMut(ident))
-                }
-            }
-            Token::Ident(ident) => {
-                let start = this.next();
-                let ident = Located::new(start.span, ident);
-                if this.next_if(Token::Assign).is_some() {
-                    captures.push(Capture::New { mutable: false, ident, expr: this.expression() });
-                } else {
-                    captures.push(Capture::ByVal(ident))
-                }
-            }
-            Token::This => {
-                let start = this.next();
-                captures.push(Capture::ByVal(Located::new(start.span, Strings::THIS_PARAM)))
-            }
             Token::Assign => {
                 let start = this.next();
-                let mutable = this.next_if(Token::Mut);
-                match mutable {
-                    Some(token) => set_policy(
-                        this,
-                        DefaultCapturePolicy::ByValMut,
-                        start.span.extended_to(token),
-                    ),
-                    None => set_policy(this, DefaultCapturePolicy::ByVal, start.span),
-                }
+                by_value_helper(this, start.span, &mut captures);
             }
             Token::Exclamation => {
                 let start = this.next();
                 set_policy(this, DefaultCapturePolicy::Auto, start.span);
             }
             _ => {
-                let span = this.peek().span;
-                this.error(Error::new("expected capture or capture policy", span));
+                params.push((
+                    this.pattern_impl(false, EvalContext::Normal),
+                    this.next_if(Token::Colon).map(|_| this.type_hint()),
+                ));
             }
         });
 
-        let params = if let Some(head) = self.next_if(Token::LParen) {
-            self.csv(Vec::new(), Token::RParen, head, |this| {
-                (this.pattern(false), this.next_if(Token::Colon).map(|_| this.type_hint()))
-            })
-            .data
-        } else {
-            vec![]
-        };
-
         let ret = self.next_if(Token::Colon).map(|_| self.type_hint());
-        let body = if self.next_if(Token::FatArrow).is_some() {
+        let body = if self.next_if(Token::FatArrow).is_some() || ret.is_none() {
             self.expression()
         } else {
             let token = self.expect(Token::LCurly);
@@ -1181,7 +1179,7 @@ impl<'a> Parser<'a> {
 
         self.arena.expr(
             head.extended_to(body.span),
-            ExprData::Lambda { policy, captures, params, ret, body },
+            ExprData::Closure { policy: policy.into_inner(), captures, params, ret, body },
         )
     }
 
@@ -1567,6 +1565,10 @@ impl<'a> Parser<'a> {
         let span = name.span;
         let name = name.map(|data| match data {
             Token::String(name) => AttrName::Str(name),
+            Token::Unsafe => {
+                props = true;
+                AttrName::Str(Strings::UNSAFE)
+            }
             Token::Ident(name) => {
                 props = true;
                 AttrName::Str(name)
@@ -1928,11 +1930,11 @@ impl<'a> Parser<'a> {
         public: bool,
         span: Span,
         is_unsafe: bool,
-        sealed: bool,
+        is_sealed: bool,
     ) -> Located<StmtData> {
         let name = self.expect_ident("expected name");
         let type_params = self.type_params();
-        let impls = self.trait_impls();
+        let super_traits = self.trait_impls();
         self.expect(Token::LCurly);
 
         let mut functions = Vec::new();
@@ -1968,29 +1970,26 @@ impl<'a> Parser<'a> {
             span,
             StmtData::Trait {
                 public,
-                sealed,
+                is_sealed,
                 is_unsafe,
                 name,
                 type_params,
-                impls,
+                super_traits,
                 functions,
                 assoc_types,
             },
         )
     }
 
-    fn extension(&mut self, public: bool, span: Span) -> Located<StmtData> {
-        let name = self.expect_ident("expected name");
+    fn extension(&mut self, earliest: Span, span: Span) -> Located<StmtData> {
         let type_params = self.type_params();
-
-        self.expect(Token::For);
         let ty = self.type_hint();
         self.expect(Token::LCurly);
 
         let mut functions = Vec::new();
         let mut operators = Vec::new();
         let mut impls = Vec::new();
-        let span = self.next_until(Token::RCurly, span, |this| {
+        let total_span = self.next_until(Token::RCurly, earliest, |this| {
             let attrs = this.attributes();
             if let Some(token) = this.next_if(Token::Impl) {
                 impls.push(this.impl_block(attrs, token));
@@ -2010,8 +2009,8 @@ impl<'a> Parser<'a> {
         });
 
         Located::new(
-            span,
-            StmtData::Extension { public, name, ty, type_params, impls, functions, operators },
+            total_span,
+            StmtData::Extension { span, ty, type_params, impls, functions, operators },
         )
     }
 

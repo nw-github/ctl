@@ -32,8 +32,6 @@ impl<'a, T> HasIter<'a, T> for &'a Vec<T> {
 
 pub type DependencyGraph<T> = RawDependencyGraph<T, HashSet<T>>;
 
-pub type OrderedDependencyGraph<T> = RawDependencyGraph<T, Vec<T>>;
-
 #[derive(derive_more::Deref, derive_more::DerefMut, Clone)]
 pub struct RawDependencyGraph<T, C> {
     graph: HashMap<T, Dependencies<C>>,

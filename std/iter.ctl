@@ -2,15 +2,15 @@ $[lang(iter)]
 pub trait Iterator<T> {
     fn next(mut this): ?T;
 
-    fn enumerate(my this): Enumerate<T, This> => Enumerate::new(this);
-    fn take(my this, count: uint): Take<T, This> => Take::new(this, count);
-    fn skip(my this, count: uint): Skip<T, This> => Skip::new(this, count);
-    fn zip<U, I: Iterator<U>>(my this, rhs: I): Zip<T, U, This, I> => Zip::new(this, rhs);
-    fn chain<I: Iterator<T>>(my this, rhs: I): Chain<T, This, I> => Chain::new(this, rhs);
+    fn enumerate(my this): Enumerate<T, This> => Enumerate(iter: this);
+    fn take(my this, count: uint): Take<T, This> => Take(iter: this, count:);
+    fn skip(my this, count: uint): Skip<T, This> => Skip(iter: this, count:);
+    fn zip<U, I: Iterator<U>>(my this, rhs: I): Zip<T, U, This, I> => Zip(iter1: this, iter2: rhs);
+    fn chain<I: Iterator<T>>(my this, rhs: I): Chain<T, This, I> => Chain(iter1: this, iter2: rhs);
     fn peekable(my this): Peekable<T, This> => Peekable::new(this);
-    fn map<U, F: Fn(T) => U>(my this, f: F): Map<T, U, This, F> => Map::new(this, f);
-    fn flat_map<U, F: Fn(T) => ?U>(my this, f: F): FlatMap<T, U, This, F> => FlatMap::new(this, f);
-    fn filter<F: Fn(*T) => bool>(my this, f: F): Filter<T, This, F> => Filter::new(this, f);
+    fn map<U, F: Fn(T) => U>(my this, f: F): Map<T, U, This, F> => Map(iter: this, f:);
+    fn flat_map<U, F: Fn(T) => ?U>(my this, f: F): FlatMap<T, U, This, F> => FlatMap(iter: this, f:);
+    fn filter<F: Fn(*T) => bool>(my this, f: F): Filter<T, This, F> => Filter(iter: this, f:);
     fn collect<C: FromIter<T>>(my this): C => C::from_iter(this);
 
     fn count(my mut this): uint {
@@ -33,25 +33,28 @@ pub trait Iterator<T> {
         n == 0 then null else n
     }
 
-    fn any<F: Fn(*T) => bool>(mut this, f: F): bool {
-        while this.next() is ?next {
-            if f(&next) {
-                return true;
-            }
-        }
-        false
-    }
+    fn any<F: Fn(T) => bool>(mut this, f: F): bool => this.position(f).is_some();
 
-    fn all<F: Fn(*T) => bool>(mut this, f: F): bool {
+    fn all<F: Fn(T) => bool>(mut this, f: F): bool {
         while this.next() is ?next {
-            if !f(&next) {
+            if !f(next) {
                 return false;
             }
         }
         true
     }
 
-    fn fold<A, F: Fn(A, T) => A>(my mut this, mut acc: A, f: F): A {
+    fn position<F: Fn(T) => bool>(mut this, f: F): ?uint {
+        mut idx = 0u;
+        while this.next() is ?next {
+            if f(next) {
+                break idx;
+            }
+            idx++;
+        }
+    }
+
+    fn fold<Acc, F: Fn(Acc, T) => Acc>(my mut this, mut acc: Acc, f: F): Acc {
         while this.next() is ?next {
             acc = f(acc, next);
         }
@@ -65,13 +68,9 @@ pub trait FromIter<T> {
     fn from_iter<I: Iterator<T>>(iter: I): This;
 }
 
-pub struct Enumerate<T, I: Iterator<T>> {
-    idx: uint,
+struct Enumerate<T, I: Iterator<T>> {
+    idx: uint = 0,
     iter: I,
-
-    pub fn new(iter: I): This {
-        Enumerate(iter:, idx: 0)
-    }
 
     impl Iterator<(uint, T)> {
         fn next(mut this): ?(uint, T) {
@@ -80,13 +79,9 @@ pub struct Enumerate<T, I: Iterator<T>> {
     }
 }
 
-pub struct Take<T, I: Iterator<T>> {
+struct Take<T, I: Iterator<T>> {
     count: uint,
     iter: I,
-
-    pub fn new(iter: I, count: uint): This {
-        Take(iter:, count:)
-    }
 
     impl Iterator<T> {
         fn next(mut this): ?T {
@@ -100,13 +95,9 @@ pub struct Take<T, I: Iterator<T>> {
     }
 }
 
-pub struct Zip<T, U, I: Iterator<T>, J: Iterator<U>> {
+struct Zip<T, U, I: Iterator<T>, J: Iterator<U>> {
     iter1: I,
     iter2: J,
-
-    pub fn new(iter1: I, iter2: J): This {
-        Zip(iter1:, iter2:)
-    }
 
     impl Iterator<(T, U)> {
         fn next(mut this): ?(T, U) {
@@ -115,13 +106,9 @@ pub struct Zip<T, U, I: Iterator<T>, J: Iterator<U>> {
     }
 }
 
-pub struct Chain<T, I: Iterator<T>, J: Iterator<T>> {
+struct Chain<T, I: Iterator<T>, J: Iterator<T>> {
     iter1: I,
     iter2: J,
-
-    pub fn new(iter1: I, iter2: J): This {
-        Chain(iter1:, iter2:)
-    }
 
     impl Iterator<T> {
         fn next(mut this): ?T {
@@ -137,9 +124,7 @@ pub struct Peekable<T, I: Iterator<T>> {
     iter: I,
     item: ?T,
 
-    pub fn new(iter: I): This {
-        Peekable(iter:, item: null)
-    }
+    pub fn new(iter: I): This => This(iter:, item: null);
 
     pub fn peek(mut this): ?*T {
         this.prime();
@@ -161,13 +146,9 @@ pub struct Peekable<T, I: Iterator<T>> {
     }
 }
 
-pub struct Skip<T, I: Iterator<T>> {
+struct Skip<T, I: Iterator<T>> {
     count: uint,
     iter: I,
-
-    pub fn new(iter: I, count: uint): This {
-        Skip(iter:, count:)
-    }
 
     impl Iterator<T> {
         fn next(mut this): ?T {
@@ -180,31 +161,25 @@ pub struct Skip<T, I: Iterator<T>> {
     }
 }
 
-pub struct Once<T> {
+struct Once<T> {
     val: ?T,
-
-    pub fn new(val: T): This => Once(val:);
 
     impl Iterator<T> {
         fn next(mut this): ?T => this.val.take();
     }
 }
 
-pub struct Repeat<T> {
+struct Repeat<T> {
     val: T,
-
-    pub fn new(val: T): This => Repeat(val:);
 
     impl Iterator<T> {
         fn next(mut this): ?T { this.val }
     }
 }
 
-pub struct Map<T, U, I: Iterator<T>, F: Fn(T) => U> {
+struct Map<T, U, I: Iterator<T>, F: Fn(T) => U> {
     f: F,
     iter: I,
-
-    pub fn new(iter: I, f: F): This => This(iter:, f:);
 
     impl Iterator<U> {
         fn next(mut this): ?U {
@@ -215,11 +190,9 @@ pub struct Map<T, U, I: Iterator<T>, F: Fn(T) => U> {
     }
 }
 
-pub struct FlatMap<T, U, I: Iterator<T>, F: Fn(T) => ?U> {
+struct FlatMap<T, U, I: Iterator<T>, F: Fn(T) => ?U> {
     f: F,
     iter: I,
-
-    pub fn new(iter: I, f: F): This => This(iter:, f:);
 
     impl Iterator<U> {
         fn next(mut this): ?U {
@@ -230,11 +203,9 @@ pub struct FlatMap<T, U, I: Iterator<T>, F: Fn(T) => ?U> {
     }
 }
 
-pub struct Filter<T, I: Iterator<T>, F: Fn(*T) => bool> {
+struct Filter<T, I: Iterator<T>, F: Fn(*T) => bool> {
     f: F,
     iter: I,
-
-    pub fn new(iter: I, f: F): This => This(iter:, f:);
 
     impl Iterator<T> {
         fn next(mut this): ?T {
@@ -247,8 +218,9 @@ pub struct Filter<T, I: Iterator<T>, F: Fn(*T) => bool> {
     }
 }
 
-pub fn once<T>(val: T): Once<T> => Once::new(val);
-pub fn repeat<T>(val: T): Repeat<T> => Repeat::new(val);
+pub fn once<T>(val: T): Once<T> => Once(val:);
+
+pub fn repeat<T>(val: T): Repeat<T> => Repeat(val:);
 
 mod tests {
     unittest "zip even" {

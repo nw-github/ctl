@@ -1,7 +1,8 @@
 use std::fmt::*;
 use std::intrin;
+use std::ops::Eq;
 
-pub extension RawImpl<T> for ^T {
+extension<T> ^T {
     pub fn cast<U>(my this): ^U => this as ^U;
     $[intrinsic(numeric_cast)]
     pub fn addr(my this): uint => this.addr();
@@ -15,9 +16,15 @@ pub extension RawImpl<T> for ^T {
     pub unsafe fn read(my this): T => unsafe *this;
     pub unsafe fn read_volatile(my this): T => unsafe std::ptr::read_volatile(this);
     pub unsafe fn read_unaligned(my this): T {
-        mut buf: T;
-        unsafe std::mem::copy(dst: &raw mut buf, src: this, num: 1);
-        buf
+        // unsafe std::mem::Uninit::<T>::assume_init_by(|=this, buf| {
+        //     unsafe std::mem::copy_no_overlap(dst: buf, src: this, num: 1);
+        // }).0
+
+        mut out = std::mem::Uninit::<T>::uninit();
+        unsafe {
+            std::mem::copy_no_overlap(dst: out.as_raw_mut(), src: this, num: 1);
+            out.assume_init()
+        }
     }
 
     $[intrinsic(unary_op)]
@@ -41,9 +48,25 @@ pub extension RawImpl<T> for ^T {
     impl Pointer {
         fn ptr(this, f: *mut Formatter) => this.dbg(f);
     }
+
+    impl Eq<^T> {
+        $[intrinsic(binary_op)]
+        fn eq(this, rhs: *^T): bool => this == rhs;
+
+        $[intrinsic(binary_op)]
+        fn ne(this, rhs: *^T): bool => this != rhs;
+    }
+
+    impl Eq<^mut T> {
+        $[intrinsic(binary_op)]
+        fn eq(this, rhs: *^mut T): bool => this == rhs;
+
+        $[intrinsic(binary_op)]
+        fn ne(this, rhs: *^mut T): bool => this != rhs;
+    }
 }
 
-pub extension RawMutImpl<T> for ^mut T {
+extension<T> ^mut T {
     pub fn cast<U>(my this): ^mut U => this as ^mut U;
     $[intrinsic(numeric_cast)]
     pub fn addr(my this): uint => this.addr();
@@ -60,7 +83,7 @@ pub extension RawMutImpl<T> for ^mut T {
     pub unsafe fn write(my this, val: T) => unsafe *this = val;
     pub unsafe fn write_volatile(my this, val: T) => unsafe std::ptr::write_volatile(this, val);
     pub unsafe fn write_unaligned(my this, val: T) {
-        unsafe std::mem::copy(dst: this, src: &raw val, num: 1);
+        unsafe std::mem::copy_no_overlap(dst: this, src: &raw val, num: 1);
     }
 
     pub unsafe fn replace(my this, val: T): T {
@@ -92,5 +115,20 @@ pub extension RawMutImpl<T> for ^mut T {
     impl Pointer {
         fn ptr(this, f: *mut Formatter) => (*this as ^T).ptr(f);
     }
-}
 
+    impl Eq<^T> {
+        $[intrinsic(binary_op)]
+        fn eq(this, rhs: *^T): bool => this == rhs;
+
+        $[intrinsic(binary_op)]
+        fn ne(this, rhs: *^T): bool => this != rhs;
+    }
+
+    impl Eq<^mut T> {
+        $[intrinsic(binary_op)]
+        fn eq(this, rhs: *^mut T): bool => this == rhs;
+
+        $[intrinsic(binary_op)]
+        fn ne(this, rhs: *^mut T): bool => this != rhs;
+    }
+}

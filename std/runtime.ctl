@@ -1,10 +1,7 @@
-use std::deps::{libgc, libc, libdwfl::*};
+use std::deps::{libgc, libc};
 
 pub static mut CTL_ARGV: ?^mut ^mut c_char = null;
 pub static mut CTL_ARGC: c_int = 0;
-
-$[feature(backtrace)]
-pub static mut DWFL: ?*mut Dwfl = null;
 
 $[export, link_name("$ctl_stdlib_init"), feature(hosted)]
 extern fn init(argc: c_int, argv: ?^mut ^mut c_char) {
@@ -13,11 +10,7 @@ extern fn init(argc: c_int, argv: ?^mut ^mut c_char) {
         libgc::GC_init();
 
         $[feature(backtrace)]
-        {
-            DWFL = init_dwfl();
-
-            install_fault_handler();
-        }
+        install_fault_handler();
 
         CTL_ARGC = argc;
         CTL_ARGV = argv;
@@ -26,37 +19,8 @@ extern fn init(argc: c_int, argv: ?^mut ^mut c_char) {
 
 $[export, link_name("$ctl_stdlib_deinit"), feature(hosted)]
 extern fn deinit() {
-    unsafe {
-        $[cfg("!ctl:no-gc")]
-        libgc::GC_deinit();
-
-        $[feature(backtrace)]
-        if DWFL.take() is ?dwfl {
-            dwfl_end(dwfl);
-        }
-    }
-}
-
-$[feature(backtrace)]
-fn init_dwfl(): ?*mut Dwfl {
-    static CALLBACKS: Dwfl_Callbacks = Dwfl_Callbacks(
-        find_elf: dwfl_linux_proc_find_elf,
-        find_debuginfo: dwfl_standard_find_debuginfo,
-        section_address: null,
-        debuginfo_path: null,
-    );
-
-    unsafe {
-        let dwfl = dwfl_begin(&CALLBACKS)?;
-        dwfl_report_begin(dwfl);
-        dwfl_linux_proc_report(dwfl, libc::posix::getpid());
-        guard dwfl_report_end(dwfl, null, null) == 0 else {
-            dwfl_end(dwfl);
-            return null;
-        }
-
-        dwfl
-    }
+    $[cfg("!ctl:no-gc")]
+    unsafe libgc::GC_deinit();
 }
 
 $[feature(backtrace)]
@@ -64,9 +28,27 @@ fn install_fault_handler() {
     use libc::{posix::*, linux};
 
     unsafe {
+        let stack_size: uint = 1024 * 1024 * 8;
+        let mmap_addr = mmap(
+            addr: null,
+            len: stack_size,
+            prot: PROT_READ | PROT_WRITE,
+            flags: MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK,
+            fd: -1,
+            off: 0,
+        );
+        if mmap_addr == ?MAP_FAILED {
+            perror("mmap\0".as_raw().cast());
+        } else {
+            mut stack = stack_t(ss_flags: 0, ss_size: stack_size, ss_sp: mmap_addr);
+            if sigaltstack(&mut stack, null) == -1 {
+                perror("sigaltstack\0".as_raw().cast());
+            }
+        }
+
         mut sa: sigaction = std::mem::zeroed();
-        sa.sa_flags = SA_SIGINFO;
-        sa.__sigaction_handler.sa_sigaction = ?|| (sig, info, ctx) => unsafe {
+        sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+        sa.__sigaction_handler.sa_sigaction = ?|sig, info, ctx| => unsafe {
             let name = sig == SIGSEGV then "SIGSEGV"
                 else sig == SIGFPE then "SIGFPE"
                 else sig == SIGILL then "SIGILL"
@@ -80,8 +62,6 @@ fn install_fault_handler() {
                 "Received signal {sig} ({name ?? "??"}), fault address: {fault_addr:#x}",
             );
 
-            // The unw_* calls are not (necessarily?) signal safe, and the dwfl calls definitely
-            // arent. Fork and print the symbolicated backtrace in a child.
             let pid = fork();
             if pid != 0 {
                 if pid > 0 {
@@ -90,14 +70,13 @@ fn install_fault_handler() {
                 std::proc::exit(128u32.wrapping_add(sig.cast()));
             }
 
-            if ctx is ?ctx {
+            if ctx is ?ctx and std::bt::Resolver::new() is ?mut resolver {
+                defer resolver.deinit();
+
                 let regs = &(*ctx.cast::<linux::ucontext_t>()).uc_mcontext.gregs;
-                let pc: uint = std::mem::bit_cast(regs[linux::REG_RIP as c_int]);
-                let bp: uint = std::mem::bit_cast(regs[linux::REG_RBP as c_int]);
-                let sp: uint = std::mem::bit_cast(regs[linux::REG_RSP as c_int]);
-                let ctx = std::bt::Context(pc:, bp:, sp:, signal: true);
-                std::bt::backtrace(ctx:, |mut i = 0u,| (pc) {
-                    std::panic::print_bt_line(i++, std::bt::Call(addr: pc));
+                let start_pc: uint = std::mem::bit_cast(regs[linux::REG_RIP as c_int]);
+                std::bt::backtrace(start_pc:, |&resolver, =mut i = 0u, pc| {
+                    resolver.print_bt_line(i++, pc);
                     true
                 });
             }

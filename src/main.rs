@@ -20,36 +20,41 @@ struct Arguments {
     command: SubCommand,
 
     /// Compile without including the entire standard library.
-    #[clap(action, long)]
-    #[arg(global = true)]
+    #[clap(action, long, global = true)]
     no_std: bool,
 
     /// Compile without libgc. By default, all memory allocations in this mode will use the libc
     /// allocator and will not be freed until the program exits.
-    #[clap(action, short = 'g', long)]
-    #[arg(global = true)]
-    leak: bool,
+    #[clap(action, short = 'g', long, global = true)]
+    no_gc: bool,
+
+    #[clap(short = 'P', long, global = true)]
+    panic_mode: Option<ctl::package::PanicMode>,
 
     /// Compile without using _BitInt/_ExtInt. All integer types will use the type with the nearest
     /// power of two bit count. TODO: proper arithmetic wrapping in this mode
-    #[clap(action, short = 'i', long)]
-    #[arg(global = true)]
+    #[clap(action, short = 'i', long, global = true)]
     no_bit_int: bool,
 
     /// Compile as a library
-    #[clap(action, short, long)]
-    #[arg(global = true)]
+    #[clap(action, short, long, global = true)]
     shared: Option<bool>,
 
     /// Silence unnecessary messages from the compiler
-    #[clap(action, short, long)]
-    #[arg(global = true)]
+    #[clap(action, short, long, global = true)]
     quiet: bool,
 
     /// View messages from the C compiler
-    #[clap(action, short, long)]
-    #[arg(global = true)]
+    #[clap(action, short, long, global = true)]
     verbose: bool,
+
+    /// Set the features for the project. If the target is a standalone file, this options sets the
+    /// features for the standard library.
+    #[clap(short, long, value_delimiter = ',', global = true)]
+    features: Vec<String>,
+
+    #[clap(action, short, long, global = true)]
+    no_default_features: bool,
 }
 
 #[derive(Args)]
@@ -222,6 +227,8 @@ fn compile_results(
         .args(build.ccargs.unwrap_or_default().split(' ').filter(|f| !f.is_empty()))
         .arg(format!("-O{}", conf.build.opt_level))
         .args(conf.build.debug_info.then_some(debug_flags).into_iter().flatten())
+        .args(conf.build.panic_mode.is_unwind().then_some("-fexceptions"))
+        .args(conf.args.release.then_some("-DNDEBUG"))
         .args(conf.libs.into_iter().map(|lib| match lib {
             ctl::package::Lib::Name(name) => OsString::from(format!("-l{name}")),
             ctl::package::Lib::Path(path) => path.into_os_string(),
@@ -288,8 +295,11 @@ fn display_diagnostics(diag: &Diagnostics) {
         id: FileId,
         errors: impl IntoIterator<Item = &'a Error>,
         mut format: impl FnMut(&str, Range),
-    ) {
-        for err in errors.into_iter().filter(|err| err.span.file == id) {
+    ) -> usize {
+        let mut vec: Vec<_> = errors.into_iter().filter(|err| err.span.file == id).collect();
+        vec.sort_by_key(|item| item.span.pos);
+        let count = vec.len();
+        for err in vec {
             // TODO: do something with the errors
             _ = provider.get_source(diag.file_path(err.span.file), |data| {
                 format(
@@ -298,13 +308,15 @@ fn display_diagnostics(diag: &Diagnostics) {
                 );
             });
         }
+        count
     }
 
     let cwd = std::env::current_dir().ok();
     let mut provider = CachingSourceProvider::new();
+    let mut errors = 0;
     for (id, path) in diag.paths() {
         let path = cwd.as_ref().and_then(|cwd| path.strip_prefix(cwd).ok()).unwrap_or(path);
-        format(
+        errors += format(
             &mut provider,
             diag,
             id,
@@ -321,9 +333,10 @@ fn display_diagnostics(diag: &Diagnostics) {
         );
     }
 
+    let mut warnings = 0;
     for (id, path) in diag.paths() {
         let path = cwd.as_ref().and_then(|cwd| path.strip_prefix(cwd).ok()).unwrap_or(path);
-        format(
+        warnings += format(
             &mut provider,
             diag,
             id,
@@ -338,6 +351,10 @@ fn display_diagnostics(diag: &Diagnostics) {
                 );
             },
         );
+    }
+
+    if errors != 0 || warnings != 0 {
+        eprintln!("{errors} error(s), {warnings} warning(s)");
     }
 }
 
@@ -399,21 +416,22 @@ fn main() -> Result<()> {
     };
 
     let input = ctl::package::Input {
-        features: Default::default(),
-        no_default_features: false,
+        features: args.features.into_iter().map(|s| s.trim().to_owned()).collect(),
+        no_default_features: args.no_default_features,
         args: ctl::package::ConstraintArgs {
             release: args.command.as_build_args().is_some_and(|b| b.release),
             no_std: args.no_std,
-            ..Default::default()
+            no_gc: args.no_gc.into(),
+            panic_mode: args.panic_mode.unwrap_or_default(),
+            no_overflow_checks: Default::default(),
         },
     };
 
     let path = path.as_deref().unwrap_or(Path::new("."));
     let compiler = Compiler::new().parse(path, input)?.modify_conf(|conf| {
-        conf.build.no_bit_int = args.no_bit_int;
         conf.is_library = args.shared.unwrap_or(conf.is_library);
+        conf.build.no_bit_int = args.no_bit_int;
         conf.build.minify = matches!(args.command, SubCommand::Print { minify: true, .. });
-        conf.build.no_gc = args.leak;
         if let SubCommand::Test { test, modules, .. } = &args.command {
             conf.test_args = Some(TestArgs {
                 test: test.clone(),

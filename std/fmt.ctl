@@ -216,7 +216,7 @@ pub struct StringBuilder {
 
             this.buffer.reserve(add: len);
             unsafe {
-                std::mem::copy(
+                std::mem::copy_no_overlap(
                     dst: this.buffer.as_raw_mut().add(this.buffer.len()),
                     src: data.as_raw(),
                     num: len,
@@ -238,67 +238,56 @@ pub fn writeln<T: Write, U: Format>(f: *mut T, args: U) {
     f.write_char('\n')
 }
 
-pub mod ext {
-    use super::*;
-
+extension<T: Format> T {
     $[feature(alloc)]
-    pub extension ToStrExt<T: Format> for T {
-        pub fn to_str(this): str {
-            mut builder = StringBuilder::new();
-            this.fmt(&mut Formatter::new(&mut builder));
-            builder.into_str()
-        }
+    pub fn to_str(this): str {
+        mut builder = StringBuilder::new();
+        this.fmt(&mut Formatter::new(&mut builder));
+        builder.into_str()
     }
+}
 
-    pub extension FmtFormatPtr<T: Format> for *T {
-        impl Format {
-            fn fmt(this, f: *mut Formatter) => (**this).fmt(f);
-            fn bin(this, f: *mut Formatter) => (**this).bin(f);
-            fn hex(this, f: *mut Formatter) => (**this).hex(f);
-            fn oct(this, f: *mut Formatter) => (**this).oct(f);
-            fn exp(this, f: *mut Formatter) => (**this).exp(f);
-        }
+extension<T: Format> *T {
+    impl Format {
+        fn fmt(this, f: *mut Formatter) => (**this).fmt(f);
+        fn bin(this, f: *mut Formatter) => (**this).bin(f);
+        fn hex(this, f: *mut Formatter) => (**this).hex(f);
+        fn oct(this, f: *mut Formatter) => (**this).oct(f);
+        fn exp(this, f: *mut Formatter) => (**this).exp(f);
     }
+}
 
-    pub extension FmtDebugPtr<T: Debug> for *T {
-        impl Debug {
-            fn dbg(this, f: *mut Formatter) => (**this).dbg(f);
-        }
+extension<T: Debug> *T {
+    impl Debug {
+        fn dbg(this, f: *mut Formatter) => (**this).dbg(f);
     }
+}
 
-    pub extension FmtPointerPtr<T> for *T {
-        impl Pointer {
-            fn ptr(this, f: *mut Formatter) => (*this as ^T).dbg(f);
-        }
+extension<T> *T {
+    impl Pointer {
+        fn ptr(this, f: *mut Formatter) => (*this as ^T).dbg(f);
     }
+}
 
-    pub extension FmtFormatMutPtr<T: Format> for *mut T {
-        impl Format {
-            fn fmt(this, f: *mut Formatter) => (**this).fmt(f);
-            fn bin(this, f: *mut Formatter) => (**this).bin(f);
-            fn hex(this, f: *mut Formatter) => (**this).hex(f);
-            fn oct(this, f: *mut Formatter) => (**this).oct(f);
-            fn exp(this, f: *mut Formatter) => (**this).exp(f);
-        }
+extension<T: Format> *mut T {
+    impl Format {
+        fn fmt(this, f: *mut Formatter) => (**this).fmt(f);
+        fn bin(this, f: *mut Formatter) => (**this).bin(f);
+        fn hex(this, f: *mut Formatter) => (**this).hex(f);
+        fn oct(this, f: *mut Formatter) => (**this).oct(f);
+        fn exp(this, f: *mut Formatter) => (**this).exp(f);
     }
+}
 
-    pub extension FmtDebugMutPtr<T: Debug> for *mut T {
-        impl Debug {
-            fn dbg(this, f: *mut Formatter) => (**this).dbg(f);
-        }
+extension<T: Debug> *mut T {
+    impl Debug {
+        fn dbg(this, f: *mut Formatter) => (**this).dbg(f);
     }
+}
 
-    pub extension FmtPointerMutPtr<T> for *mut T {
-        impl Pointer {
-            fn ptr(this, f: *mut Formatter) => (*this as ^T).dbg(f);
-        }
-    }
-
-    $[lang(fallback_debug)]
-    pub extension FallbackDebug<T> for T {
-        impl Debug {
-            fn dbg(this, f: *mut Formatter) => std::intrin::builtin_dbg(this, f);
-        }
+extension<T> *mut T {
+    impl Pointer {
+        fn ptr(this, f: *mut Formatter) => (*this as ^T).dbg(f);
     }
 }
 

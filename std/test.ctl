@@ -13,7 +13,7 @@ struct FailedTest {
     panic_msg: str,
 }
 
-$[test_runner, cfg(test)]
+$[test_runner, cfg(test), feature(hosted)]
 fn test_runner(tests: [TestInfo..]) {
     fn run_test(func: fn()) => func();
 

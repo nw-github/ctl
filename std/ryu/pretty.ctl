@@ -14,7 +14,7 @@ pub unsafe fn format32(f: f32, res: ^mut u8): uint {
         }
 
         if ieee_exponent == 0 and ieee_mantissa == 0 {
-            std::mem::copy(dst: res.add_signed(index), src: &raw b"0.0"[0], num: 3);
+            std::mem::copy_no_overlap(dst: res.add_signed(index), src: &raw b"0.0"[0], num: 3);
             return sign as uint + 3;
         }
 
@@ -36,7 +36,7 @@ pub unsafe fn format32(f: f32, res: ^mut u8): uint {
         } else if 0 < kk and kk <= 13 {
             // 1234e-2 -> 12.34
             write_mantissa(mantissa, res.add_signed(index + length + 1));
-            std::mem::copy_overlapping(
+            std::mem::copy(
                 dst: res.add_signed(index),
                 src: res.add_signed(index + 1),
                 num: uint::from(kk),
@@ -87,7 +87,7 @@ pub unsafe fn format64(f: f64, res: ^mut u8): uint {
         }
 
         if ieee_exponent == 0 and ieee_mantissa == 0 {
-            std::mem::copy(dst: res.add_signed(index), src: &raw b"0.0"[0], num: 3);
+            std::mem::copy_no_overlap(dst: res.add_signed(index), src: &raw b"0.0"[0], num: 3);
             return sign as uint + 3;
         }
 
@@ -109,7 +109,7 @@ pub unsafe fn format64(f: f64, res: ^mut u8): uint {
         } else if 0 < kk and kk <= 16 {
             // 1234e-2 -> 12.34
             write_mantissa_long(mantissa, res.add_signed(index + length + 1));
-            std::mem::copy_overlapping(
+            std::mem::copy(
                 dst: res.add_signed(index),
                 src: res.add_signed(index + 1),
                 num: uint::from(kk),
@@ -231,10 +231,10 @@ unsafe fn write_exponent3(mut k: int, mut res: ^mut u8): uint {
         if k >= 100 {
             res.write(b'0' + u8::from(k / 100));
             k %= 100;
-            std::mem::copy(dst: res.add_signed(1), src: &raw DIGIT_TABLE[k * 2], num: 2);
+            std::mem::copy_no_overlap(dst: res.add_signed(1), src: &raw DIGIT_TABLE[k * 2], num: 2);
             sign as uint + 3
         } else if k >= 10 {
-            std::mem::copy(dst: res, src: &raw DIGIT_TABLE[k * 2], num: 2);
+            std::mem::copy_no_overlap(dst: res, src: &raw DIGIT_TABLE[k * 2], num: 2);
             sign as uint + 2
         } else {
             res.write(b'0' + u8::from(k));
@@ -253,7 +253,7 @@ unsafe fn write_exponent2(mut k: int, mut res: ^mut u8): uint {
 
         debug_assert(k < 100);
         if k >= 10 {
-            std::mem::copy(dst: res, src: &raw DIGIT_TABLE[k * 2], num: 2);
+            std::mem::copy_no_overlap(dst: res, src: &raw DIGIT_TABLE[k * 2], num: 2);
             sign as uint + 2
         } else {
             *res = b'0' + u8::from(k);
@@ -272,10 +272,10 @@ unsafe fn write_mantissa_long(mut output: u64, mut res: ^mut u8) {
             let c = output2 % 10000;
             output2 /= 10000;
             let d = output2 % 10000;
-            std::mem::copy(dst: res.sub(2), src: &raw DIGIT_TABLE[(c % 100) << 1], num: 2);
-            std::mem::copy(dst: res.sub(4), src: &raw DIGIT_TABLE[(c / 100) << 1], num: 2);
-            std::mem::copy(dst: res.sub(6), src: &raw DIGIT_TABLE[(d % 100) << 1], num: 2);
-            std::mem::copy(dst: res.sub(8), src: &raw DIGIT_TABLE[(d / 100) << 1], num: 2);
+            std::mem::copy_no_overlap(dst: res.sub(2), src: &raw DIGIT_TABLE[(c % 100) << 1], num: 2);
+            std::mem::copy_no_overlap(dst: res.sub(4), src: &raw DIGIT_TABLE[(c / 100) << 1], num: 2);
+            std::mem::copy_no_overlap(dst: res.sub(6), src: &raw DIGIT_TABLE[(d % 100) << 1], num: 2);
+            std::mem::copy_no_overlap(dst: res.sub(8), src: &raw DIGIT_TABLE[(d / 100) << 1], num: 2);
             res = res.sub(8);
         }
         write_mantissa(u32::from(output), res);
@@ -287,20 +287,20 @@ unsafe fn write_mantissa(mut output: u32, mut res: ^mut u8) {
         while output >= 10000 {
             let c = output - (output / 10000) * 10000;
             output /= 10000;
-            std::mem::copy(dst: res.sub(2), src: &raw DIGIT_TABLE[(c % 100) << 1], num: 2);
-            std::mem::copy(dst: res.sub(4), src: &raw DIGIT_TABLE[(c / 100) << 1], num: 2);
+            std::mem::copy_no_overlap(dst: res.sub(2), src: &raw DIGIT_TABLE[(c % 100) << 1], num: 2);
+            std::mem::copy_no_overlap(dst: res.sub(4), src: &raw DIGIT_TABLE[(c / 100) << 1], num: 2);
             res = res.sub(4);
         }
 
         if output >= 100 {
             let c = (output % 100) << 1;
             output /= 100;
-            std::mem::copy(dst: res.sub(2), src: &raw DIGIT_TABLE[c], num: 2);
+            std::mem::copy_no_overlap(dst: res.sub(2), src: &raw DIGIT_TABLE[c], num: 2);
             res = res.sub(2);
         }
 
         if output >= 10 {
-            std::mem::copy(dst: res.sub(2), src: &raw DIGIT_TABLE[output << 1], num: 2);
+            std::mem::copy_no_overlap(dst: res.sub(2), src: &raw DIGIT_TABLE[output << 1], num: 2);
         } else {
             res.sub(1).write(b'0' + u8::from(output));
         }

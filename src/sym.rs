@@ -4,13 +4,14 @@ use enum_as_inner::EnumAsInner;
 use crate::{
     ast::{
         DefaultCapturePolicy,
-        checked::{Expr as CheckedExpr, Pattern as CheckedPattern},
+        checked::{Expr as CheckedExpr, PatternData as CheckedPatternData},
         declared::UsePath,
         parsed::{Expr, FunctionType, Path, Pattern, TypeHint},
     },
     ds::{ComptimeInt, HashMap, HashSet, IndexMap},
     intern::{StrId, Strings},
     lexer::{Located, Span},
+    project::{ImplId, Project},
     typeid::{GenericTrait, GenericUserType, Type, TypeId, Types},
 };
 pub use attrs::*;
@@ -69,6 +70,7 @@ pub struct ScopeId(usize);
 
 impl ScopeId {
     pub const ROOT: ScopeId = ScopeId(0);
+    pub const DUMMY: ScopeId = ScopeId(1);
 }
 
 #[derive(Debug, Clone, Copy, From, EnumAsInner)]
@@ -88,9 +90,10 @@ id!(FunctionId => Function, fns, vns);
 id!(VariableId => Variable, vars, vns);
 id!(UserTypeId => UserType, types, tns);
 id!(AliasId => Alias, aliases, tns);
+id!(TraitId => Trait, traits, tns);
 
-pub type TraitId = UserTypeId;
 pub type ExtensionId = UserTypeId;
+pub type TypeParamId = UserTypeId;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum LoopBreak {
@@ -119,10 +122,11 @@ pub struct BlockScopeKind {
 pub enum ScopeKind {
     Block(BlockScopeKind),
     Loop(LoopScopeKind),
-    Lambda(Option<TypeId>, DefaultCapturePolicy),
+    Closure(Option<TypeId>, DefaultCapturePolicy),
     Function(FunctionId),
     UserType(UserTypeId),
-    Impl(usize),
+    Trait(TraitId),
+    Impl(ImplId),
     Module(Located<StrId>),
     Static(VariableId),
     Defer,
@@ -131,13 +135,11 @@ pub enum ScopeKind {
 }
 
 impl ScopeKind {
-    pub fn name<'a, 'b>(&'a self, scopes: &'b Scopes) -> Option<&'b Located<StrId>>
-    where
-        'a: 'b,
-    {
-        match self {
-            &ScopeKind::Function(id) => Some(&scopes.get(id).name),
-            &ScopeKind::UserType(id) => Some(&scopes.get(id).name),
+    pub fn name(&self, scopes: &Scopes) -> Option<Located<StrId>> {
+        match *self {
+            ScopeKind::Function(id) => Some(scopes.get(id).name),
+            ScopeKind::UserType(id) => Some(scopes.get(id).name),
+            ScopeKind::Trait(id) => Some(scopes.get(id).name),
             ScopeKind::Module(name) => Some(name),
             _ => None,
         }
@@ -153,67 +155,7 @@ pub enum DefaultExpr {
 #[derive(Clone, EnumAsInner)]
 pub enum ParamPattern {
     Unchecked(Located<Pattern>),
-    Checked(CheckedPattern),
-}
-
-#[derive(Clone)]
-pub enum TraitImplData {
-    Path(ScopeId, Path),
-    Operator { tr: LangType, ty_args: Vec<TypeHint>, span: Span, scope: ScopeId },
-    Checked(GenericTrait),
-}
-
-#[derive(Clone, EnumAsInner)]
-pub enum TraitImpls {
-    Checked(Vec<Option<GenericTrait>>),
-    Unchecked(Vec<TraitImplData>),
-}
-
-impl Default for TraitImpls {
-    fn default() -> Self {
-        Self::Checked(vec![])
-    }
-}
-
-impl TraitImpls {
-    /// This function skips `None` entries and thus should NOT be used with `enumerate()` if the
-    /// index will be used to index into impl_blocks
-    pub fn iter_checked(&self) -> impl Iterator<Item = &GenericTrait> {
-        debug_assert!(self.is_checked());
-        self.as_checked().into_iter().flat_map(|i| i.iter()).flatten()
-    }
-
-    /// Enumerate, but the index doesn't ignore `None` entries
-    pub fn iter_checked_enumerate(&self) -> impl Iterator<Item = (usize, &GenericTrait)> {
-        debug_assert!(self.is_checked());
-        self.as_checked()
-            .into_iter()
-            .flat_map(|i| i.iter())
-            .enumerate()
-            .flat_map(|(i, v)| v.as_ref().map(|v| (i, v)))
-    }
-
-    /// This function skips `None` entries and thus should NOT be used with `enumerate()` if the
-    /// index will be used to index into impl_blocks
-    pub fn into_iter_checked(self) -> impl Iterator<Item = GenericTrait> {
-        debug_assert!(self.is_checked());
-        self.into_checked().into_iter().flat_map(|i| i.into_iter()).flatten()
-    }
-
-    /// Enumerate, but the index doesn't ignore `None` entries
-    pub fn into_iter_checked_enumerate(self) -> impl Iterator<Item = (usize, GenericTrait)> {
-        debug_assert!(self.is_checked());
-        self.into_checked()
-            .into_iter()
-            .flat_map(|i| i.into_iter())
-            .enumerate()
-            .flat_map(|(i, v)| v.map(|v| (i, v)))
-    }
-
-    pub fn get_checked(&self, i: usize) -> Option<&GenericTrait> {
-        debug_assert!(self.is_checked());
-        self.as_checked().and_then(|v| v.get(i).and_then(|v| v.as_ref()))
-    }
+    Checked(CheckedPatternData),
 }
 
 #[derive(Clone)]
@@ -267,7 +209,7 @@ pub struct Function {
     /// Is this a trait function with a body
     pub has_body: bool,
     pub typ: FunctionType,
-    pub type_params: Vec<UserTypeId>,
+    pub type_params: Vec<TypeParamId>,
     pub params: Vec<CheckedParam>,
     pub ret: TypeId,
     pub body: Option<CheckedExpr>,
@@ -277,13 +219,8 @@ pub struct Function {
 }
 
 impl Function {
-    pub fn is_dyn_compatible(&self, scopes: &Scopes, types: &Types, tr: UserTypeId) -> bool {
-        let (&this, _, _) = scopes
-            .get(tr)
-            .kind
-            .as_trait()
-            .expect("ICE: Attempt to get dyn compatibility of non-trait function");
-
+    pub fn is_dyn_compatible(&self, scopes: &Scopes, types: &Types, tr: TraitId) -> bool {
+        let this = scopes.get(tr).this;
         self.type_params.is_empty()
             && self
                 .params
@@ -332,6 +269,65 @@ impl Union {
     }
 }
 
+#[derive(Default, EnumAsInner)]
+pub enum TraitImpl {
+    Checked(CheckedImpl),
+    Unchecked(TypeId, UncheckedImpl),
+    #[default]
+    None,
+}
+
+#[derive(Clone)]
+pub struct CheckedImpl {
+    // Some(impl block scope) if this implementation is from an impl block. None if the
+    // implementation is a generic bound, or the implementation is synthesized by the compiler.
+    pub scope: Option<ScopeId>,
+    pub assoc_types: HashMap<TypeParamId, Located<TypeId>>,
+    /// The type parameters for the impl block (`T` in `impl<T> Foo`) and the enclosing scope
+    pub type_params: Vec<TypeParamId>,
+    /// The type args for this trait (`T = i32` in `impl Foo<i32>`)
+    pub tr: GenericTrait,
+    /// The type this trait is implemented for
+    pub ty: TypeId,
+    pub span: Span,
+    /// This is the automatic impl of a super trait generated by resolve_impls for a type parameter
+    pub super_trait: bool,
+}
+
+pub enum UncheckedImplTrait {
+    Lang(LangTrait, Vec<TypeHint>),
+    Path(Path),
+    Known(GenericTrait),
+}
+
+pub struct UncheckedImpl {
+    pub tr: UncheckedImplTrait,
+    pub type_params: Vec<TypeParamId>,
+    pub assoc_types: HashMap<StrId, Located<TypeId>>,
+    pub span: Span,
+    /// The scope of the impl block
+    pub scope: ScopeId,
+    pub is_type_param: Option<TypeParamId>,
+}
+
+impl UncheckedImpl {
+    pub fn type_param(
+        tr: UncheckedImplTrait,
+        id: TypeParamId,
+        scope: ScopeId,
+        span: Span,
+    ) -> UncheckedImpl {
+        UncheckedImpl {
+            tr,
+            type_params: Default::default(),
+            assoc_types: Default::default(),
+            span,
+            scope,
+            is_type_param: Some(id),
+        }
+    }
+}
+
 #[derive(EnumAsInner)]
 pub enum UserTypeKind {
     Struct(FunctionId, bool),
@@ -340,25 +336,12 @@ pub enum UserTypeKind {
     Template,
     Tuple,
     Closure,
-    Trait { this: UserTypeId, sealed: bool, assoc_types: HashMap<StrId, UserTypeId> },
-    Extension(TypeId),
+    Extension(Option<TypeId>),
 }
 
 impl UserTypeKind {
     pub fn is_packed_struct(&self) -> bool {
         matches!(self, Self::Struct(_, true))
-    }
-}
-
-#[derive(Clone)]
-pub struct ImplBlockData {
-    pub type_params: Vec<UserTypeId>,
-    pub assoc_types: HashMap<StrId, Located<TypeId>>,
-}
-
-impl HasTypeParams for ImplBlockData {
-    fn get_type_params(&self) -> &[UserTypeId] {
-        &self.type_params
     }
 }
 
@@ -368,11 +351,8 @@ pub struct UserType {
     pub name: Located<StrId>,
     pub body_scope: ScopeId,
     pub kind: UserTypeKind,
-    pub impls: TraitImpls,
-    pub impl_blocks: Vec<ImplBlockData>,
-    pub type_params: Vec<UserTypeId>,
-    pub fns: Vec<Vis<FunctionId>>,
-    pub subscripts: Vec<FunctionId>,
+    pub impls: Vec<ImplId>,
+    pub type_params: Vec<TypeParamId>,
     pub members: IndexMap<StrId, CheckedMember>,
     pub members_resolved: bool,
     pub recursive: bool,
@@ -382,7 +362,7 @@ pub struct UserType {
 
 impl UserType {
     pub fn find_associated_fn(&self, scopes: &Scopes, name: StrId) -> Option<FunctionId> {
-        self.fns.iter().map(|f| f.id).find(|&id| scopes.get(id).name.data == name)
+        scopes[self.body_scope].vns.get(&name).and_then(|item| item.into_fn().ok())
     }
 
     pub fn is_empty_variant(&self, variant: StrId) -> bool {
@@ -394,54 +374,134 @@ impl UserType {
                 .is_some_and(|u| u.ty.is_none())
     }
 
-    pub fn template(name: Located<StrId>, scope: ScopeId, impls: TraitImpls) -> Self {
+    pub fn type_param(name: Located<StrId>) -> Self {
         Self {
             public: false,
             name,
-            body_scope: scope,
+            body_scope: ScopeId::DUMMY,
             kind: UserTypeKind::Template,
             type_params: Vec::new(),
-            impls,
-            impl_blocks: Vec::new(),
-            fns: vec![],
+            impls: Default::default(),
             attrs: Default::default(),
             members: Default::default(),
-            subscripts: Vec::new(),
             members_resolved: true,
             recursive: false,
             interior_mutable: false,
             full_span: name.span,
         }
     }
+
+    pub fn get_subscripts<'a>(
+        &self,
+        scopes: &'a Scopes,
+    ) -> impl Iterator<Item = FunctionId> + use<'a> {
+        scopes[self.body_scope]
+            .vns
+            .iter()
+            .flat_map(|f| f.1.as_fn())
+            .filter(|f| {
+                matches!(
+                    scopes.get(**f).typ,
+                    FunctionType::AssignSubscript | FunctionType::Subscript
+                )
+            })
+            .copied()
+    }
+
+    pub fn iter_impls<'a>(
+        &'a self,
+        proj: &'a Project,
+        super_traits: bool,
+    ) -> impl Iterator<Item = &'a CheckedImpl> {
+        self.impls.iter().flat_map(move |imp| {
+            proj.impls.get(*imp).as_checked().filter(|imp| super_traits || !imp.super_trait)
+        })
+    }
+
+    pub fn iter_impls_owned(&self, proj: &Project, super_traits: bool) -> Vec<GenericTrait> {
+        self.iter_impls(proj, super_traits).map(|s| s.tr.clone()).collect::<Vec<_>>()
+    }
 }
 
 pub struct Alias {
     pub public: bool,
     pub name: Located<StrId>,
-    pub type_params: Vec<UserTypeId>,
-    pub ty: TypeId,
+    pub type_params: Vec<TypeParamId>,
+    pub ty: Option<TypeId>,
     pub body_scope: ScopeId,
 }
 
+pub enum SuperTraits {
+    Checking,
+    Unchecked(Vec<Path>),
+    Checked(Vec<GenericTrait>),
+}
+
+impl SuperTraits {
+    pub fn iter_checked(&self) -> impl Iterator<Item = &'_ GenericTrait> {
+        if let Self::Checked(checked) = self {
+            checked.iter()
+        } else {
+            panic!("attempt to iter_checked() unchecked SuperTraits")
+        }
+    }
+
+    pub fn iter_checked_owned(&self) -> impl Iterator<Item = GenericTrait> + use<> {
+        if let Self::Checked(checked) = self {
+            checked.clone().into_iter()
+        } else {
+            panic!("attempt to into_iter_checked() unchecked SuperTraits")
+        }
+    }
+}
+
+pub struct Trait {
+    pub attrs: TraitAttrs,
+    pub public: bool,
+    pub name: Located<StrId>,
+    pub body_scope: ScopeId,
+    pub type_params: Vec<TypeParamId>,
+    pub super_traits: SuperTraits,
+    pub assoc_types: HashMap<StrId, TypeParamId>,
+    /// The template parameter corresponding to the `This` type
+    pub this: TypeParamId,
+    pub is_sealed: bool,
+    pub is_unsafe: bool,
+    pub implementors: Vec<ImplId>,
+    pub full_span: Span,
+}
+
 pub trait HasTypeParams {
-    fn get_type_params(&self) -> &[UserTypeId];
+    fn get_type_params(&self) -> &[TypeParamId];
 }
 
 impl HasTypeParams for UserType {
-    fn get_type_params(&self) -> &[UserTypeId] {
+    fn get_type_params(&self) -> &[TypeParamId] {
+        &self.type_params
+    }
+}
+
+impl HasTypeParams for Trait {
+    fn get_type_params(&self) -> &[TypeParamId] {
         &self.type_params
     }
 }
 
 impl HasTypeParams for Function {
-    fn get_type_params(&self) -> &[UserTypeId] {
+    fn get_type_params(&self) -> &[TypeParamId] {
         &self.type_params
     }
 }
 
 impl HasTypeParams for Alias {
-    fn get_type_params(&self) -> &[UserTypeId] {
+    fn get_type_params(&self) -> &[TypeParamId] {
         &self.type_params
+    }
+}
+
+impl HasTypeParams for [TypeParamId] {
+    fn get_type_params(&self) -> &[TypeParamId] {
+        self
     }
 }
 
@@ -479,6 +539,7 @@ pub trait ItemId: Sized + Copy + Clone {
 #[derive(Debug, Clone, Copy, EnumAsInner, From)]
 pub enum TypeItem {
     Type(UserTypeId),
+    Trait(TraitId),
     Module(ScopeId),
     Alias(AliasId),
 }
@@ -509,6 +570,14 @@ impl Scope {
     pub fn find_in_vns(&self, name: StrId) -> Option<Vis<ValueItem>> {
         self.vns.get(&name).copied()
     }
+
+    pub fn find_fn(&self, name: StrId) -> Option<Vis<FunctionId>> {
+        self.find_in_vns(name).and_then(|v| v.into_fn().ok().map(|id| Vis::new(id, v.public)))
+    }
+
+    pub fn iter_fns(&self) -> impl Iterator<Item = FunctionId> {
+        self.vns.values().flat_map(|v| v.into_fn().ok())
+    }
 }
 
 pub struct Scopes {
@@ -516,21 +585,25 @@ pub struct Scopes {
     fns: Vec<Scoped<Function>>,
     types: Vec<Scoped<UserType>>,
     aliases: Vec<Scoped<Alias>>,
+    traits: Vec<Scoped<Trait>>,
     vars: Vec<Scoped<Variable>>,
     tuples: HashMap<Vec<StrId>, UserTypeId>,
     pub lang_types: HashMap<LangType, UserTypeId>,
+    pub lang_traits: HashMap<LangTrait, TraitId>,
 }
 
 impl Scopes {
     pub fn new() -> Self {
         Self {
-            scopes: vec![Scope::default()],
+            scopes: vec![Scope::default(), Scope::default()],
             fns: vec![Scoped::new(Function::default(), ScopeId::ROOT)],
             types: Vec::new(),
             vars: Vec::new(),
+            traits: Vec::new(),
             aliases: Vec::new(),
             tuples: HashMap::new(),
             lang_types: HashMap::new(),
+            lang_traits: HashMap::new(),
         }
     }
 
@@ -564,6 +637,14 @@ impl Scopes {
         self.types.iter().enumerate().map(|(i, ut)| (UserTypeId(i), ut))
     }
 
+    pub fn traits(&self) -> impl Iterator<Item = (TraitId, &Scoped<Trait>)> {
+        self.traits.iter().enumerate().map(|(i, ut)| (TraitId(i), ut))
+    }
+
+    pub fn is_child_of(&self, child: ScopeId, parent: ScopeId) -> bool {
+        self.walk(child).any(|(id, _)| id == parent)
+    }
+
     pub fn get_option_id(&self) -> Option<UserTypeId> {
         self.lang_types.get(&LangType::Option).copied()
     }
@@ -584,7 +665,7 @@ impl Scopes {
                 .map(|_| {
                     UserTypeId::insert_in(
                         self,
-                        UserType::template(Default::default(), ScopeId::ROOT, Default::default()),
+                        UserType::type_param(Default::default()),
                         false,
                         ScopeId::ROOT,
                     )
@@ -592,7 +673,6 @@ impl Scopes {
                 })
                 .collect();
 
-            let lang_tpl = self.lang_types.get(&LangType::Tuple).copied();
             let res = UserTypeId::insert_in(
                 self,
                 UserType {
@@ -610,12 +690,7 @@ impl Scopes {
                     kind: UserTypeKind::Tuple,
                     type_params,
                     attrs: Default::default(),
-                    impls: TraitImpls::Checked(vec![
-                        lang_tpl.map(|id| GenericTrait::new(id, Default::default())),
-                    ]),
-                    impl_blocks: Vec::new(),
-                    fns: Vec::new(),
-                    subscripts: Vec::new(),
+                    impls: Default::default(),
                     members_resolved: true,
                     recursive: false,
                     interior_mutable: false,
@@ -644,13 +719,13 @@ impl Scopes {
         self.tuples.get(names).copied()
     }
 
-    pub fn walk_super_traits(&self, tr: TraitId) -> HashSet<TraitId> {
+    pub fn walk_super_trait_ids(&self, tr: TraitId) -> HashSet<TraitId> {
         fn inner(this: &Scopes, tr: TraitId, results: &mut HashSet<TraitId>) {
             if !results.insert(tr) {
                 return;
             }
 
-            for tr in this.get(tr).impls.iter_checked() {
+            for tr in this.get(tr).super_traits.iter_checked() {
                 inner(this, tr.id, results);
             }
         }
@@ -660,7 +735,7 @@ impl Scopes {
         result
     }
 
-    pub fn walk_super_traits_ex(&self, types: &Types, tr: GenericTrait) -> HashSet<GenericTrait> {
+    pub fn walk_super_traits(&self, types: &Types, tr: GenericTrait) -> HashSet<GenericTrait> {
         fn inner(
             this: &Scopes,
             types: &Types,
@@ -671,7 +746,7 @@ impl Scopes {
                 return;
             }
 
-            for imp in this.get(tr.id).impls.iter_checked() {
+            for imp in this.get(tr.id).super_traits.iter_checked() {
                 inner(this, types, imp.with_templates(types, &tr.ty_args), results);
             }
         }

@@ -1,4 +1,4 @@
-use std::reflect::*;
+use std::reflect::{Tuple, TypeId, DynPtr};
 
 $[intrinsic]
 pub extern fn size_of<T>(): uint;
@@ -45,6 +45,14 @@ pub extern fn builtin_dbg<T>(self: *T, f: *mut std::fmt::Formatter);
 $[intrinsic]
 pub extern fn invoke_with_tuple<F, Args: Tuple, R>(self: *F, args: Args): R;
 
+$[intrinsic]
+pub extern fn vtable_of<T: DynPtr>(ptr: T): [unsafe fn()..];
+
+$[intrinsic]
+pub extern fn instance_ptr_of<T: DynPtr>(ptr: T): ^mut void;
+
+$[intrinsic]
+pub extern fn current_frame_addr(): ?^mut void;
 
 $[c_macro("CTL_MEMSET")]
 pub extern fn memset(dst: ^mut void, c: c_int, len: uint): ^mut void;

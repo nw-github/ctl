@@ -98,12 +98,9 @@ impl Default for Pattern {
 #[derive(Clone)]
 pub enum Stmt {
     Expr(Expr),
-    Let(Pattern, Option<Expr>),
-    Defer(Expr),
-    Guard {
-        cond: Expr,
-        body: Expr,
-    },
+    Let(PatternData, Option<Expr>),
+    Defer(Expr, ScopeId),
+    Guard { cond: Expr, body: Expr },
 }
 
 pub type ExprId = arena::Id<ExprData>;
@@ -113,75 +110,36 @@ pub enum ExprData {
     Binary(BinaryOp, Expr, Expr),
     Unary(UnaryOp, Expr),
     Deref(Expr, usize),
-    Call {
-        callee: Expr,
-        args: IndexMap<StrId, Expr>,
-        /// This is ONLY used for the SourceLocation intrinsic, not trait resolution
-        scope: ScopeId,
-        span: Span,
-    },
+    Call { callee: Expr, args: IndexMap<StrId, Expr>, scope: ScopeId, span: Span },
     CallDyn(GenericFn, IndexMap<StrId, Expr>),
     CallFnPtr(Expr, Vec<Expr>),
-    DynCoerce(Expr, ScopeId),
-    VariantInstance(StrId, IndexMap<StrId, Expr>),
-    SpanMutCoerce(Expr),
-    ClosureCoerce(Expr, ScopeId),
     Instance(IndexMap<StrId, Expr>),
+    VariantInstance(StrId, IndexMap<StrId, Expr>),
+    DynCoerce(Expr),
+    SpanMutCoerce(Expr),
+    ClosureToFnPtr(Expr),
     Array(Vec<Expr>),
-    ArrayWithInit {
-        init: Expr,
-        count: usize,
-    },
+    ArrayWithInit { init: Expr, count: usize },
     Vec(Vec<Expr>),
-    VecWithInit {
-        init: Expr,
-        count: Expr,
-    },
-    Set(Vec<Expr>, ScopeId),
-    Map(Vec<(Expr, Expr)>, ScopeId),
+    VecWithInit { init: Expr, count: Expr },
+    Set(Vec<Expr>),
+    Map(Vec<(Expr, Expr)>),
     Int(ComptimeInt),
     Float(f64),
     String(StrId),
     GeneratedString(String),
-    StringInterp {
-        strings: Vec<StrId>,
-        args: Vec<(Expr, FormatOpts)>,
-        scope: ScopeId,
-    },
+    StringInterp { strings: Vec<StrId>, args: Vec<(Expr, FormatOpts)> },
     ByteString(ByteStrId),
     Void,
-    Fn(GenericFn, ScopeId),
-    MemFn(MemberFn, ScopeId),
+    Fn(GenericFn),
+    MemFn(MemberFn),
     Var(VariableId),
     Block(Block),
-    AffixOperator {
-        callee: Expr,
-        mfn: MemberFn,
-        scope: ScopeId,
-        postfix: bool,
-        span: Span,
-    },
-    If {
-        cond: Expr,
-        if_branch: Expr,
-        else_branch: Expr,
-        dummy_scope: ScopeId,
-    },
-    Loop {
-        cond: Option<Expr>,
-        body: Block,
-        do_while: bool,
-        optional: bool,
-    },
-    Match {
-        scrutinee: Expr,
-        body: Vec<(Pattern, Expr)>,
-        dummy_scope: ScopeId,
-    },
-    Member {
-        source: Expr,
-        member: StrId,
-    },
+    AffixOperator { callee: Expr, mfn: MemberFn, scope: ScopeId, postfix: bool, span: Span },
+    If { cond: Expr, if_branch: Expr, else_branch: Expr, dummy_scope: ScopeId },
+    Loop { cond: Option<Expr>, body: Block, do_while: bool, optional: bool },
+    Match { scrutinee: Expr, body: Vec<(Pattern, Expr)>, dummy_scope: ScopeId },
+    Member { source: Expr, member: StrId },
     As(Expr),
     Is(Expr, Pattern),
     Return(Expr),
@@ -340,7 +298,7 @@ impl Expr {
         arena: &mut ExprArena,
     ) -> Self {
         let func = mfn.func.clone();
-        let callee = arena.alloc(ExprData::MemFn(mfn, scope));
+        let callee = arena.alloc(ExprData::MemFn(mfn));
         Self {
             ty: ret,
             data: arena.alloc(ExprData::Call {
@@ -361,7 +319,7 @@ impl Expr {
         span: Span,
         arena: &mut ExprArena,
     ) -> Self {
-        let callee = arena.alloc(ExprData::Fn(func.clone(), scope));
+        let callee = arena.alloc(ExprData::Fn(func.clone()));
         Expr {
             ty: ret,
             data: arena.alloc(ExprData::Call {

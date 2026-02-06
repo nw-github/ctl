@@ -51,12 +51,12 @@
 
 #  define CTL_NONNULL(...)
 #  define CTL_NONSTR
-#  define CTL_DUMMY_INIT   0
 #  define CTL_DUMMY_MEMBER CTL_ZST char dummy
 #  define CTL_NORETURN     __declspec(noreturn)
 #  define CTL_FORCEINLINE  __forceinline inline
 #  define CTL_NEVERINLINE  __declspec(noinline)
 #  define CTL_COLD
+#  define CTL_MALLOC
 #  define CTL_INLINE         inline
 #  define CTL_MEMCPY         memcpy
 #  define CTL_MEMSET         memset
@@ -87,13 +87,13 @@
 #else
 #  define CTL_NONNULL(...) __attribute__((nonnull(__VA_ARGS__)))
 #  define CTL_NONSTR       __attribute__((nonstring))
-#  define CTL_DUMMY_INIT
 #  define CTL_DUMMY_MEMBER
 #  define CTL_ZST
 #  define CTL_NORETURN       _Noreturn
 #  define CTL_FORCEINLINE    __attribute__((always_inline)) inline
 #  define CTL_NEVERINLINE    __attribute__((noinline))
 #  define CTL_COLD           __attribute__((cold))
+#  define CTL_MALLOC         __attribute__((malloc))
 #  define CTL_INLINE         inline
 #  define CTL_MEMCPY         __builtin_memcpy
 #  define CTL_MEMSET         __builtin_memset
@@ -130,8 +130,17 @@
 
 #endif
 
+#ifdef CTL_HAS_UNWIND
+#  define CTL_CLEANUP(func) __attribute__((cleanup(func)))
+#  define CTL_EXEC_DEFER(func, params)
+#else
+#  define CTL_CLEANUP(func)
+#  define CTL_EXEC_DEFER(func, params) func(&params)
+#endif
+
 #define CTL_COERCE(ty, expr) (expr, *(ty *)0)
 #define CTL_VOID(expr)       (expr, CTL_VOID_INST)
+#define CTL_VOID_INST        (($void){})
 
 #define CTL_STATIC_ASSERT(cond, msg) _Static_assert(cond, msg)
 
@@ -173,11 +182,6 @@ typedef double f64;
 typedef struct {
   CTL_DUMMY_MEMBER;
 } $void;
-
-#define CTL_VOID_INST \
-  ($void) {           \
-    CTL_DUMMY_INIT    \
-  }
 
 typedef void (*VirtualFn)(void);
 typedef struct {

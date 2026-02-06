@@ -2,14 +2,16 @@ use std::collections::HashSet;
 
 use crate::{
     Diagnostics, Span,
-    ds::{DependencyGraph, OrderedDependencyGraph, HashMap},
-    format::{FmtTy, FmtUt},
+    ds::{DependencyGraph, HashMap, arena::Arena},
+    format::{FmtTr, FmtTy, FmtUt, FmtWta},
     intern::{StrId, Strings},
     package::ConstraintArgs,
-    sym::{FunctionId, ScopeId, Scopes, TypeItem, UserTypeId, ValueItem, VariableId, Vis},
+    sym::{FunctionId, ScopeId, Scopes, TraitImpl, TypeItem, ValueItem, VariableId, Vis},
     typecheck::{Completions, LspItem},
-    typeid::{GenericUserType, TypeId, Types},
+    typeid::{GenericTrait, GenericUserType, TypeId, Types, WithTypeArgs},
 };
+
+pub type ImplId = crate::ds::arena::Id<TraitImpl>;
 
 pub struct Project {
     pub scopes: Scopes,
@@ -23,11 +25,11 @@ pub struct Project {
     pub test_runner: Option<FunctionId>,
     pub deps: DependencyGraph<TypeId>,
     pub static_deps: DependencyGraph<VariableId>,
-    pub trait_deps: OrderedDependencyGraph<UserTypeId>,
     pub conf: Configuration,
     pub strings: Strings,
     pub autouse_tns: HashMap<StrId, Vis<TypeItem>>,
     pub autouse_vns: HashMap<StrId, Vis<ValueItem>>,
+    pub impls: Arena<TraitImpl>,
 }
 
 impl Project {
@@ -46,9 +48,9 @@ impl Project {
             test_runner: Default::default(),
             deps: Default::default(),
             static_deps: Default::default(),
-            trait_deps: Default::default(),
             autouse_tns: Default::default(),
             autouse_vns: Default::default(),
+            impls: Default::default(),
         }
     }
 
@@ -56,8 +58,16 @@ impl Project {
         FmtTy::new(ty, self)
     }
 
-    pub fn fmt_ut<'b>(&self, ty: &'b GenericUserType) -> FmtUt<'b, '_> {
+    pub fn fmt_ut<'a>(&self, ty: &'a GenericUserType) -> FmtUt<'a, '_> {
         FmtUt::new(ty, self)
+    }
+
+    pub fn fmt_tr<'a>(&self, ty: &'a GenericTrait) -> FmtTr<'a, '_> {
+        FmtTr::new(ty, self)
+    }
+
+    pub fn dbg_wta<'a, T>(&self, wta: &'a WithTypeArgs<T>) -> FmtWta<'a, '_, T> {
+        FmtWta::new(wta, self)
     }
 
     pub fn str(&self, id: StrId) -> &str {

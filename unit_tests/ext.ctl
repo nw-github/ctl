@@ -1,5 +1,5 @@
 unittest "subscript" {
-    extension Test for int {
+    extension int {
         pub fn [](this, i: int): int {
             mut base = 1;
             for _ in 0..i {

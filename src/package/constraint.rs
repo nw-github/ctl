@@ -2,12 +2,15 @@ use std::cell::Cell;
 
 use serde::de::{self, Deserialize, Deserializer};
 
+use crate::package::raw::PanicMode;
+
 #[derive(Debug, Default, Clone)]
 pub struct ConstraintArgs {
     pub release: bool,
     pub no_gc: Cell<bool>,
     pub no_overflow_checks: Cell<bool>,
     pub no_std: bool,
+    pub panic_mode: PanicMode,
 }
 
 #[derive(serde::Deserialize, Debug, PartialEq, Eq)]
@@ -43,10 +46,14 @@ pub enum Cap {
 #[derive(serde::Deserialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum CompilerOption {
+    Gc,
     NoGc,
     NoOverflowChecks,
     Debug,
     Release,
+    PanicUnwind,
+    PanicAbort,
+    PanicSjlj,
 }
 
 /*
@@ -89,7 +96,6 @@ impl<'de> Deserialize<'de> for Constraint {
 }
 
 impl Constraint {
-    #[allow(clippy::only_used_in_recursion)]
     pub fn applies(&self, arg: &ConstraintArgs) -> bool {
         match self {
             Constraint::Not(inner) => !inner.applies(arg),
@@ -97,10 +103,14 @@ impl Constraint {
             Constraint::Or(lhs, rhs) => lhs.applies(arg) || rhs.applies(arg),
             Constraint::None => true,
             Constraint::CompilerOption(opt) => match opt {
+                CompilerOption::Gc => !arg.no_gc.get(),
                 CompilerOption::NoGc => arg.no_gc.get(),
                 CompilerOption::NoOverflowChecks => arg.no_overflow_checks.get(),
                 CompilerOption::Debug => !arg.release,
                 CompilerOption::Release => arg.release,
+                CompilerOption::PanicAbort => arg.panic_mode.is_abort(),
+                CompilerOption::PanicUnwind => arg.panic_mode.is_unwind(),
+                CompilerOption::PanicSjlj => arg.panic_mode.is_sjlj(),
             },
             // TODO: above constraints
             _ => true,

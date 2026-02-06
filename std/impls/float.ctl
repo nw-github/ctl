@@ -2,7 +2,7 @@ use std::fmt::*;
 use std::ryu::*;
 use std::deps::libc::math;
 
-pub extension F32Impl for f32 {
+extension f32 {
     $[intrinsic(binary_op)]
     pub fn +(this, rhs: This): This => this + rhs;
 
@@ -118,7 +118,7 @@ pub extension F32Impl for f32 {
     }
 }
 
-pub extension F64Impl for f64 {
+extension f64 {
     $[intrinsic(binary_op)]
     pub fn +(this, rhs: This): This => this + rhs;
 

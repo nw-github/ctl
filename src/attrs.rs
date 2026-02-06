@@ -102,6 +102,7 @@ pub enum FunctionInline {
 pub struct FunctionAttrs {
     pub panic_handler: bool,
     pub test_runner: bool,
+    pub no_mangle: bool,
     pub cold: bool,
     pub safe_extern: bool,
     pub export: bool,
@@ -110,10 +111,16 @@ pub struct FunctionAttrs {
     pub inline: Option<FunctionInline>,
     pub intrinsic: Option<Intrinsic>,
     pub macro_name: Option<StrId>,
+    pub malloc: bool,
 }
 
 impl FunctionAttrs {
-    pub fn relevant(fn_name: StrId, attrs: &Attributes, proj: &mut Project) -> Self {
+    pub fn relevant(
+        fn_name: StrId,
+        attrs: &[Attribute],
+        proj: &mut Project,
+        is_unsafe: bool,
+    ) -> Self {
         let mut this = Self::default();
         for attr in attrs.iter() {
             let Some(&id) = attr.name.data.as_str() else {
@@ -124,6 +131,7 @@ impl FunctionAttrs {
             match id {
                 Strings::ATTR_TEST_RUNNER => this.test_runner = true,
                 Strings::ATTR_PANIC_HANDLER => this.panic_handler = true,
+                Strings::ATTR_NO_MANGLE => this.no_mangle = true,
                 Strings::ATTR_MACRO => {
                     if attr.props.is_empty() {
                         this.macro_name = Some(fn_name);
@@ -156,6 +164,13 @@ impl FunctionAttrs {
                     }
                 }
                 Strings::ATTR_INTRINSIC => this.intrinsic = check_intrinsic(fn_name, attr, proj),
+                Strings::ATTR_MALLOC => {
+                    if !is_unsafe {
+                        proj.diag.report(Error::is_unsafe(attr.name.span));
+                    }
+                    this.malloc = true;
+                }
+                Strings::UNSAFE => return Self::relevant(fn_name, &attr.props, proj, true),
                 _ => unrecognized(attr, proj),
             }
         }
@@ -168,6 +183,7 @@ pub enum Layout {
     #[default]
     Auto,
     C,
+    Transparent,
 }
 
 #[derive(Default)]
@@ -239,6 +255,7 @@ impl UserTypeAttrs {
                     this.layout = match proj.strings.resolve(&arg.data) {
                         "C" => Layout::C,
                         "auto" => Layout::Auto,
+                        "transparent" => Layout::Transparent,
                         other => {
                             proj.diag.report(Error::new(
                                 format!("invalid layout '{other}', expected 'C' or 'auto'"),
@@ -247,6 +264,38 @@ impl UserTypeAttrs {
                             continue;
                         }
                     };
+                }
+                _ => unrecognized(attr, proj),
+            }
+        }
+        this
+    }
+}
+
+#[derive(Default)]
+pub struct TraitAttrs {
+    pub lang: Option<LangTrait>,
+}
+
+impl TraitAttrs {
+    pub fn relevant(attrs: &Attributes, proj: &mut Project) -> Self {
+        let mut this = Self::default();
+        for attr in attrs.iter() {
+            match attr.name.data {
+                AN::Str(id @ Strings::ATTR_LANG) => {
+                    let Some(arg) = one_str_arg_l(attr, id, proj) else {
+                        continue;
+                    };
+
+                    let Some(ty) = LangTrait::from_str(proj.str(arg.data)) else {
+                        proj.diag.report(Error::new(
+                            format!("unknown lang trait '{}'", proj.str(arg.data)),
+                            arg.span,
+                        ));
+                        continue;
+                    };
+
+                    this.lang = Some(ty);
                 }
                 _ => unrecognized(attr, proj),
             }
@@ -277,6 +326,44 @@ pub enum LangType {
     RangeFrom,
     RangeInclusive,
 
+    FallbackDebug,
+}
+
+impl LangType {
+    fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "span" => Some(Self::Span),
+            "span_mut" => Some(Self::SpanMut),
+            "vec" => Some(Self::Vec),
+            "set" => Some(Self::Set),
+            "map" => Some(Self::Map),
+            "string" => Some(Self::String),
+            "option" => Some(Self::Option),
+            "fmt_arg" => Some(Self::FmtArg),
+            "fmt_args" => Some(Self::FmtArgs),
+            "test_info" => Some(Self::TestInfo),
+            "mutable" => Some(Self::Mutable),
+            "ordering" => Some(Self::Ordering),
+            "range" => Some(Self::Range),
+            "range_full" => Some(Self::RangeFull),
+            "range_to" => Some(Self::RangeTo),
+            "range_to_inclusive" => Some(Self::RangeToInclusive),
+            "range_from" => Some(Self::RangeFrom),
+            "range_inclusive" => Some(Self::RangeInclusive),
+            "fallback_debug" => Some(Self::FallbackDebug),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for LangType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LangTrait {
     Numeric,
     Integral,
     Signed,
@@ -289,6 +376,7 @@ pub enum LangType {
     Iterator,
     Tuple,
     FnPtr,
+    DynPtr,
 
     OpCmp,
     OpEq,
@@ -318,31 +406,11 @@ pub enum LangType {
     OpDec,
     OpInc,
     OpFn,
-
-    FallbackDebug,
 }
 
-impl LangType {
-    fn from_str(s: &str) -> Option<LangType> {
+impl LangTrait {
+    fn from_str(s: &str) -> Option<Self> {
         match s {
-            "span" => Some(Self::Span),
-            "span_mut" => Some(Self::SpanMut),
-            "vec" => Some(Self::Vec),
-            "set" => Some(Self::Set),
-            "map" => Some(Self::Map),
-            "string" => Some(Self::String),
-            "option" => Some(Self::Option),
-            "fmt_arg" => Some(Self::FmtArg),
-            "fmt_args" => Some(Self::FmtArgs),
-            "test_info" => Some(Self::TestInfo),
-            "mutable" => Some(Self::Mutable),
-            "ordering" => Some(Self::Ordering),
-            "range" => Some(Self::Range),
-            "range_full" => Some(Self::RangeFull),
-            "range_to" => Some(Self::RangeTo),
-            "range_to_inclusive" => Some(Self::RangeToInclusive),
-            "range_from" => Some(Self::RangeFrom),
-            "range_inclusive" => Some(Self::RangeInclusive),
             "numeric" => Some(Self::Numeric),
             "integral" => Some(Self::Integral),
             "signed" => Some(Self::Signed),
@@ -350,6 +418,7 @@ impl LangType {
             "array" => Some(Self::Array),
             "tuple" => Some(Self::Tuple),
             "fn_ptr" => Some(Self::FnPtr),
+            "dyn_ptr" => Some(Self::DynPtr),
             "fmt_debug" => Some(Self::Debug),
             "fmt_format" => Some(Self::Format),
             "fmt_pointer" => Some(Self::Pointer),
@@ -383,13 +452,12 @@ impl LangType {
             "op_dec" => Some(Self::OpDec),
             "op_inc" => Some(Self::OpInc),
             "op_fn" => Some(Self::OpFn),
-            "fallback_debug" => Some(Self::FallbackDebug),
             _ => None,
         }
     }
 }
 
-impl std::fmt::Display for LangType {
+impl std::fmt::Display for LangTrait {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{self:?}")
     }
@@ -418,6 +486,9 @@ pub enum Intrinsic {
     PtrDiff,
     BuiltinDbg,
     InvokeWithTuple,
+    VTableOf,
+    InstancePtrOf,
+    CurrentFrameAddr,
 }
 
 impl Intrinsic {
@@ -444,6 +515,9 @@ impl Intrinsic {
             "ptr_diff" => Some(Self::PtrDiff),
             "builtin_dbg" => Some(Self::BuiltinDbg),
             "invoke_with_tuple" => Some(Self::InvokeWithTuple),
+            "vtable_of" => Some(Self::VTableOf),
+            "instance_ptr_of" => Some(Self::InstancePtrOf),
+            "current_frame_addr" => Some(Self::CurrentFrameAddr),
             _ => None,
         }
     }

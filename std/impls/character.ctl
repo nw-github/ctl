@@ -2,7 +2,7 @@ use std::hash::*;
 use std::ops::*;
 use std::fmt::*;
 
-pub extension CharImpl for char {
+extension char {
     impl Hash {
         fn hash<H: Hasher>(this, h: *mut H) => (*this as u32).hash(h);
     }

@@ -108,26 +108,26 @@ impl Pretty<'_> {
                 public,
                 name,
                 type_params,
-                impls,
+                super_traits,
                 functions,
                 is_unsafe,
-                sealed,
+                is_sealed,
                 assoc_types,
             } => {
                 self.print_header(
                     &tabs,
                     "Stmt::Trait",
-                    &[str!(self, name, LOCATED), bool!(public), bool!(sealed), bool!(is_unsafe)],
+                    &[str!(self, name, LOCATED), bool!(public), bool!(is_sealed), bool!(is_unsafe)],
                 );
 
                 self.print_type_params(type_params, indent + 1, None);
                 self.print_type_params(assoc_types, indent + 1, Some("Associated Types"));
 
                 let plus_1 = INDENT.repeat(indent + 1);
-                if !impls.is_empty() {
+                if !super_traits.is_empty() {
                     let plus_2 = INDENT.repeat(indent + 2);
-                    eprintln!("{plus_1}{}: ", "Impls".yellow());
-                    for imp in impls {
+                    eprintln!("{plus_1}{}: ", "Super Traits".yellow());
+                    for imp in super_traits {
                         eprintln!("{plus_2}{}", self.path(imp));
                     }
                 }
@@ -137,13 +137,8 @@ impl Pretty<'_> {
                     self.print_fn(&f.data, indent + 2);
                 }
             }
-            StmtData::Extension { public, name, ty, type_params, impls, functions, operators } => {
-                self.print_header(
-                    &tabs,
-                    "Stmt::Extension",
-                    &[str!(self, name, LOCATED), bool!(public)],
-                );
-
+            StmtData::Extension { span: _, ty, type_params, impls, functions, operators } => {
+                self.print_header(&tabs, "Stmt::Extension", &[]);
                 self.print_type_params(type_params, indent + 1, None);
 
                 let plus_1 = INDENT.repeat(indent + 1);
@@ -455,8 +450,8 @@ impl Pretty<'_> {
                 }
             }
             ExprData::Error => {}
-            ExprData::Lambda { policy, captures, params, ret, body } => {
-                self.print_header(&tabs, "Expr::Lambda", &[]);
+            ExprData::Closure { policy, captures, params, ret, body } => {
+                self.print_header(&tabs, "Expr::Closure", &[]);
                 let tabs = INDENT.repeat(indent + 1);
                 eprintln!("{tabs}{}: {policy:?}", "Policy".yellow());
 

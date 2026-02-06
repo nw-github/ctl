@@ -3,6 +3,7 @@ use std::{
     path::PathBuf,
 };
 
+use enum_as_inner::EnumAsInner;
 use serde::Deserialize;
 
 use super::constraint::Constraint;
@@ -83,6 +84,7 @@ pub struct Build {
     pub debug_info: Option<bool>,
     pub no_gc: Option<bool>,
     pub no_bit_int: Option<bool>,
+    pub panic_mode: Option<PanicMode>,
 }
 
 #[derive(Deserialize, Default, Debug)]
@@ -110,4 +112,12 @@ pub struct Config {
     pub build: FullBuild,
     #[serde(default)]
     pub dependencies: HashMap<String, Dependency>,
+}
+
+#[derive(Deserialize, Default, Debug, Clone, Copy, PartialEq, Eq, EnumAsInner, clap::ValueEnum)]
+pub enum PanicMode {
+    #[default]
+    Sjlj,
+    Abort,
+    Unwind,
 }
