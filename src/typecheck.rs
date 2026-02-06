@@ -785,7 +785,7 @@ impl<'a> TypeChecker<'a> {
         packed: bool,
     ) -> DStmt {
         let pub_constructor = base.public && !base.members.iter().any(|m| !m.public);
-        let (ut, init, fns, impls) = self.enter(ScopeKind::None, |this| {
+        let (ut, init, mut fns, impls) = self.enter(ScopeKind::None, |this| {
             let init = this.enter(ScopeKind::None, |this| {
                 this.declare_fn(Located::nowhere(&Fn {
                     public: pub_constructor,
@@ -859,6 +859,7 @@ impl<'a> TypeChecker<'a> {
         self.proj.scopes[scope].kind = ScopeKind::UserType(id);
         self.proj.scopes.get_mut(init.id).constructor = Some(id);
         self.proj.scopes.get_mut(id).impls = self.declare_impls(id, impls);
+        fns.push(init);
 
         DStmt::UserType { id, fns }
     }
