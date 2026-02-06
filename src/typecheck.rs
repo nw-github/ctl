@@ -1797,9 +1797,18 @@ impl TypeChecker<'_> {
     ) -> Result<(), String> {
         let hfn = self.proj.scopes.get(has);
         let wfn = self.proj.scopes.get(wants);
-        if wfn.is_unsafe && !hfn.is_unsafe {
+        if wfn.is_extern != hfn.is_extern {
             return Err(format!(
-                "function '{}' must be declared unsafe",
+                "function '{}'{} must be declared extern",
+                if wfn.is_extern { "" } else { "not" },
+                strdata!(self, hfn.name.data)
+            ));
+        }
+
+        if wfn.is_unsafe != hfn.is_unsafe {
+            return Err(format!(
+                "function '{}'{} must be declared unsafe",
+                if wfn.is_unsafe { "" } else { "not" },
                 strdata!(self, hfn.name.data)
             ));
         }
