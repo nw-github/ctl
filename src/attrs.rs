@@ -104,7 +104,6 @@ pub struct FunctionAttrs {
     pub test_runner: bool,
     pub no_mangle: bool,
     pub cold: bool,
-    pub safe_extern: bool,
     pub export: bool,
     pub link_name: Option<StrId>,
     pub test_skip: Option<Option<StrId>>,
@@ -144,7 +143,6 @@ impl FunctionAttrs {
                 Strings::ATTR_SKIP => {
                     this.test_skip = Some(opt_str_arg(attr, id, proj).map(|s| s.data))
                 }
-                Strings::ATTR_SAFE => this.safe_extern = true,
                 Strings::ATTR_EXPORT => this.export = true,
                 Strings::ATTR_INLINE => {
                     if let Some(arg) = opt_str_arg(attr, id, proj) {

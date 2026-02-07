@@ -3,7 +3,7 @@ use enum_as_inner::EnumAsInner;
 
 use crate::{
     ast::{
-        DefaultCapturePolicy,
+        DefaultCapturePolicy, FnAbi,
         checked::{Expr as CheckedExpr, PatternData as CheckedPatternData},
         declared::UsePath,
         parsed::{Expr, FunctionType, Path, Pattern, TypeHint},
@@ -202,7 +202,7 @@ pub struct Function {
     pub public: bool,
     pub attrs: FunctionAttrs,
     pub name: Located<StrId>,
-    pub is_extern: bool,
+    pub abi: FnAbi,
     pub is_async: bool,
     pub is_unsafe: bool,
     pub variadic: bool,

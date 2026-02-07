@@ -48,7 +48,7 @@ impl TypeGen {
         } else {
             buffer.emit_type(f.ret);
         }
-        write_de!(buffer, "(*");
+        write_de!(buffer, "({}*", f.abi.attr());
         buffer.emit_fnptr_name(f);
         write_de!(buffer, ")(");
 
@@ -58,7 +58,7 @@ impl TypeGen {
                 write_de!(buffer, ",");
             }
 
-            if i == 0 && !f.is_extern && types[param].is_safe_ptr() {
+            if i == 0 && f.abi.is_ctl() && types[param].is_safe_ptr() {
                 if types[param].is_ptr() {
                     buffer.emit("void const*");
                 } else {
@@ -92,7 +92,7 @@ impl TypeGen {
             }
 
             let param = param.ty.with_templates(types, &func.ty_args);
-            if i == 0 && !f.is_extern && types[param].is_safe_ptr() {
+            if i == 0 && f.abi.is_ctl() && types[param].is_safe_ptr() {
                 if types[param].is_ptr() {
                     buffer.emit("void const*");
                 } else {
@@ -206,12 +206,13 @@ impl TypeGen {
         }
         write_if!(!wrote, defs, "CTL_DUMMY_MEMBER;\n");
         writeln_de!(defs, "}};");
+
+        let name = defs.1.fmt_ut(ut).to_string().replace("\"", "\\\"");
         writeln_de!(
             defs,
-            "CTL_STATIC_ASSERT(sizeof(struct {type_name}) == {} && _Alignof(struct {type_name}) == {}, \"Disagreement between C compiler and CTL about alignment of type {}\");",
+            "CTL_STATIC_ASSERT(sizeof(struct {type_name}) == {} && _Alignof(struct {type_name}) == {}, \"Disagreement between C compiler and CTL about alignment of type {name}\");",
             layout.size,
             layout.align,
-            defs.1.fmt_ut(ut),
         );
     }
 
@@ -480,12 +481,8 @@ impl<'a> Buffer<'a> {
     }
 
     fn emit_fnptr_name(&mut self, f: &FnPtr) {
-        match (f.is_extern, f.is_unsafe) {
-            (true, true) => write_de!(self, "E"),
-            (true, false) => write_de!(self, "e"),
-            (false, true) => write_de!(self, "u"),
-            (false, false) => write_de!(self, "N"),
-        }
+        let abi = f.abi.mangled_name_char();
+        write_de!(self, "N{}", if f.is_unsafe { abi.to_ascii_lowercase() } else { abi });
         for &param in f.params.iter() {
             self.write_len_prefixed(&Buffer::format(self.1, |b| b.emit_mangled_name(param)));
         }
@@ -3218,7 +3215,8 @@ impl<'a> Codegen<'a> {
     ) -> (Vec<VariableId>, FirstParam) {
         let f = self.proj.scopes.get(state.func.id);
         let ret = f.ret.with_templates(&self.proj.types, &state.func.ty_args);
-        if f.is_extern {
+        let is_import = f.body.is_none();
+        if is_import {
             write_de!(self.buffer, "extern ");
         } else {
             if !f.attrs.export {
@@ -3234,6 +3232,8 @@ impl<'a> Codegen<'a> {
             }
         }
 
+        write_de!(self.buffer, "{} ", f.abi.attr());
+
         if !is_prototype && f.attrs.cold {
             write_de!(self.buffer, "CTL_COLD ");
         }
@@ -3247,7 +3247,6 @@ impl<'a> Codegen<'a> {
             write_de!(self.buffer, "CTL_NORETURN ");
         }
 
-        let is_import = f.is_extern && f.body.is_none();
         if ret.is_void_like() {
             write_de!(self.buffer, "void ");
         } else {
@@ -3270,7 +3269,8 @@ impl<'a> Codegen<'a> {
                 nonnull.push(format!("{}", i + 1));
             }
 
-            let override_with_voidptr = i == 0 && !f.is_extern && self.proj.types[ty].is_safe_ptr();
+            let override_with_voidptr =
+                i == 0 && f.abi.is_ctl() && self.proj.types[ty].is_safe_ptr();
             if override_with_voidptr {
                 if self.proj.types[ty].is_ptr() {
                     self.buffer.emit("void const*");

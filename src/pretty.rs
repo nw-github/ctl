@@ -178,6 +178,10 @@ impl Pretty<'_> {
                 );
                 self.print_stmts(body, indent + 1);
             }
+            StmtData::ExternBlock(body) => {
+                self.print_header(&tabs, "Stmt::ExternBlock", &[]);
+                self.print_stmts(body, indent + 1);
+            }
             StmtData::ModuleOOL { public, name, resolved } => {
                 self.print_header(
                     &tabs,
@@ -684,7 +688,7 @@ impl Pretty<'_> {
         &self,
         Fn {
             name,
-            is_extern,
+            abi,
             is_async,
             is_unsafe,
             type_params,
@@ -705,9 +709,9 @@ impl Pretty<'_> {
                 str!(self, name, LOCATED),
                 bool!(is_async),
                 bool!(is_unsafe),
-                bool!(is_extern),
                 bool!(variadic),
                 bool!(public),
+                HeaderVar::Named("abi", format!("{abi:?}")),
             ],
             &ret.as_ref()
                 .map(|ret| format!(" {} {}", "->".cyan(), self.typ(*ret)))

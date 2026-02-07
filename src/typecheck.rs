@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use crate::{
     FeatureSet, Warning,
     ast::{
-        Attribute, Attributes, BinaryOp, UnaryOp,
+        Attribute, Attributes, BinaryOp, FnAbi, UnaryOp,
         checked::{
             ArrayPattern, Block, Expr as CExpr, ExprArena, ExprData as CExprData,
             FormatOpts as CFormatSpec, Pattern as CPattern, PatternData, RestPattern,
@@ -790,8 +790,8 @@ impl<'a> TypeChecker<'a> {
                 this.declare_fn(Located::nowhere(&Fn {
                     public: pub_constructor,
                     name: base.name,
+                    abi: FnAbi::Ctl,
                     is_async: false,
-                    is_extern: false,
                     variadic: false,
                     is_unsafe: false,
                     type_params: vec![],
@@ -948,7 +948,7 @@ impl<'a> TypeChecker<'a> {
                 fns.push(this.declare_fn(Located::nowhere(&Fn {
                     public: base.public,
                     name: Located::new(variant.name.span, variant.name.data),
-                    is_extern: false,
+                    abi: FnAbi::Ctl,
                     is_async: false,
                     variadic: false,
                     is_unsafe: false,
@@ -1265,6 +1265,10 @@ impl<'a> TypeChecker<'a> {
             &PStmtData::Guard { cond, body } => DStmt::Guard { cond, body },
             &PStmtData::Expr(expr) => DStmt::Expr(expr),
             &PStmtData::Defer(expr) => DStmt::Defer(expr),
+            PStmtData::ExternBlock(body) => DStmt::Module {
+                id: self.current,
+                body: body.iter().flat_map(|stmt| self.declare_stmt(autouse, stmt)).collect(),
+            },
             PStmtData::Error => return None,
         })
     }
@@ -1272,8 +1276,15 @@ impl<'a> TypeChecker<'a> {
     fn declare_fn(&mut self, f: Located<&Fn>) -> DFn {
         let full_span = f.span;
         let f = f.data;
-        if f.variadic && (!f.is_extern || f.body.is_some()) {
-            self.error(Error::new("only imported extern functions may be variadic", f.name.span))
+        if f.variadic && f.abi.is_ctl() {
+            self.error(Error::new(
+                "'ctl' calling convention does not support variadic functions",
+                f.name.span,
+            ))
+        }
+
+        if f.variadic && f.body.is_some() {
+            self.error(Error::new("cannot provide definition for a variadic function", f.name.span))
         }
 
         let attrs = FunctionAttrs::relevant(f.name.data, &f.attrs, &mut self.proj, false);
@@ -1282,7 +1293,7 @@ impl<'a> TypeChecker<'a> {
                 public: f.public,
                 attrs,
                 name: f.name,
-                is_extern: f.is_extern,
+                abi: f.abi,
                 is_async: f.is_async,
                 is_unsafe: f.is_unsafe,
                 variadic: f.variadic,
@@ -1300,13 +1311,7 @@ impl<'a> TypeChecker<'a> {
             true,
         );
 
-        let allow_safe_extern = self.proj.scopes.get(id).attrs.safe_extern
-            || self.proj.scopes.get(id).attrs.intrinsic.is_some();
         self.enter(ScopeKind::Function(id), |this| {
-            if !allow_safe_extern && f.is_extern && f.body.is_none() {
-                this.proj.scopes.get_mut(id).is_unsafe = true;
-            }
-
             this.proj.scopes.get_mut(id).body_scope = this.current;
             this.proj.scopes.get_mut(id).type_params = this.declare_type_params(&f.type_params);
             this.proj.scopes.get_mut(id).params = f
@@ -2070,7 +2075,7 @@ impl TypeChecker<'_> {
                 return;
             }
 
-            if func.is_extern && body.is_none() {
+            if !func.abi.is_ctl() && body.is_none() {
                 this.proj.scopes.get_mut(id).attrs.no_mangle = true;
             }
 
@@ -4941,10 +4946,10 @@ impl TypeChecker<'_> {
                 }
                 self.proj.scopes.get_tuple(names, types, &self.proj.types)
             }
-            TypeHintData::Fn { is_extern, is_unsafe, params, ret } => {
+            &TypeHintData::Fn { abi, is_unsafe, ref params, ret } => {
                 let fnptr = FnPtr {
-                    is_extern: *is_extern,
-                    is_unsafe: *is_unsafe,
+                    abi,
+                    is_unsafe,
                     params: params.iter().map(|&p| self.resolve_typehint(p)).collect(),
                     ret: ret.map(|ret| self.resolve_typehint(ret)).unwrap_or(TypeId::VOID),
                 };
@@ -7792,10 +7797,10 @@ pub trait SharedStuff {
             return default_if(matches!(ty, Type::DynPtr(_) | Type::DynMutPtr(_)));
         } else if is_same_tr(LangTrait::FnPtr) {
             match ty {
-                Type::Fn(f) => 'out: {
+                Type::Fn(f) => {
                     let data = scopes.get(f.id);
-                    if data.is_extern || data.is_unsafe {
-                        break 'out;
+                    if !data.abi.is_ctl() || data.is_unsafe {
+                        return None;
                     }
 
                     let ret = data.ret.with_templates(&proj.types, &f.ty_args);
@@ -7811,7 +7816,7 @@ pub trait SharedStuff {
                         [args, ret],
                     ));
                 }
-                Type::FnPtr(f) if !f.is_extern && !f.is_unsafe => {
+                Type::FnPtr(f) if f.abi.is_ctl() && !f.is_unsafe => {
                     let ret = f.ret;
                     let args = self.get_tuple(f.params.clone());
                     return Some(GenericTrait::from_type_args(

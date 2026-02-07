@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, ops::Index};
 
 use crate::{
-    ast::{BinaryOp, UnaryOp, parsed::TypeHint},
+    ast::{BinaryOp, FnAbi, UnaryOp, parsed::TypeHint},
     ds::{ComptimeInt, HashArena},
     intern::StrId,
     nearest_pow_of_two,
@@ -127,7 +127,7 @@ impl GenericFn {
     pub fn as_fn_ptr(&self, scopes: &Scopes, types: &Types) -> FnPtr {
         let f = scopes.get(self.id);
         FnPtr {
-            is_extern: f.is_extern,
+            abi: f.abi,
             is_unsafe: f.is_unsafe,
             params: f.params.iter().map(|p| p.ty.with_templates(types, &self.ty_args)).collect(),
             ret: f.ret.with_templates(types, &self.ty_args),
@@ -369,7 +369,7 @@ impl Integer {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FnPtr {
-    pub is_extern: bool,
+    pub abi: FnAbi,
     pub is_unsafe: bool,
     pub params: Vec<TypeId>,
     pub ret: TypeId,
@@ -377,7 +377,7 @@ pub struct FnPtr {
 
 impl FnPtr {
     pub fn is_unsafe_version_of(&self, rhs: &FnPtr) -> bool {
-        self.is_extern == rhs.is_extern
+        self.abi == rhs.abi
             && self.params == rhs.params
             && self.ret == rhs.ret
             && self.is_unsafe
@@ -738,7 +738,7 @@ impl TypeId {
             }
             Type::Fn(f) => types.insert(Type::Fn(f.with_templates(types, map))),
             Type::FnPtr(f) => types.insert(Type::FnPtr(FnPtr {
-                is_extern: f.is_extern,
+                abi: f.abi,
                 is_unsafe: f.is_unsafe,
                 params: f.params.iter().map(|p| p.with_templates(types, map)).collect(),
                 ret: f.ret.with_templates(types, map),

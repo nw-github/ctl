@@ -1,5 +1,5 @@
 use crate::{
-    ast::{Alignment, DefaultCapturePolicy, Sign},
+    ast::{Alignment, FnAbi, DefaultCapturePolicy, Sign},
     ds::{
         ComptimeInt,
         arena::{Arena, Id},
@@ -129,6 +129,7 @@ pub enum StmtData {
         type_params: TypeParams,
         ty: TypeHint,
     },
+    ExternBlock(Vec<Stmt>),
     Error,
 }
 
@@ -367,7 +368,7 @@ pub enum TypeHintData {
     RawMutPtr(TypeHint),
     DynPtr(Path),
     DynMutPtr(Path),
-    Fn { is_extern: bool, is_unsafe: bool, params: Vec<TypeHint>, ret: Option<TypeHint> },
+    Fn { abi: FnAbi, is_unsafe: bool, params: Vec<TypeHint>, ret: Option<TypeHint> },
     Void,
     Error,
 }
@@ -452,7 +453,7 @@ pub struct Fn {
     pub attrs: Attributes,
     pub public: bool,
     pub name: Located<StrId>,
-    pub is_extern: bool,
+    pub abi: FnAbi,
     pub is_async: bool,
     pub is_unsafe: bool,
     pub variadic: bool,
@@ -469,7 +470,7 @@ impl Fn {
             attrs: func.attrs,
             public: true,
             name: Located::new(func.name.span, name),
-            is_extern: false,
+            abi: FnAbi::Ctl,
             is_async: false,
             is_unsafe: false,
             variadic: false,

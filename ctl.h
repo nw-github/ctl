@@ -57,6 +57,12 @@
 #  define CTL_NEVERINLINE  __declspec(noinline)
 #  define CTL_COLD
 #  define CTL_MALLOC
+#  define CTL_NOTHROW        __declspec(nothrow)
+#  define CTL_ABI_MS         __stdcall
+#  define CTL_ABI_STDCALL    __stdcall
+#  define CTL_ABI_FASTCALL   __fastcall
+#  define CTL_ABI_THISCALL   __thiscall
+#  define CTL_ABI_CDECL      __cdecl
 #  define CTL_INLINE         inline
 #  define CTL_MEMCPY         memcpy
 #  define CTL_MEMSET         memset
@@ -94,6 +100,12 @@
 #  define CTL_NEVERINLINE    __attribute__((noinline))
 #  define CTL_COLD           __attribute__((cold))
 #  define CTL_MALLOC         __attribute__((malloc))
+#  define CTL_NOTHROW        __attribute__((nothrow))
+#  define CTL_ABI_MS         __attribute__((ms_abi))
+#  define CTL_ABI_STDCALL    __attribute__((stdcall))
+#  define CTL_ABI_FASTCALL   __attribute__((fastcall))
+#  define CTL_ABI_THISCALL   __attribute__((thiscall))
+#  define CTL_ABI_CDECL      __attribute__((cdecl))
 #  define CTL_INLINE         inline
 #  define CTL_MEMCPY         __builtin_memcpy
 #  define CTL_MEMSET         __builtin_memset
@@ -129,6 +141,19 @@
 #  endif
 
 #endif
+
+#if defined(_WIN32)
+#  define CTL_ABI_SYS CTL_ABI_STDCALL
+#  define CTL_ABI_C   CTL_ABI_CDECL
+#elif defined(_WIN64)
+#  define CTL_ABI_SYS CTL_ABI_MS
+#  define CTL_ABI_C
+#else
+#  define CTL_ABI_SYS
+#  define CTL_ABI_C
+#endif
+
+#define CTL_ABI
 
 #ifdef CTL_HAS_UNWIND
 #  define CTL_CLEANUP(func) __attribute__((cleanup(func)))

@@ -6,6 +6,7 @@ use crate::{
     lexer::{Located, Token},
 };
 use derive_more::{Deref, DerefMut, Display};
+use enum_as_inner::EnumAsInner;
 
 use self::parsed::OperatorFnType;
 
@@ -321,4 +322,53 @@ pub enum DefaultCapturePolicy {
     ByPtr,
     ByMutPtr,
     Auto,
+}
+
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::FromStr, EnumAsInner)]
+#[from_str(rename_all = "kebab-case")]
+pub enum FnAbi {
+    #[default]
+    Ctl,
+    C,
+    Sys,
+    X86Stdcall,
+    X86Fastcall,
+    X86Thiscall,
+}
+
+impl FnAbi {
+    pub fn attr(self) -> &'static str {
+        match self {
+            FnAbi::Ctl => "CTL_ABI",
+            FnAbi::C => "CTL_ABI_C",
+            FnAbi::Sys => "CTL_ABI_SYS",
+            FnAbi::X86Stdcall => "CTL_ABI_STDCALL",
+            FnAbi::X86Fastcall => "CTL_ABI_FASTCALL",
+            FnAbi::X86Thiscall => "CTL_ABI_THISCALL",
+        }
+    }
+
+    pub fn mangled_name_char(self) -> char {
+        match self {
+            FnAbi::Ctl => 'A',
+            FnAbi::C => 'C',
+            FnAbi::Sys => 'S',
+            FnAbi::X86Stdcall => 'D',
+            FnAbi::X86Fastcall => 'F',
+            FnAbi::X86Thiscall => 'T',
+        }
+    }
+}
+
+impl std::fmt::Display for FnAbi {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FnAbi::Ctl => write!(f, "extern \"ctl\""),
+            FnAbi::C => write!(f, "extern \"c\""),
+            FnAbi::Sys => write!(f, "extern \"sys\""),
+            FnAbi::X86Stdcall => write!(f, "extern \"x86-stdcall\""),
+            FnAbi::X86Fastcall => write!(f, "extern \"x86-fastcall\""),
+            FnAbi::X86Thiscall => write!(f, "extern \"x86-thiscall\""),
+        }
+    }
 }

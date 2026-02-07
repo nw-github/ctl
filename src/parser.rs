@@ -1,9 +1,12 @@
+use std::str::FromStr;
+
 use either::{Either, Either::*};
 
 use crate::{
     FormatLexer, FormatToken, Warning,
     ast::{
-        Alignment, AttrName, Attribute, Attributes, DefaultCapturePolicy, Sign, UnaryOp, parsed::*,
+        Alignment, AttrName, Attribute, Attributes, DefaultCapturePolicy, FnAbi, Sign, UnaryOp,
+        parsed::*,
     },
     ds::ComptimeInt,
     error::{Diagnostics, Error, FileId},
@@ -11,13 +14,28 @@ use crate::{
     lexer::{Lexer, Located, Precedence, Span, Token},
 };
 
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum Body {
+    #[default]
+    Optional,
+    Required,
+    None,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Safety {
+    Safe,
+    Unsafe,
+}
+
 #[derive(Default, Clone, Copy)]
 struct FnConfig {
-    tk_extern: Option<Span>,
-    tk_public: Option<Span>,
-    tk_unsafe: Option<Span>,
-    require_body: bool,
-    forced_pub: bool,
+    abi: FnAbi,
+    public: bool,
+    is_unsafe: bool,
+    body: Body,
+    lead_span: Option<Span>,
+    unsafe_if_no_body: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -96,38 +114,86 @@ impl<'a> Parser<'a> {
         let mut attrs = self.attributes();
         let tk_public = self.next_if(Token::Pub);
         let tk_extern = self.next_if(Token::Extern);
-        let tk_unsafe = self.next_if(Token::Unsafe);
-        let conf = FnConfig {
-            tk_public,
-            tk_extern,
-            tk_unsafe,
-            require_body: tk_extern.is_none(),
-            forced_pub: false,
-        };
-        match self.try_function(conf, attrs.clone()) {
-            Some(Left(func)) => {
-                return Ok(Stmt { attrs, data: func.map(StmtData::Fn) });
-            }
-            Some(Right(func)) => {
-                self.error(Error::new(
-                    "operator functions can only be defined in types and extensions",
-                    func.data.name.span,
-                ));
+        let abi = self.abi(tk_extern.is_some());
+        if let Some(begin) = tk_extern
+            && self.next_if(Token::LCurly).is_some()
+        {
+            self.invalid_here(tk_public);
+            let mut stmts = vec![];
+            let def_abi = abi.map(|abi| abi.data).unwrap_or(FnAbi::C);
+            let span = self.next_until(Token::RCurly, begin, |this| {
+                // TODO: combine with block attrs
+                let mut fn_attrs = this.attributes();
+                if let Some(attr) =
+                    attrs.iter().find(|a| a.name.data.is_str_eq(Strings::ATTR_INTRINSIC))
+                {
+                    fn_attrs.push(attr.clone());
+                }
 
-                return Ok(Stmt {
-                    attrs,
-                    data: func.map(|func| {
-                        // TODO: don't use to_string
-                        let name = self.strings.get_or_intern(func.name.data.to_string());
-                        StmtData::Fn(Fn::from_operator_fn(name, func))
-                    }),
-                });
-            }
-            None => {}
+                let tk_public = this.next_if(Token::Pub);
+                let tk_extern = this.next_if(Token::Extern);
+                let fn_abi = this.abi(tk_extern.is_some());
+                let abi = abi.map(|abi| abi.data).unwrap_or(FnAbi::C);
+                if let Some(mut span) = tk_extern && abi == def_abi {
+                    if let Some(abi_span) = fn_abi.map(|a| a.span) {
+                        span.extend_to(abi_span);
+                    }
+                    this.diag.report(Warning::useless_token(this.lexer.source(), span));
+                }
+
+                let safety = this.safety();
+                // if let Some(safety) = safety
+                //     && safety.data == Safety::Unsafe
+                // {
+                //     this.diag.report(Warning::useless_token(this.lexer.source(), safety.span));
+                // }
+
+                // TODO: also allow statics
+                let func = this.expect_fn(
+                    FnConfig {
+                        abi: fn_abi.map(|abi| abi.data).unwrap_or(def_abi),
+                        public: tk_public.is_some(),
+                        is_unsafe: safety.is_none_or(|s| s.data != Safety::Safe),
+                        body: Body::None,
+                        lead_span: tk_public.or(tk_extern).or(safety.map(|s| s.span)),
+                        unsafe_if_no_body: false,
+                    },
+                    fn_attrs,
+                );
+
+                if let Some(func) = func {
+                    stmts.push(this.normal_fn(func));
+                }
+            });
+            return Ok(Stmt {
+                data: Located::new(span, StmtData::ExternBlock(stmts)),
+                attrs: Default::default(),
+            });
+        }
+
+        let safety = self.safety();
+        let is_extern = tk_extern.is_some();
+        let mut tk_unsafe = safety.map(|s| s.span);
+        let earliest_span = tk_public.or(tk_extern).or(tk_unsafe);
+        let conf = FnConfig {
+            abi: abi.map(|abi| abi.data).unwrap_or(if is_extern { FnAbi::C } else { FnAbi::Ctl }),
+            public: tk_public.is_some(),
+            is_unsafe: safety.is_some_and(|s| s.data == Safety::Unsafe),
+            body: if is_extern { Body::Optional } else { Body::Required },
+            lead_span: earliest_span,
+            unsafe_if_no_body: is_extern,
         };
+        if let Some(func) = self.try_function(conf, attrs.clone()) {
+            return Ok(self.normal_fn(func));
+        }
+
+        if safety.is_some_and(|s| s.data == Safety::Safe) {
+            self.invalid_here(tk_unsafe);
+            tk_unsafe = None;
+        }
 
         let peek = self.peek();
-        let earliest_span = tk_public.or(tk_extern).or(tk_unsafe).unwrap_or(peek.span);
+        let earliest_span = earliest_span.unwrap_or(peek.span);
         match peek.data {
             Token::Type => {
                 self.next();
@@ -322,7 +388,7 @@ impl<'a> Parser<'a> {
                             attrs: Default::default(),
                             public: false,
                             name,
-                            is_extern: false,
+                            abi: FnAbi::Ctl,
                             is_async: false,
                             is_unsafe: false,
                             variadic: false,
@@ -1603,6 +1669,29 @@ impl<'a> Parser<'a> {
         Attributes::new(attrs)
     }
 
+    fn abi(&mut self, is_extern: bool) -> Option<Located<FnAbi>> {
+        let span = self.peek().span;
+        if is_extern && let Some(ident) = self.next_if_map(|_, tk| tk.data.into_string().ok()) {
+            let name = self.strings.resolve(&ident);
+            if let Ok(data) = FnAbi::from_str(name) {
+                return Some(Located::new(span, data));
+            } else {
+                let msg = format!("invalid calling convention specification '{name}'");
+                self.error_no_sync(Error::new(msg, span));
+                return Some(Located::new(span, FnAbi::C));
+            }
+        }
+        None
+    }
+
+    fn safety(&mut self) -> Option<Located<Safety>> {
+        self.next_if_map(|_, tk| match tk.data {
+            Token::Safe => Some(Located::new(tk.span, Safety::Safe)),
+            Token::Unsafe => Some(Located::new(tk.span, Safety::Unsafe)),
+            _ => None,
+        })
+    }
+
     //
 
     fn type_params(&mut self) -> TypeParams {
@@ -1738,10 +1827,20 @@ impl<'a> Parser<'a> {
             Token::Extern | Token::Unsafe | Token::Fn => {
                 let start = self.next();
                 let is_extern = start.data == Token::Extern;
-                let mut is_unsafe = start.data == Token::Unsafe;
-                if is_extern {
-                    is_unsafe = self.next_if(Token::Unsafe).is_some();
+                let abi = self.abi(is_extern);
+                let mut is_unsafe = matches!(start.data, Token::Unsafe | Token::Extern);
+                if is_extern && start.data != Token::Unsafe {
+                    if let Some(span) = self.next_if(Token::Unsafe) {
+                        self.diag.report(Warning::useless_token(self.lexer.source(), span));
+                    } else if self.next_if(Token::Safe).is_some() {
+                        is_unsafe = false;
+                    }
                 }
+                let abi = abi.map(|abi| abi.data).unwrap_or(if is_extern {
+                    FnAbi::C
+                } else {
+                    FnAbi::Ctl
+                });
 
                 if start.data != Token::Fn {
                     self.expect(Token::Fn);
@@ -1761,7 +1860,7 @@ impl<'a> Parser<'a> {
 
                 self.arena.hint(
                     params.span,
-                    TypeHintData::Fn { is_extern, is_unsafe, params: params.data, ret },
+                    TypeHintData::Fn { abi, is_unsafe, params: params.data, ret },
                 )
             }
             _ => {
@@ -1797,21 +1896,23 @@ impl<'a> Parser<'a> {
         let mut impls = Vec::new();
         let span = self.next_until(Token::RCurly, span, |this| {
             let attrs = this.attributes();
-            let public = this.next_if(Token::Pub);
+            let tk_public = this.next_if(Token::Pub);
+            let tk_unsafe = this.next_if(Token::Unsafe);
             let config = FnConfig {
-                tk_public: public,
-                tk_unsafe: this.next_if(Token::Unsafe),
-                require_body: true,
+                public: tk_public.is_some(),
+                is_unsafe: tk_unsafe.is_some(),
+                body: Body::Required,
+                lead_span: tk_public.or(tk_unsafe),
                 ..Default::default()
             };
-            if config.tk_unsafe.is_some() {
+            if config.is_unsafe {
                 match this.expect_fn(config, attrs) {
                     Some(Left(func)) => functions.push(func),
                     Some(Right(func)) => operators.push(func),
                     _ => {}
                 }
             } else if let Some(impl_span) = this.next_if(Token::Impl) {
-                this.invalid_here(public);
+                this.invalid_here(tk_public);
                 impls.push(this.impl_block(attrs, impl_span));
             } else if let Some(func) = this.try_function(config, attrs) {
                 // TODO: apply the attributes to the impl block or next member
@@ -1820,7 +1921,7 @@ impl<'a> Parser<'a> {
                     Right(func) => operators.push(func),
                 }
             } else {
-                this.invalid_here(public.filter(|_| union));
+                this.invalid_here(tk_public.filter(|_| union));
 
                 let name = this.expect_ident("expected name");
                 this.expect(Token::Colon);
@@ -1830,12 +1931,7 @@ impl<'a> Parser<'a> {
                 if !this.matches(Token::RCurly) {
                     this.expect(Token::Comma);
                 }
-                members.push(Member {
-                    public: config.tk_public.is_some(),
-                    ty,
-                    name,
-                    default: value,
-                });
+                members.push(Member { public: tk_public.is_some(), ty, name, default: value });
             }
         });
 
@@ -1858,13 +1954,16 @@ impl<'a> Parser<'a> {
         self.expect(Token::LCurly);
         let span = self.next_until(Token::RCurly, span, |this| {
             let attrs = this.attributes();
+            let tk_public = this.next_if(Token::Pub);
+            let tk_unsafe = this.next_if(Token::Unsafe);
             let config = FnConfig {
-                tk_public: this.next_if(Token::Pub),
-                tk_unsafe: this.next_if(Token::Unsafe),
-                require_body: true,
+                public: tk_public.is_some(),
+                is_unsafe: tk_unsafe.is_some(),
+                body: Body::Required,
+                lead_span: tk_public.or(tk_unsafe),
                 ..Default::default()
             };
-            if config.tk_public.is_some() || config.tk_unsafe.is_some() {
+            if config.public || config.is_unsafe {
                 match this.expect_fn(config, attrs) {
                     Some(Left(func)) => functions.push(func),
                     Some(Right(func)) => operators.push(func),
@@ -1941,6 +2040,9 @@ impl<'a> Parser<'a> {
         let mut assoc_types = Vec::new();
         let span = self.next_until(Token::RCurly, span, |this| {
             let attrs = this.attributes();
+            let public = this.next_if(Token::Pub);
+            this.invalid_here(public);
+
             if this.next_if(Token::Type).is_some() {
                 let ident = this.expect_ident("expected type name");
                 let impls = this.trait_impls();
@@ -1949,20 +2051,17 @@ impl<'a> Parser<'a> {
                 return;
             }
 
+            let tk_unsafe = this.next_if(Token::Unsafe);
             let config = FnConfig {
-                tk_unsafe: this.next_if(Token::Unsafe),
-                forced_pub: true,
+                public: true,
+                is_unsafe: tk_unsafe.is_some(),
+                lead_span: tk_unsafe,
                 ..Default::default()
             };
-            match this.expect_fn(config, attrs) {
-                Some(Left(func)) => functions.push(func),
-                Some(Right(func)) => {
-                    this.error(Error::new(
-                        "operator functions are not allowed here",
-                        func.data.name.span,
-                    ));
-                }
-                _ => {}
+            if let Some(func) = this.expect_fn(config, attrs) {
+                let stmt = this.normal_fn(func);
+                let StmtData::Fn(func) = stmt.data.data else { unreachable!() };
+                functions.push(Located::new(stmt.data.span, func));
             }
         });
 
@@ -1994,10 +2093,13 @@ impl<'a> Parser<'a> {
             if let Some(token) = this.next_if(Token::Impl) {
                 impls.push(this.impl_block(attrs, token));
             } else {
+                let tk_public = this.next_if(Token::Pub);
+                let tk_unsafe = this.next_if(Token::Unsafe);
                 let config = FnConfig {
-                    require_body: true,
-                    tk_public: this.next_if(Token::Pub),
-                    tk_unsafe: this.next_if(Token::Unsafe),
+                    body: Body::Required,
+                    public: tk_public.is_some(),
+                    is_unsafe: tk_unsafe.is_some(),
+                    lead_span: tk_public.or(tk_unsafe),
                     ..Default::default()
                 };
                 match this.expect_fn(config, attrs) {
@@ -2035,10 +2137,11 @@ impl<'a> Parser<'a> {
                 return;
             }
 
+            let tk_unsafe = this.next_if(Token::Unsafe);
             let config = FnConfig {
-                tk_unsafe: this.next_if(Token::Unsafe),
-                forced_pub: true,
-                require_body: true,
+                public: true,
+                is_unsafe: tk_unsafe.is_some(),
+                body: Body::Required,
                 ..Default::default()
             };
             match this.expect_fn(config, attrs) {
@@ -2069,7 +2172,7 @@ impl<'a> Parser<'a> {
         } else {
             return None;
         };
-        let mut span = cfg.tk_public.or(cfg.tk_extern).or(cfg.tk_unsafe).unwrap_or(head_span);
+        let mut span = cfg.lead_span.unwrap_or(head_span);
 
         let name = self.expect_fn_name();
         let type_params = self.type_params();
@@ -2154,18 +2257,26 @@ impl<'a> Parser<'a> {
 
         let ret = self.next_if(Token::Colon).map(|_| self.type_hint());
         let body = if let Some(semi) = self.next_if(Token::Semicolon) {
-            if cfg.require_body {
+            if cfg.body == Body::Required {
                 self.error(Error::new("expected '{'", semi));
             }
             span.extend_to(semi);
             None
-        } else if self.next_if(Token::FatArrow).is_some() {
+        } else if let Some(lead) = self.next_if(Token::FatArrow) {
+            if cfg.body == Body::None {
+                self.error(Error::new("expected ';'", lead));
+            }
+
             let expr = self.expression();
             let token = self.expect(Token::Semicolon);
             span.extend_to(token);
             Some(expr)
         } else {
             let lcurly = self.expect(Token::LCurly);
+            if cfg.body == Body::None {
+                self.error(Error::new("expected ';'", lcurly));
+            }
+
             let expr = self.block_expr(lcurly, None);
             span.extend_to(expr.span);
             Some(expr)
@@ -2176,10 +2287,10 @@ impl<'a> Parser<'a> {
                 span,
                 Fn {
                     name: Located::new(name.span, ident),
-                    public: cfg.forced_pub || cfg.tk_public.is_some(),
-                    is_extern: cfg.tk_extern.is_some(),
+                    abi: cfg.abi,
+                    public: cfg.public,
+                    is_unsafe: cfg.is_unsafe || (cfg.unsafe_if_no_body && body.is_none()),
                     is_async: is_async.is_some(),
-                    is_unsafe: cfg.tk_unsafe.is_some(),
                     variadic,
                     type_params,
                     params,
@@ -2217,6 +2328,27 @@ impl<'a> Parser<'a> {
             self.error(Error::new("expected function", span));
         }
         res
+    }
+
+    fn normal_fn(&mut self, func: Either<Located<Fn>, Located<OperatorFn>>) -> Stmt {
+        match func {
+            Left(func) => Stmt { attrs: Default::default(), data: func.map(StmtData::Fn) },
+            Right(func) => {
+                self.error(Error::new(
+                    "operator functions can only be defined in types and extensions",
+                    func.data.name.span,
+                ));
+
+                Stmt {
+                    attrs: Default::default(),
+                    data: func.map(|func| {
+                        // TODO: don't use to_string
+                        let name = self.strings.get_or_intern(func.name.data.to_string());
+                        StmtData::Fn(Fn::from_operator_fn(name, func))
+                    }),
+                }
+            }
+        }
     }
 
     fn expect_fn_name(&mut self) -> Located<Either<StrId, OperatorFnType>> {

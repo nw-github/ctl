@@ -48,7 +48,6 @@ impl Strings {
 
     pub const ATTR_LANG: StrId = str_id(SID::ATTR_LANG);
     pub const ATTR_INTRINSIC: StrId = str_id(SID::ATTR_INTRINSIC);
-    pub const ATTR_SAFE: StrId = str_id(SID::ATTR_SAFE);
     pub const ATTR_MACRO: StrId = str_id(SID::ATTR_MACRO);
     pub const ATTR_LINKNAME: StrId = str_id(SID::ATTR_LINKNAME);
     pub const ATTR_PANIC_HANDLER: StrId = str_id(SID::ATTR_PANIC_HANDLER);
@@ -75,7 +74,6 @@ impl Strings {
         assert_eq!(Self::FN_NEW, rodeo.get_or_intern_static("new"));
         assert_eq!(Self::ATTR_LANG, rodeo.get_or_intern_static("lang"));
         assert_eq!(Self::ATTR_INTRINSIC, rodeo.get_or_intern_static("intrinsic"));
-        assert_eq!(Self::ATTR_SAFE, rodeo.get_or_intern_static("safe"));
         assert_eq!(Self::FN_MAIN, rodeo.get_or_intern_static("main"));
         assert_eq!(Self::UNDERSCORE, rodeo.get_or_intern_static("_"));
         assert_eq!(Self::SOME, rodeo.get_or_intern_static("Some"));
@@ -150,7 +148,6 @@ enum SID {
     FN_NEW,
     ATTR_LANG,
     ATTR_INTRINSIC,
-    ATTR_SAFE,
     MAIN,
     UNDERSCORE,
     SOME,

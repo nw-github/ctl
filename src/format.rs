@@ -7,6 +7,7 @@ use crate::{
     project::Project,
     sym::{ItemId, LangTrait, LangType},
     typeid::{GenericTrait, GenericUserType, Type, TypeId, WithTypeArgs},
+    write_if,
 };
 
 #[derive(Clone, Copy, derive_more::Constructor)]
@@ -40,8 +41,8 @@ impl std::fmt::Display for FmtTy<'_> {
             Type::DynMutPtr(id) => write!(f, "*dyn mut {}", p.fmt_tr(id)),
             Type::User(ut) => write!(f, "{}", p.fmt_ut(ut)),
             Type::FnPtr(func) => {
-                crate::write_if!(func.is_extern, f, "extern ");
-                crate::write_if!(func.is_unsafe, f, "unsafe ");
+                write_if!(!func.abi.is_ctl(), f, "{} ", func.abi);
+                write_if!(func.is_unsafe, f, "unsafe ");
                 write!(f, "fn(")?;
                 for (i, &param) in func.params.iter().enumerate() {
                     if i > 0 {
@@ -53,8 +54,8 @@ impl std::fmt::Display for FmtTy<'_> {
             }
             Type::Fn(ofn) => {
                 let func = p.scopes.get(ofn.id);
-                crate::write_if!(func.is_extern, f, "extern ");
-                crate::write_if!(func.is_unsafe, f, "unsafe ");
+                write_if!(!func.abi.is_ctl(), f, "{} ", func.abi);
+                write_if!(func.is_unsafe, f, "unsafe ");
 
                 write!(f, "fn {}(", p.strings.resolve(&func.name.data))?;
                 for (i, param) in func.params.iter().enumerate() {
@@ -254,9 +255,9 @@ impl std::fmt::Display for FmtHint<'_> {
             TypeHintData::DynMutPtr(ty) => {
                 write!(f, "*dyn mut {}", FmtPath::new(ty, self.strings, self.arena))
             }
-            TypeHintData::Fn { is_extern, is_unsafe, params, ret } => {
-                crate::write_if!(*is_extern, f, "extern ");
-                crate::write_if!(*is_unsafe, f, "unsafe ");
+            &TypeHintData::Fn { abi, is_unsafe, ref params, ret } => {
+                write_if!(!abi.is_ctl(), f, "{abi} ");
+                write_if!(is_unsafe, f, "unsafe ");
                 write!(f, "fn (")?;
                 for (i, ty) in params.iter().enumerate() {
                     if i > 0 {
@@ -265,7 +266,7 @@ impl std::fmt::Display for FmtHint<'_> {
                     write!(f, "{}", self.subtype(*ty))?;
                 }
                 if let Some(ret) = ret {
-                    write!(f, "): {}", self.subtype(*ret))
+                    write!(f, "): {}", self.subtype(ret))
                 } else {
                     write!(f, ")")
                 }

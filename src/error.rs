@@ -304,6 +304,10 @@ impl Warning {
         Self::new(format!("redundant '{}'", span.text(src)), span)
     }
 
+    pub fn useless_token(src: &str, span: Span) -> Error {
+        Self::new(format!("useless '{}'", span.text(src)), span)
+    }
+
     pub fn redundant_unsafe(span: Span) -> Error {
         Self::new("unsafe expression in unsafe context", span)
     }

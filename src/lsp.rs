@@ -1358,19 +1358,10 @@ fn visualize_func(id: FunctionId, small: bool, proj: &Project) -> String {
     let mut res = if small { String::new() } else { visualize_location(func.scope, proj) };
 
     if !small {
-        if func.public {
-            res += "pub ";
-        }
-
-        if func.is_extern {
-            res += "extern ";
-        }
-
-        if func.is_unsafe {
-            write_de!(res, "unsafe fn {}", proj.strings.resolve(&func.name.data))
-        } else {
-            write_de!(res, "fn {}", proj.strings.resolve(&func.name.data))
-        }
+        write_if!(func.public, res, "pub ");
+        write_if!(!func.abi.is_ctl(), res, "{} ", func.abi);
+        write_if!(func.is_unsafe, res, "unsafe ");
+        write_de!(res, "fn {}", proj.strings.resolve(&func.name.data))
     } else if func.is_unsafe {
         write_de!(res, "unsafe fn")
     } else {
