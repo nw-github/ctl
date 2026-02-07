@@ -23,9 +23,9 @@ pub union _Unwind_Context {}
 
 pub type _Unwind_Word = uint;
 pub type _Unwind_Exception_Class = u64;
-pub type _Unwind_Trace_Fn = extern unsafe fn (^mut _Unwind_Context, ?^mut void) => _Unwind_Reason_Code;
-pub type _Unwind_Exception_Cleanup_Fn = extern unsafe fn(_Unwind_Reason_Code, ?^mut _Unwind_Exception);
-pub type _Unwind_Stop_Fn = extern unsafe fn(
+pub type _Unwind_Trace_Fn = extern fn (^mut _Unwind_Context, ?^mut void) => _Unwind_Reason_Code;
+pub type _Unwind_Exception_Cleanup_Fn = extern fn(_Unwind_Reason_Code, ?^mut _Unwind_Exception);
+pub type _Unwind_Stop_Fn = extern fn(
     version: c_int,
     actions: _Unwind_Action,
     _Unwind_Exception_Class,

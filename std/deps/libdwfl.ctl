@@ -22,7 +22,7 @@ pub unsafe union Elf64_Sym { _pad: [u8; 24], _align: u64 }
 
 $[layout(C)]
 pub struct Dwfl_Callbacks {
-    pub find_elf: ?extern unsafe fn(
+    pub find_elf: ?extern fn(
         module:   ?*mut Dwfl_Module,
         userdata: ?^mut ?^mut void,
         modname:  ?^c_char,
@@ -30,7 +30,7 @@ pub struct Dwfl_Callbacks {
         filename: ?^mut ^mut c_char,
         elfp:     ?^mut ^mut Elf,
     ) => c_int,
-    pub find_debuginfo: ?extern unsafe fn(
+    pub find_debuginfo: ?extern fn(
         module:   ?*mut Dwfl_Module,
         userdata: ?^mut ?^mut void,
         modname:  ?^c_char,
@@ -40,7 +40,7 @@ pub struct Dwfl_Callbacks {
         debuglink_crc: GElf_Word,
         debuginfo_file_name: ?^mut ?^mut c_char,
     ) => c_int,
-    pub section_address: ?extern unsafe fn(
+    pub section_address: ?extern fn(
         module:   ?*mut Dwfl_Module,
         userdata: ?^mut ?^mut void,
         modname:  ?^c_char,
@@ -79,7 +79,7 @@ pub extern fn dwfl_report_begin(dwfl: *mut Dwfl);
 pub extern fn dwfl_linux_proc_report(dwfl: *mut Dwfl, pid: pid_t): c_int;
 pub extern fn dwfl_report_end(
     dwfl: *mut Dwfl,
-    removed: ?extern unsafe fn(
+    removed: ?extern fn(
         ?*mut Dwfl_Module,
         ?^mut void,
         ^c_char,
