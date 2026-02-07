@@ -11,7 +11,7 @@ pub struct Timespec {
     pub tv_nsec: c_long,
 }
 
-extern "c" {
+extern "C" {
     pub safe fn abort(): never;
     pub safe fn exit(code: c_int): never;
     pub safe fn _exit(code: c_int): never;
@@ -240,7 +240,16 @@ pub mod posix {
     pub const SIGFPE: c_int = 8;
     pub const SIGSEGV: c_int = 11;
 
-    extern "c" {
+    pub const MAP_PRIVATE: c_int = 0x2;
+    pub const MAP_ANONYMOUS: c_int = 0x20;
+    pub const MAP_STACK: c_int = 0x20000;
+
+    pub const PROT_READ: c_int = 0x1;
+    pub const PROT_WRITE: c_int = 0x2;
+
+    pub const MAP_FAILED: ^mut void = (-1).to_raw_mut();
+
+    extern "C" {
         pub fn write(fd: c_int, buf: ^void, count: uint): int;
         pub safe fn clock_gettime(clockid: c_int, tp: *mut Timespec): c_int;
         pub safe fn nanosleep(time: *Timespec, remaining: ?*mut Timespec): c_int;
@@ -261,15 +270,6 @@ pub mod posix {
 
         pub fn mmap(addr: ?^mut void, len: uint, prot: c_int, flags: c_int, fd: c_int, off: off_t): ?^mut void;
     }
-
-    pub const MAP_PRIVATE: c_int = 0x2;
-    pub const MAP_ANONYMOUS: c_int = 0x20;
-    pub const MAP_STACK: c_int = 0x20000;
-
-    pub const PROT_READ: c_int = 0x1;
-    pub const PROT_WRITE: c_int = 0x2;
-
-    pub const MAP_FAILED: ^mut void = (-1).to_raw_mut();
 }
 
 pub mod linux {

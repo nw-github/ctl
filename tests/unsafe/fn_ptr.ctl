@@ -1,13 +1,13 @@
 // Error: type mismatch: expected type 'fn() => void', found 'unsafe fn() => void'
-// Error: type mismatch: expected type 'fn() => void', found 'extern "c" fn() => void'
-// Error: type mismatch: expected type 'fn() => void', found 'extern "c" unsafe fn() => void'
-// Error: type mismatch: expected type 'unsafe fn() => void', found 'extern "c" fn() => void'
-// Error: type mismatch: expected type 'unsafe fn() => void', found 'extern "c" unsafe fn() => void'
-// Error: type mismatch: expected type 'extern "c" fn() => void', found 'fn() => void'
-// Error: type mismatch: expected type 'extern "c" fn() => void', found 'unsafe fn() => void'
-// Error: type mismatch: expected type 'extern "c" fn() => void', found 'extern "c" unsafe fn() => void'
-// Error: type mismatch: expected type 'extern "c" unsafe fn() => void', found 'fn() => void'
-// Error: type mismatch: expected type 'extern "c" unsafe fn() => void', found 'unsafe fn() => void'
+// Error: type mismatch: expected type 'fn() => void', found 'extern "C" fn() => void'
+// Error: type mismatch: expected type 'fn() => void', found 'extern "C" unsafe fn() => void'
+// Error: type mismatch: expected type 'unsafe fn() => void', found 'extern "C" fn() => void'
+// Error: type mismatch: expected type 'unsafe fn() => void', found 'extern "C" unsafe fn() => void'
+// Error: type mismatch: expected type 'extern "C" fn() => void', found 'fn() => void'
+// Error: type mismatch: expected type 'extern "C" fn() => void', found 'unsafe fn() => void'
+// Error: type mismatch: expected type 'extern "C" fn() => void', found 'extern "C" unsafe fn() => void'
+// Error: type mismatch: expected type 'extern "C" unsafe fn() => void', found 'fn() => void'
+// Error: type mismatch: expected type 'extern "C" unsafe fn() => void', found 'unsafe fn() => void'
 // Error: this operation is unsafe
 // Error: this operation is unsafe
 

@@ -323,7 +323,7 @@ repository:
       -
         comment: other keywords
         name: keyword.other.ctl
-        match: \b(as|async|dyn|move|null|impl|in|is|packed|pub|ref|sealed|typeof|union|unsafe|use|where)\b
+        match: \b(as|async|dyn|move|null|impl|in|is|packed|pub|ref|sealed|typeof|union|safe|unsafe|use|where)\b
       -
         comment: fn
         name: keyword.other.fn.ctl

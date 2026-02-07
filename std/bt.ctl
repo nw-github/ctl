@@ -101,7 +101,7 @@ pub struct MaybeMangledName {
                 let abi = name.advance()?;
                 match abi.to_ascii_upper() {
                     'A' => {},
-                    'C' => write(f, #"extern "c" "#),
+                    'C' => write(f, #"extern "C" "#),
                     'S' => write(f, #"extern "sys" "#),
                     'D' => write(f, #"extern "x86-stdcall" "#),
                     'F' => write(f, #"extern "x86-fastcall" "#),

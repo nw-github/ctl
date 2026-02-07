@@ -324,15 +324,21 @@ pub enum DefaultCapturePolicy {
     Auto,
 }
 
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::FromStr, EnumAsInner)]
-#[from_str(rename_all = "kebab-case")]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumAsInner)]
+#[display("extern \"{_variant}\"")]
 pub enum FnAbi {
     #[default]
+    #[display(rename_all = "kebab-case")]
     Ctl,
+    #[display(rename_all = "uppercase")]
     C,
+    #[display(rename_all = "kebab-case")]
     Sys,
+    #[display("x86-stdcall")]
     X86Stdcall,
+    #[display("x86-fastcall")]
     X86Fastcall,
+    #[display("x86-thiscall")]
     X86Thiscall,
 }
 
@@ -360,15 +366,18 @@ impl FnAbi {
     }
 }
 
-impl std::fmt::Display for FnAbi {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FnAbi::Ctl => write!(f, "extern \"ctl\""),
-            FnAbi::C => write!(f, "extern \"c\""),
-            FnAbi::Sys => write!(f, "extern \"sys\""),
-            FnAbi::X86Stdcall => write!(f, "extern \"x86-stdcall\""),
-            FnAbi::X86Fastcall => write!(f, "extern \"x86-fastcall\""),
-            FnAbi::X86Thiscall => write!(f, "extern \"x86-thiscall\""),
+impl std::str::FromStr for FnAbi {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "ctl" => Ok(Self::Ctl),
+            "C" => Ok(Self::C),
+            "sys" => Ok(Self::Sys),
+            "x86-stdcall" => Ok(Self::X86Stdcall),
+            "x86-fastcall" => Ok(Self::X86Fastcall),
+            "x86-thiscall" => Ok(Self::X86Thiscall),
+            _ => Err(()),
         }
     }
 }

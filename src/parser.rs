@@ -122,13 +122,8 @@ impl<'a> Parser<'a> {
             let mut stmts = vec![];
             let def_abi = abi.map(|abi| abi.data).unwrap_or(FnAbi::C);
             let span = self.next_until(Token::RCurly, begin, |this| {
-                // TODO: combine with block attrs
                 let mut fn_attrs = this.attributes();
-                if let Some(attr) =
-                    attrs.iter().find(|a| a.name.data.is_str_eq(Strings::ATTR_INTRINSIC))
-                {
-                    fn_attrs.push(attr.clone());
-                }
+                fn_attrs.extend(attrs.iter().cloned());
 
                 let tk_public = this.next_if(Token::Pub);
                 let tk_extern = this.next_if(Token::Extern);

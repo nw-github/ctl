@@ -30,7 +30,7 @@ extern "ctl" {
     pub safe fn current_frame_addr(): ?^mut void;
 }
 
-extern "c" {
+extern "C" {
     $[c_macro("CTL_MEMSET")]
     pub fn memset(dst: ^mut void, c: c_int, len: uint): ^mut void;
 
