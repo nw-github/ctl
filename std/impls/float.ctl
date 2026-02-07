@@ -38,12 +38,12 @@ extension f32 {
     pub fn to_bits(my this): u32 => unsafe std::mem::bit_cast(this);
     pub fn from_bits(v: u32): f32 => unsafe std::mem::bit_cast(v);
 
-    pub fn sqrt(my this): f32 => unsafe math::sqrtf(this);
-    pub fn sin(my this): f32 => unsafe math::sinf(this);
-    pub fn cos(my this): f32 => unsafe math::cosf(this);
-    pub fn tan(my this): f32 => unsafe math::tanf(this);
-    pub fn floor(my this): f32 => unsafe math::floorf(this);
-    pub fn ceil(my this): f32 => unsafe math::ceilf(this);
+    pub fn sqrt(my this): f32 => math::sqrtf(this);
+    pub fn sin(my this): f32 => math::sinf(this);
+    pub fn cos(my this): f32 => math::cosf(this);
+    pub fn tan(my this): f32 => math::tanf(this);
+    pub fn floor(my this): f32 => math::floorf(this);
+    pub fn ceil(my this): f32 => math::ceilf(this);
 
     // TODO: make these constants when that is supported
     pub fn pi(): f32 => 3.14159265358979323846;
@@ -154,12 +154,12 @@ extension f64 {
     pub fn to_bits(my this): u64 => unsafe std::mem::bit_cast(this);
     pub fn from_bits(v: u64): f64 => unsafe std::mem::bit_cast(v);
 
-    pub fn sqrt(my this): f64 => unsafe math::sqrt(this);
-    pub fn sin(my this): f64 => unsafe math::sin(this);
-    pub fn cos(my this): f64 => unsafe math::cos(this);
-    pub fn tan(my this): f64 => unsafe math::tan(this);
-    pub fn floor(my this): f64 => unsafe math::floor(this);
-    pub fn ceil(my this): f64 => unsafe math::ceil(this);
+    pub fn sqrt(my this): f64 => math::sqrt(this);
+    pub fn sin(my this): f64 => math::sin(this);
+    pub fn cos(my this): f64 => math::cos(this);
+    pub fn tan(my this): f64 => math::tan(this);
+    pub fn floor(my this): f64 => math::floor(this);
+    pub fn ceil(my this): f64 => math::ceil(this);
 
     pub fn pi(): f64 => 3.14159265358979323846;
     pub fn nan(): f64 => 0.0 / 0.0;

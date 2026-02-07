@@ -5,26 +5,28 @@ pub struct JmpBuf {
     pad: [u8; 0xc8],
 }
 
-pub extern fn abort(): never;
-pub extern fn exit(code: c_int): never;
-pub extern fn _exit(code: c_int): never;
-
-$[unsafe(malloc)]
-pub extern fn malloc(size: uint): ?^mut void;
-pub extern fn realloc(addr: ^mut void, size: uint): ?^mut void;
-pub extern fn free(addr: ?^mut void);
-
-// The C macro `setjmp` calls _setjmp, which does not save the signal mask
-pub extern fn _setjmp(env: *mut JmpBuf): c_int;
-pub extern fn longjmp(env: *mut JmpBuf, val: c_int): never;
-
 $[layout(C)]
 pub struct Timespec {
     pub tv_sec: c_long,
     pub tv_nsec: c_long,
 }
 
-pub extern fn memmem(kw haystack: ^void, kw hlen: uint, kw needle: ^void, kw nlen: uint): ?^void;
+extern "c" {
+    pub safe fn abort(): never;
+    pub safe fn exit(code: c_int): never;
+    pub safe fn _exit(code: c_int): never;
+
+    $[unsafe(malloc)]
+    pub fn malloc(size: uint): ?^mut void;
+    pub fn realloc(addr: ^mut void, size: uint): ?^mut void;
+    pub fn free(addr: ?^mut void);
+
+    // The C macro `setjmp` calls _setjmp, which does not save the signal mask
+    pub fn _setjmp(env: *mut JmpBuf): c_int;
+    pub fn longjmp(env: *mut JmpBuf, val: c_int): never;
+
+    pub fn memmem(kw haystack: ^void, kw hlen: uint, kw needle: ^void, kw nlen: uint): ?^void;
+}
 
 pub mod atomic {
     pub union MemoryOrder {
@@ -83,19 +85,21 @@ pub mod atomic {
 }
 
 pub mod math {
-    pub extern fn sqrt(n: f64): f64;
-    pub extern fn sin(n: f64): f64;
-    pub extern fn cos(n: f64): f64;
-    pub extern fn tan(n: f64): f64;
-    pub extern fn floor(n: f64): f64;
-    pub extern fn ceil(n: f64): f64;
+    extern {
+        pub safe fn sqrt(n: f64): f64;
+        pub safe fn sin(n: f64): f64;
+        pub safe fn cos(n: f64): f64;
+        pub safe fn tan(n: f64): f64;
+        pub safe fn floor(n: f64): f64;
+        pub safe fn ceil(n: f64): f64;
 
-    pub extern fn sqrtf(n: f32): f32;
-    pub extern fn sinf(n: f32): f32;
-    pub extern fn cosf(n: f32): f32;
-    pub extern fn tanf(n: f32): f32;
-    pub extern fn floorf(n: f32): f32;
-    pub extern fn ceilf(n: f32): f32;
+        pub safe fn sqrtf(n: f32): f32;
+        pub safe fn sinf(n: f32): f32;
+        pub safe fn cosf(n: f32): f32;
+        pub safe fn tanf(n: f32): f32;
+        pub safe fn floorf(n: f32): f32;
+        pub safe fn ceilf(n: f32): f32;
+    }
 }
 
 pub mod posix {
@@ -109,11 +113,6 @@ pub mod posix {
     pub type __SI_BAND_TYPE = c_long;
     pub type off_t = c_long;
 
-    pub extern fn write(fd: c_int, buf: ^void, count: uint): int;
-    pub extern fn clock_gettime(clockid: c_int, tp: *mut Timespec): c_int;
-    pub extern fn nanosleep(time: *Timespec, remaining: ?*mut Timespec): c_int;
-    pub extern fn getpid(): pid_t;
-
     $[layout(C)]
     pub struct sigset_t {
         pub __val: [c_ulong; 16], // 1024 / (8 * std::mem::size_of::<c_ulong>())
@@ -124,13 +123,13 @@ pub mod posix {
         pub __sigaction_handler: __sigaction_handler,
         pub sa_mask: sigset_t,
         pub sa_flags: c_int,
-        pub sa_restorer: ?extern unsafe fn(),
+        pub sa_restorer: ?extern fn(),
     }
 
     $[layout(C)]
     unsafe union __sigaction_handler {
-        sa_handler: ?extern unsafe fn(c_int),
-        sa_sigaction: ?extern unsafe fn(c_int, ?^mut siginfo_t, ?^mut void),
+        sa_handler: ?extern fn(c_int),
+        sa_sigaction: ?extern fn(c_int, ?^mut siginfo_t, ?^mut void),
     }
 
     $[layout(C)]
@@ -241,20 +240,27 @@ pub mod posix {
     pub const SIGFPE: c_int = 8;
     pub const SIGSEGV: c_int = 11;
 
-    pub extern fn sigemptyset(set: ^mut sigset_t): c_int;
-    /// ss and old_ss are restrict (may not overlap)
-    pub extern fn sigaltstack(ss: ?^stack_t, old_ss: ?^mut stack_t): c_int;
+    extern "c" {
+        pub fn write(fd: c_int, buf: ^void, count: uint): int;
+        pub safe fn clock_gettime(clockid: c_int, tp: *mut Timespec): c_int;
+        pub safe fn nanosleep(time: *Timespec, remaining: ?*mut Timespec): c_int;
+        pub safe fn getpid(): pid_t;
 
-    // XXX: Link name is set to avoid the conflict with our constructor for the sigaction type.
-    $[link_name("sigaction")]
-    /// set and old_act are restrict (may not overlap)
-    pub extern fn sigaction_(sig: c_int, set: ?^sigaction, old_act: ?^mut sigaction): c_int;
-    pub extern fn perror(msg: ^c_char);
+        pub fn sigemptyset(set: ^mut sigset_t): c_int;
+        /// ss and old_ss are restrict (may not overlap)
+        pub fn sigaltstack(ss: ?^stack_t, old_ss: ?^mut stack_t): c_int;
 
-    pub extern fn fork(): pid_t;
-    pub extern fn waitpid(pid: pid_t, wstatus: ?^mut c_int, options: c_int): pid_t;
+        // XXX: Link name is set to avoid the conflict with our constructor for the sigaction type.
+        $[link_name("sigaction")]
+        /// set and old_act are restrict (may not overlap)
+        pub fn sigaction_(sig: c_int, set: ?^sigaction, old_act: ?^mut sigaction): c_int;
+        pub fn perror(msg: ^c_char);
 
-    pub extern fn mmap(addr: ?^mut void, len: uint, prot: c_int, flags: c_int, fd: c_int, off: off_t): ?^mut void;
+        pub fn fork(): pid_t;
+        pub fn waitpid(pid: pid_t, wstatus: ?^mut c_int, options: c_int): pid_t;
+
+        pub fn mmap(addr: ?^mut void, len: uint, prot: c_int, flags: c_int, fd: c_int, off: off_t): ?^mut void;
+    }
 
     pub const MAP_PRIVATE: c_int = 0x2;
     pub const MAP_ANONYMOUS: c_int = 0x20;

@@ -52,7 +52,7 @@ pub struct Instant {
 
     pub fn now(): This {
         mut tp = libc::Timespec(tv_sec: 0, tv_nsec: 0);
-        unsafe clock_gettime(CLOCK_MONOTONIC, &mut tp);
+        clock_gettime(CLOCK_MONOTONIC, &mut tp);
         Instant(ns: tp.tv_nsec.cast() + tp.tv_sec.cast() * 1_000_000_000)
     }
 
@@ -82,6 +82,6 @@ pub struct Instant {
 
 pub fn sleep(dur: Duration) {
     mut spec = libc::Timespec(tv_sec: dur.secs.saturating_cast(), tv_nsec: dur.nanos.cast());
-    while unsafe nanosleep(&spec, &mut spec) != 0 {
+    while nanosleep(&spec, &mut spec) != 0 {
     }
 }
