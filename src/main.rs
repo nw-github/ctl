@@ -36,6 +36,10 @@ struct Arguments {
     #[clap(action, short = 'i', long, global = true)]
     no_bit_int: bool,
 
+    /// Minify the resulting C code
+    #[clap(action, short, long, global = true)]
+    minify: bool,
+
     /// Compile as a library
     #[clap(action, short, long, global = true)]
     shared: Option<bool>,
@@ -55,6 +59,14 @@ struct Arguments {
 
     #[clap(action, short, long, global = true)]
     no_default_features: bool,
+
+    /// Disable integer overflow checks when using the built-in operators
+    #[clap(action, long, global = true)]
+    wrap: bool,
+
+    /// For debugging only.
+    #[clap(action, short, long, global = true)]
+    lightweight: bool,
 }
 
 #[derive(Args)]
@@ -123,10 +135,6 @@ enum SubCommand {
         /// Print the code in test mode
         #[clap(action, short, long)]
         test: bool,
-
-        /// Minify the resulting C code
-        #[clap(action, short, long)]
-        minify: bool,
     },
     #[clap(alias = "b")]
     Build {
@@ -221,7 +229,7 @@ fn compile_results(
     };
 
     let output = output.join(conf.name);
-    let debug_flags = ["-fno-omit-frame-pointer", "-rdynamic", "-g"];
+    let debug_flags = ["-rdynamic", "-g"];
     let mut cc = Command::new(build.cc)
         .args(include_str!("../compile_flags.txt").split("\n").filter(|f| !f.is_empty()))
         .args(build.ccargs.unwrap_or_default().split(' ').filter(|f| !f.is_empty()))
@@ -391,7 +399,7 @@ fn execute_binary(path: &Path, args: Option<Vec<OsString>>, verbose: bool) -> Re
 }
 
 fn main() -> Result<()> {
-    let args = Arguments::parse();
+    let mut args = Arguments::parse();
     let path = match &args.command {
         SubCommand::Print { input, .. } => input,
         SubCommand::Dump { input, tokens, .. } => {
@@ -415,6 +423,13 @@ fn main() -> Result<()> {
         }
     };
 
+    if args.lightweight {
+        args.no_default_features = true;
+        args.no_gc = true;
+        args.wrap = true;
+        args.features = ["hosted".to_string(), "alloc".into(), "io".into()].into();
+    }
+
     let input = ctl::package::Input {
         features: args.features.into_iter().map(|s| s.trim().to_owned()).collect(),
         no_default_features: args.no_default_features,
@@ -423,7 +438,7 @@ fn main() -> Result<()> {
             no_std: args.no_std,
             no_gc: args.no_gc.into(),
             panic_mode: args.panic_mode.unwrap_or_default(),
-            no_overflow_checks: Default::default(),
+            no_overflow_checks: args.wrap.into(),
         },
     };
 
@@ -431,7 +446,7 @@ fn main() -> Result<()> {
     let compiler = Compiler::new().parse(path, input)?.modify_conf(|conf| {
         conf.is_library = args.shared.unwrap_or(conf.is_library);
         conf.build.no_bit_int = args.no_bit_int;
-        conf.build.minify = matches!(args.command, SubCommand::Print { minify: true, .. });
+        conf.build.minify = args.minify;
         if let SubCommand::Test { test, modules, .. } = &args.command {
             conf.test_args = Some(TestArgs {
                 test: test.clone(),
