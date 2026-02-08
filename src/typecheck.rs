@@ -2381,11 +2381,36 @@ impl TypeChecker<'_> {
             return self.error(Error::no_lang_item(LangTrait::OpFn, span));
         };
 
-        let closure_ut_scope =
-            self.enter_id(ScopeId::ROOT, |this| this.enter(ScopeKind::None, |this| this.current));
-
         let mut members = IndexMap::new();
         let mut instance = IndexMap::new();
+        let mut ty_args = TypeArgs::default();
+        let mut type_params = vec![];
+        let mut has_seen_fn = false;
+        for (_, scope) in self.proj.scopes.walk(self.current) {
+            if scope.kind.is_function() && std::mem::replace(&mut has_seen_fn, true) {
+                break;
+            }
+
+            for id in scope.tns.iter().filter_map(|v| v.1.into_type().ok()) {
+                if !self.proj.scopes.get(id).kind.is_template()
+                    || self.proj.scopes.get(id).name.data == Strings::EMPTY
+                {
+                    continue;
+                }
+
+                let ty = self
+                    .proj
+                    .types
+                    .insert(Type::User(GenericUserType::new(id, Default::default())));
+                type_params.push(id);
+                ty_args.insert(id, ty);
+            }
+
+            if scope.kind.is_user_type() {
+                break;
+            }
+        }
+
         for capture in captures {
             if let &Capture::New { mutable, ident: name, expr } = capture {
                 let expr = self.check_expr(expr, None);
@@ -2464,7 +2489,7 @@ impl TypeChecker<'_> {
         }
 
         let mut names = vec![];
-        let mut ty_args = vec![];
+        let mut tuple_ty_args = vec![];
         let mut checked_params = vec![];
         for (i, (patt, hint)) in params.iter().enumerate() {
             let ty = if let Some(hint) = hint {
@@ -2496,17 +2521,19 @@ impl TypeChecker<'_> {
             });
 
             names.push(name);
-            ty_args.push(ty);
+            tuple_ty_args.push(ty);
         }
+
+        let closure_ut_scope =
+            self.enter_id(ScopeId::ROOT, |this| this.enter(ScopeKind::None, |this| this.current));
 
         let span = body.span;
         let (_, body) =
             self.with_safety(Safety::Safe, |this| this.check_expr_no_never_propagation(body, ret));
         let ret = self.proj.scopes[self.current].kind.as_closure().unwrap().0.unwrap_or(body.ty);
         let body = self.type_check_checked(body, ret, span);
-        let args_tuple = self.proj.scopes.get_tuple(names, ty_args, &self.proj.types);
-
-        let (closure_id, closure_ty) = self.enter_id(closure_ut_scope, |this| {
+        let args_tuple = self.proj.scopes.get_tuple(names, tuple_ty_args, &self.proj.types);
+        self.enter_id(closure_ut_scope, |this| {
             let no_captures = members.is_empty();
             let impl_id = this.proj.impls.alloc(TraitImpl::None);
             let closure_id = this.insert::<UserTypeId>(
@@ -2517,7 +2544,7 @@ impl TypeChecker<'_> {
                     body_scope: this.current,
                     kind: UserTypeKind::Closure,
                     impls: vec![impl_id],
-                    type_params: vec![],
+                    type_params: type_params.clone(),
                     members,
                     members_resolved: true,
                     recursive: false,
@@ -2531,7 +2558,7 @@ impl TypeChecker<'_> {
             let closure_ty = this
                 .proj
                 .types
-                .insert(Type::User(GenericUserType::new(closure_id, TypeArgs::default())));
+                .insert(Type::User(GenericUserType::new(closure_id, ty_args.clone())));
             let this_ptr_mut_ty = this.proj.types.insert(Type::MutPtr(closure_ty));
             let do_invoke_id = {
                 if !no_captures {
@@ -2617,7 +2644,7 @@ impl TypeChecker<'_> {
                     let body = CExpr::call(
                         ret,
                         &this.proj.types,
-                        GenericFn::new(do_invoke_id, TypeArgs::default()),
+                        GenericFn::new(do_invoke_id, ty_args),
                         call_args,
                         this.current,
                         Span::nowhere(),
@@ -2646,7 +2673,7 @@ impl TypeChecker<'_> {
 
                 let func = Function {
                     public: true,
-                    name: Located::nowhere(this.proj.strings.get_or_intern("invoke")),
+                    name: Located::nowhere(this.proj.strings.get_or_intern_static("invoke")),
                     has_body: true,
                     params,
                     ret,
@@ -2660,7 +2687,7 @@ impl TypeChecker<'_> {
                 *this.proj.impls.get_mut(impl_id) = TraitImpl::Checked(CheckedImpl {
                     scope: Some(this.current),
                     assoc_types: Default::default(),
-                    type_params: Default::default(),
+                    type_params,
                     tr: GenericTrait::from_type_args(&this.proj.scopes, fn_tr, [args_tuple, ret]),
                     ty: closure_ty,
                     span: Span::nowhere(),
@@ -2669,11 +2696,9 @@ impl TypeChecker<'_> {
                 this.proj.scopes.get_mut(fn_tr).implementors.push(impl_id);
             });
 
-            (closure_id, closure_ty)
-        });
-
-        self.proj.scopes[closure_ut_scope].kind = ScopeKind::UserType(closure_id);
-        self.arena.typed(closure_ty, CExprData::Instance(instance))
+            this.proj.scopes[this.current].kind = ScopeKind::UserType(closure_id);
+            this.arena.typed(closure_ty, CExprData::Instance(instance))
+        })
     }
 
     /// Do not call this function directly

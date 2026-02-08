@@ -104,7 +104,7 @@ impl std::fmt::Display for FmtUt<'_, '_> {
                     .iter_impls(p, false)
                     .find(|imp| p.scopes.get(imp.tr.id).attrs.lang == Some(LangTrait::OpFn))
                     .unwrap();
-                write!(f, "{{closure {}}}", p.fmt_tr(&imp.tr))
+                write!(f, "{{closure {}}}", p.fmt_tr(&imp.tr.with_templates(&p.types, &ut.ty_args)))
             }
             _ => {
                 let args = &ut.ty_args;

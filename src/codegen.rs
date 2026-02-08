@@ -1920,15 +1920,14 @@ impl<'a> Codegen<'a> {
                     .unwrap()
                     .with_templates(&self.proj.types, &state.func.ty_args);
                 // TODO: if the function pointer is extern, use/generate a wrapper
-                let fid = self
+                let id = self
                     .proj
                     .scopes
                     .get(closure.id)
                     .find_associated_fn(&self.proj.scopes, Strings::FN_CLOSURE_DO_INVOKE)
                     .unwrap();
 
-                let mut func = GenericFn::new(fid, TypeArgs::default());
-                func.fill_templates(&self.proj.types, &closure.ty_args);
+                let func = GenericFn::new(id, closure.ty_args.clone());
                 self.buffer.emit_fn_name(&func);
                 self.funcs.insert(State::new(func));
             }
