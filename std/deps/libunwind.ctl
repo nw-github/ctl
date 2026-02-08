@@ -46,7 +46,7 @@ pub extern fn _Unwind_GetIP(ctx: ^mut _Unwind_Context): _Unwind_Word;
 pub extern fn _Unwind_SetIP(ctx: ^mut _Unwind_Context, ip: _Unwind_Word);
 pub extern fn _Unwind_GetGR(ctx: ^mut _Unwind_Context, gr: c_int): _Unwind_Word;
 pub extern fn _Unwind_SetGR(ctx: ^mut _Unwind_Context, gr: c_int, ip: _Unwind_Word);
-pub extern fn _Unwind_Backtrace(trace: _Unwind_Trace_Fn, ctx: ?^mut void): _Unwind_Reason_Code;
+pub extern fn _Unwind_Backtrace(trace: _Unwind_Trace_Fn, user: ?^mut void): _Unwind_Reason_Code;
 pub extern fn _Unwind_ForcedUnwind(ex: ^mut _Unwind_Exception, f: _Unwind_Stop_Fn, user: ?^mut void): _Unwind_Reason_Code;
 
 // x86-64 only

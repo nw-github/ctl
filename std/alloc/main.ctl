@@ -1,4 +1,4 @@
-use std::mem::*;
+use std::mem::Layout;
 use std::deps::{libgc, libc};
 
 fn ptr_cast<T, U>(ptr: ?^mut T): ?^mut U => unsafe std::mem::bit_cast(ptr);
@@ -45,6 +45,10 @@ pub struct DefaultAllocator {
 
 pub fn new<T>(val: T): *mut T {
     let layout = Layout::of_val(&val);
+    if layout.size() == 0 {
+        return unsafe std::ptr::raw_dangling() as *mut T;
+    }
+
     guard DefaultAllocator().alloc(layout) is ?ptr else {
         panic("out of memory attempting to allocate object of type {
             std::reflect::type_name_of_val(&val)} with layout {layout:?}");

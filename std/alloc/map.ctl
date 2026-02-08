@@ -244,8 +244,8 @@ pub struct ValuesMut<K, V> {
     }
 }
 
-const FNV1A_BASIS: u64 = 0xcbf29ce484222325;
-const FNV1A_PRIME: u64 = 0x00000100000001b3;
+const FNV1A_BASIS: u64 = 0xcbf29ce4_84222325;
+const FNV1A_PRIME: u64 = 0x00000100_000001b3;
 
 struct Fnv1a {
     val: u64 = FNV1A_BASIS,

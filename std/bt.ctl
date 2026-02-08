@@ -309,17 +309,9 @@ pub unsafe fn backtrace<F: Fn(uint) => bool>(f: F, kw start_pc: ?uint = null) {
     unsafe {
         use std::deps::libunwind::*;
 
-        struct State<F> {
-            ignore_until: ?uint,
-            callback: F,
-        }
-
-        extern fn callback<F: Fn(uint) => bool>(
-            ctx: ^mut _Unwind_Context,
-            user: ?^mut void,
-        ): _Unwind_Reason_Code
-        {
-            let state: ^mut State<F> = unsafe std::mem::bit_cast(user);
+        mut state = (ignore_until: start_pc, callback: f);
+        _Unwind_Backtrace(user: ?(&raw mut state).cast(), |ctx, user| {
+            let state: ^mut (ignore_until: ?uint, callback: F) = unsafe std::mem::bit_cast(user);
             let pc = unsafe _Unwind_GetIP(ctx);
             if pc == 0 {
                 return _URC_NO_REASON;
@@ -339,10 +331,7 @@ pub unsafe fn backtrace<F: Fn(uint) => bool>(f: F, kw start_pc: ?uint = null) {
             }
 
             _URC_NO_REASON
-        }
-
-        mut state = State(ignore_until: start_pc, callback: f);
-        _Unwind_Backtrace(callback::<F>, ?(&raw mut state).cast());
+        });
     }
 }
 

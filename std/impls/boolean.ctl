@@ -4,7 +4,7 @@ use std::fmt::*;
 
 extension bool {
     impl Hash {
-        fn hash<H: Hasher>(this, h: *mut H) => h.hash(this.as_byte_span());
+        fn hash<H: Hasher>(this, h: *mut H) => (*this as u8).hash(h);
     }
 
     impl Eq<This> {
