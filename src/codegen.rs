@@ -228,7 +228,12 @@ impl TypeGen {
                     Self::gen_vtable_info(&mut defs, tr.id);
                 }
             }
-            &Type::Int(bits) if bits != 0 => {
+            &Type::Int(bits) if bits != 0 => 'out: {
+                if bits == 8 {
+                    writeln_de!(decls, "typedef char s{bits};");
+                    break 'out;
+                }
+
                 let nearest = nearest_pow_of_two(bits);
                 if decls.1.conf.build.no_bit_int || nearest == bits as usize {
                     writeln_de!(decls, "typedef int{nearest}_t s{bits};");
