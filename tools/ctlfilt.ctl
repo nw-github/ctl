@@ -1,8 +1,12 @@
+extern {
+    fn read(fd: c_int, buf: ^mut void, count: uint): int;
+    safe fn isatty(fd: c_int): c_int;
+}
+
+const STDIN: c_int = 0;
+static DEMANGLE_TYPES: bool = isatty(STDIN) == 1;
+
 fn read_stdin(buffer: [mut u8..]): ?[u8..] {
-    extern fn read(fd: c_int, buf: ^mut void, count: uint): int;
-
-    const STDIN: c_int = 0;
-
     let len = unsafe read(STDIN, buffer.as_raw_mut().cast(), buffer.len());
     if len > 0 {
         buffer[..uint::from(len)]
@@ -17,7 +21,9 @@ fn write_stdout(buffer: [u8..]) {
 
 fn demangle(data: [u8..]) {
     if std::bt::demangle_name(data) is ?demangled {
-        std::io::Stdout().write_str(demangled);
+        print(demangled);
+    } else if DEMANGLE_TYPES and std::bt::demangle_type_name(data) is ?demangled {
+        print(demangled);
     } else {
         write_stdout(data);
     }
@@ -30,12 +36,19 @@ fn main() {
     defer demangle(word[..]);
     while read_stdin(buffer[..]) is ?mut data_to_scan {
         @find_next: loop {
-            if word.is_empty() and data_to_scan.find(b"C"[..]) is ?begin {
-                write_stdout(data_to_scan[..begin]);
-                data_to_scan = data_to_scan[begin..];
-            } else if word.is_empty() {
-                write_stdout(data_to_scan);
-                break;
+            if word.is_empty() {
+                let begin = if DEMANGLE_TYPES {
+                    data_to_scan.iter().position(|b| b.is_ascii_alphabetic())
+                } else {
+                    data_to_scan.find(b"C"[..])
+                };
+                if begin is ?begin {
+                    write_stdout(data_to_scan[..begin]);
+                    data_to_scan = data_to_scan[begin..];
+                } else {
+                    write_stdout(data_to_scan);
+                    break;
+                }
             }
 
             for (i, byte) in data_to_scan.iter().enumerate() {

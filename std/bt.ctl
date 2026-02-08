@@ -308,16 +308,16 @@ pub unsafe fn backtrace<F: Fn(uint) => bool>(f: F, kw start_pc: ?uint = null) {
     $[feature(backtrace)]
     unsafe {
         use std::deps::libunwind::*;
+        type State = (ignore_until: ?uint, callback: F);
 
-        mut state = (ignore_until: start_pc, callback: f);
+        mut state: State = (ignore_until: start_pc, callback: f);
         _Unwind_Backtrace(user: ?(&raw mut state).cast(), |ctx, user| {
-            let state: ^mut (ignore_until: ?uint, callback: F) = unsafe std::mem::bit_cast(user);
+            let state: *mut State = unsafe std::mem::bit_cast(user);
             let pc = unsafe _Unwind_GetIP(ctx);
             if pc == 0 {
                 return _URC_NO_REASON;
             }
 
-            let state = unsafe &mut *state;
             if state.ignore_until is ?start_pc {
                 if start_pc != pc {
                     return _URC_NO_REASON;
@@ -340,5 +340,13 @@ pub fn demangle_name(name: [u8..]): ?str {
     mut name = str::from_utf8(name)?.strip_prefix("CTL$")?;
     mut builder = std::fmt::StringBuilder::new();
     MaybeMangledName::demangle_name(&mut name, &mut std::fmt::Formatter::new(&mut builder))?;
+    builder.into_str()
+}
+
+$[feature(alloc)]
+pub fn demangle_type_name(name: [u8..]): ?str {
+    mut name = str::from_utf8(name)?;
+    mut builder = std::fmt::StringBuilder::new();
+    MaybeMangledName::demangle_type_name(&mut name, &mut std::fmt::Formatter::new(&mut builder))?;
     builder.into_str()
 }
