@@ -381,7 +381,7 @@ impl State {
     }
 
     pub fn tmpvar(&mut self) -> String {
-        let v = format!("${}", self.tmpvar);
+        let v = format!("_{}", self.tmpvar);
         self.tmpvar += 1;
         v
     }
