@@ -134,6 +134,35 @@ pub struct SpanMut<T> {
         }
     }
 
+    pub fn sort_by<F: Fn(*T, *T) => Ordering>(my this, f: F) {
+        fn do_sort_by<T, F: Fn(*T, *T) => Ordering>(self: [mut T..], f: *F) {
+            guard !self.is_empty() else {
+                return;
+            }
+
+            let end = self.len() - 1;
+            let pivot = unsafe self.get_unchecked(end);
+            mut part_idx = 0u;
+            for i in 0u..end {
+                if f(unsafe self.get_unchecked(i), pivot) is :Less | :Equal {
+                    self.swap(part_idx++, i);
+                }
+            }
+
+            self.swap(part_idx, end);
+            unsafe {
+                do_sort_by(self.subspan_mut_unchecked(0u..part_idx), f);
+                do_sort_by(self.subspan_mut_unchecked(part_idx + 1..), f);
+            }
+        }
+
+        do_sort_by(this, &f)
+    }
+
+    pub fn sort_by_key<K: Cmp<K>, F: Fn(*T) => K>(my this, f: F) {
+        this.sort_by(|=f, a, b| f(a).cmp(&f(b)))
+    }
+
     $[inline]
     pub fn []<I: Integral>(my this, idx: I): *mut T {
         unsafe &mut *raw_subscript_checked(this.ptr, this.len, idx)
@@ -259,6 +288,9 @@ pub trait AsSpanMut<T>: AsSpan<T> {
 
     unsafe fn get_mut_unchecked(mut this, idx: uint): ?*mut T => unsafe this.as_span_mut().get_mut_unchecked(idx);
     unsafe fn subspan_mut_unchecked<R: RangeBounds<uint>>(mut this, r: R): [mut T..] => unsafe this.as_span_mut().subspan_mut_unchecked(r);
+
+    fn sort_by<F: Fn(*T, *T) => Ordering>(mut this, f: F) => this.as_span_mut().sort_by(f);
+    fn sort_by_key<K: Cmp<K>, F: Fn(*T) => K>(mut this, f: F) => this.as_span_mut().sort_by_key(f);
 }
 
 extension<S: AsSpan<T>, T> *S {
@@ -305,6 +337,8 @@ extension<S: AsSpanMut<T>, T> *mut S {
         fn swap(mut this, a: uint, b: uint) => (*this).swap(a, b);
         unsafe fn get_mut_unchecked(mut this, idx: uint): ?*mut T => unsafe (*this).get_mut_unchecked(idx);
         unsafe fn subspan_mut_unchecked<R: RangeBounds<uint>>(mut this, r: R): [mut T..] => unsafe (*this).subspan_mut_unchecked(r);
+        fn sort_by<F: Fn(*T, *T) => Ordering>(mut this, f: F) => (*this).sort_by(f);
+        fn sort_by_key<K: Cmp<K>, F: Fn(*T) => K>(mut this, f: F) => (*this).sort_by_key(f);
     }
 }
 
@@ -368,25 +402,11 @@ extension<T: Cmp<T>> [mut T..] {
     pub fn <=>(this, rhs: *[T..]): Ordering => this.as_span() <=> rhs;
     pub fn <=>(this, rhs: *[mut T..]): Ordering => this.as_span() <=> rhs.as_span();
 
-    pub fn sort(this) {
-        guard !this.is_empty() else {
-            return;
-        }
+    pub fn sort(my this) => this.sort_by(T::cmp);
+}
 
-        let end      = this.len() - 1;
-        let pivot    = &this[end];
-        mut part_idx = 0u;
-        for j in 0u..end {
-            if this[j] <= pivot {
-                this.swap(part_idx, j);
-                part_idx++;
-            }
-        }
-
-        this.swap(part_idx, end);
-        this[0u..part_idx].sort();
-        this[part_idx + 1..].sort();
-    }
+extension<T: Cmp<T>, S: AsSpanMut<T>> S {
+    pub fn sort(mut this) => this.as_span_mut().sort_by(T::cmp);
 }
 
 unittest "slice with ranges" {
