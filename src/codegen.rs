@@ -920,7 +920,9 @@ impl<'a> Codegen<'a> {
             funcs: proj
                 .scopes
                 .functions()
-                .filter(|(_, f)| f.attrs.export && f.type_params.is_empty())
+                .filter(|(_, f)| {
+                    f.attrs.used.is_some() || (f.attrs.export && f.type_params.is_empty())
+                })
                 .map(|(id, _)| State::from_non_generic(id, &proj.scopes))
                 .collect(),
             statics: proj
@@ -3240,7 +3242,12 @@ impl<'a> Codegen<'a> {
         if is_import {
             write_de!(self.buffer, "extern ");
         } else {
-            write_if!(!f.attrs.export, self.buffer, "static ");
+            if !f.attrs.export {
+                write_de!(self.buffer, "static ");
+            } else {
+                write_de!(self.buffer, "CTL_EXPORT ");
+            }
+            write_if!(f.attrs.used.is_some_and(|v| v == Used::All), self.buffer, "CTL_USED ");
 
             // TODO: inline manually
             match f.attrs.inline {
@@ -3524,7 +3531,11 @@ impl<'a> Codegen<'a> {
             if !init {
                 write_de!(this.buffer, "{tmp}.{ARRAY_DATA_NAME}[{word}]&=");
                 this.emit_cast(*word_ty);
-                writeln_de!(this.buffer, "{:#x};", !(mask << word_offset) & bit_mask(word_size_bits));
+                writeln_de!(
+                    this.buffer,
+                    "{:#x};",
+                    !(mask << word_offset) & bit_mask(word_size_bits)
+                );
             }
 
             // negative signed bitints contain 1s in the inaccessible bits (ie -1i2 == 0b1111_1111,

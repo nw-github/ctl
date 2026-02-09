@@ -3,8 +3,8 @@ use std::deps::{libgc, libc};
 pub static mut CTL_ARGV: ?^mut ^mut c_char = null;
 pub static mut CTL_ARGC: c_int = 0;
 
-$[export, link_name("$ctl_stdlib_init"), feature(hosted)]
-extern fn init(argc: c_int, argv: ?^mut ^mut c_char) {
+$[used(ctl), link_name("$ctl_stdlib_init"), feature(hosted)]
+extern "C" fn init(argc: c_int, argv: ?^mut ^mut c_char) {
     unsafe {
         $[cfg("!ctl:no-gc")]
         libgc::GC_init();
@@ -17,8 +17,8 @@ extern fn init(argc: c_int, argv: ?^mut ^mut c_char) {
     }
 }
 
-$[export, link_name("$ctl_stdlib_deinit"), feature(hosted)]
-extern fn deinit() {
+$[used(ctl), link_name("$ctl_stdlib_deinit"), feature(hosted)]
+extern "C" fn deinit() {
     $[cfg("!ctl:no-gc")]
     unsafe libgc::GC_deinit();
 }

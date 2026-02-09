@@ -98,12 +98,19 @@ pub enum FunctionInline {
     Encouraged,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Used {
+    Ctl,
+    All,
+}
+
 #[derive(Default)]
 pub struct FunctionAttrs {
     pub panic_handler: bool,
     pub test_runner: bool,
     pub no_mangle: bool,
     pub cold: bool,
+    pub used: Option<Used>,
     pub export: bool,
     pub link_name: Option<StrId>,
     pub test_skip: Option<Option<StrId>>,
@@ -139,6 +146,19 @@ impl FunctionAttrs {
                     }
                 }
                 Strings::ATTR_COLD => this.cold = true,
+                Strings::ATTR_USED => {
+                    if let Some(arg) = opt_str_arg(attr, id, proj) {
+                        this.used = Some(match proj.strings.resolve(&arg.data) {
+                            "ctl" => Used::Ctl,
+                            _ => {
+                                proj.diag.report(Error::new("expected 'ctl'", arg.span));
+                                Used::All
+                            }
+                        });
+                    } else {
+                        this.used = Some(Used::All);
+                    }
+                }
                 Strings::ATTR_LINK_NAME => this.link_name = one_str_arg(attr, id, proj),
                 Strings::ATTR_LINK_PREFIX => {
                     let before = this.link_name.unwrap_or(fn_name);
@@ -157,7 +177,24 @@ impl FunctionAttrs {
                 Strings::ATTR_SKIP => {
                     this.test_skip = Some(opt_str_arg(attr, id, proj).map(|s| s.data))
                 }
-                Strings::ATTR_EXPORT => this.export = true,
+                Strings::ATTR_EXPORT => {
+                    if !is_unsafe {
+                        proj.diag.report(Error::is_unsafe(attr.name.span));
+                    }
+                    if let Some(arg) = opt_str_arg(attr, id, proj) {
+                        this.no_mangle = match proj.strings.resolve(&arg.data) {
+                            "mangled" => true,
+                            _ => {
+                                proj.diag.report(Error::new("expected 'mangled'", arg.span));
+                                false
+                            }
+                        };
+                    } else {
+                        this.no_mangle = true;
+                    }
+
+                    this.export = true;
+                }
                 Strings::ATTR_INLINE => {
                     if let Some(arg) = opt_str_arg(attr, id, proj) {
                         this.inline = Some(match proj.strings.resolve(&arg.data) {

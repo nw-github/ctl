@@ -446,6 +446,8 @@ impl<'a> TypeChecker<'a> {
             if !var.unused
                 || matches!(var.name.data, Strings::THIS_PARAM | Strings::EMPTY)
                 || data.starts_with('_')
+                || var.kind.is_static()
+                || var.kind.is_const()
             {
                 continue;
             }

@@ -57,12 +57,14 @@
 #  define CTL_NEVERINLINE  __declspec(noinline)
 #  define CTL_COLD
 #  define CTL_MALLOC
+#  define CTL_USED
 #  define CTL_NOTHROW        __declspec(nothrow)
 #  define CTL_ABI_MS         __stdcall
 #  define CTL_ABI_STDCALL    __stdcall
 #  define CTL_ABI_FASTCALL   __fastcall
 #  define CTL_ABI_THISCALL   __thiscall
 #  define CTL_ABI_CDECL      __cdecl
+#  define CTL_EXPORT         __declspec(dllexport)
 #  define CTL_INLINE         inline
 #  define CTL_MEMCPY         memcpy
 #  define CTL_MEMSET         memset
@@ -106,6 +108,8 @@
 #  define CTL_ABI_FASTCALL   __attribute__((fastcall))
 #  define CTL_ABI_THISCALL   __attribute__((thiscall))
 #  define CTL_ABI_CDECL      __attribute__((cdecl))
+#  define CTL_EXPORT         __attribute__((visibility("default")))
+#  define CTL_USED           __attribute__((used))
 #  define CTL_INLINE         inline
 #  define CTL_MEMCPY         __builtin_memcpy
 #  define CTL_MEMSET         __builtin_memset

@@ -9,3 +9,4 @@
 -Wno-unused-value
 -Wno-null-dereference
 -fsigned-char
+-fvisibility=hidden
