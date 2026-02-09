@@ -306,6 +306,7 @@ pub struct UncheckedImpl {
     /// The scope of the impl block
     pub scope: ScopeId,
     pub is_type_param: Option<TypeParamId>,
+    pub is_unsafe: bool,
 }
 
 impl UncheckedImpl {
@@ -322,6 +323,7 @@ impl UncheckedImpl {
             span,
             scope,
             is_type_param: Some(id),
+            is_unsafe: false,
         }
     }
 }

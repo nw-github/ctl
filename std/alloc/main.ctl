@@ -11,7 +11,7 @@ pub unsafe trait Allocator {
 
 $[cfg("!ctl:no-gc")]
 pub struct DefaultAllocator {
-    impl Allocator {
+    unsafe impl Allocator {
         fn alloc(this, layout: Layout): ?^mut u8 {
             // TODO: alignment
             ptr_cast(unsafe libgc::GC_malloc(layout.size()))
@@ -27,7 +27,7 @@ pub struct DefaultAllocator {
 
 $[feature(hosted), cfg("ctl:no-gc")]
 pub struct DefaultAllocator {
-    impl Allocator {
+    unsafe impl Allocator {
         fn alloc(this, layout: Layout): ?^mut u8 {
             // TODO: alignment
             ptr_cast(unsafe libc::malloc(layout.size()))

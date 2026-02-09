@@ -1893,23 +1893,18 @@ impl<'a> Parser<'a> {
                 lead_span: tk_public.or(tk_unsafe),
                 ..Default::default()
             };
-            if config.is_unsafe {
-                match this.expect_fn(config, attrs) {
-                    Some(Left(func)) => functions.push(func),
-                    Some(Right(func)) => operators.push(func),
-                    _ => {}
-                }
-            } else if let Some(impl_span) = this.next_if(Token::Impl) {
+            if let Some(impl_span) = this.next_if(Token::Impl) {
                 this.invalid_here(tk_public);
-                impls.push(this.impl_block(attrs, impl_span));
+                impls.push(this.impl_block(attrs, impl_span, tk_unsafe.is_some()));
             } else if let Some(func) = this.try_function(config, attrs) {
-                // TODO: apply the attributes to the impl block or next member
                 match func {
                     Left(func) => functions.push(func),
                     Right(func) => operators.push(func),
                 }
             } else {
+                // TODO: apply the attributes to the next member
                 this.invalid_here(tk_public.filter(|_| union));
+                this.invalid_here(tk_unsafe);
 
                 let name = this.expect_ident("expected name");
                 this.expect(Token::Colon);
@@ -1948,21 +1943,19 @@ impl<'a> Parser<'a> {
                 lead_span: tk_public.or(tk_unsafe),
                 ..Default::default()
             };
-            if tk_public.is_some() || config.is_unsafe {
-                match this.expect_fn(config, attrs) {
-                    Some(Left(func)) => functions.push(func),
-                    Some(Right(func)) => operators.push(func),
-                    _ => {}
-                }
-            } else if let Some(impl_span) = this.next_if(Token::Impl) {
-                impls.push(this.impl_block(attrs, impl_span));
+            if let Some(impl_span) = this.next_if(Token::Impl) {
+                this.invalid_here(tk_public);
+                impls.push(this.impl_block(attrs, impl_span, tk_unsafe.is_some()));
             } else if let Some(func) = this.try_function(config, attrs) {
-                // TODO: apply the attributes to the impl block or next member
+                // TODO: apply the attributes to the next member
                 match func {
                     Left(func) => functions.push(func),
                     Right(func) => operators.push(func),
                 }
             } else if this.next_if(Token::Shared).is_some() {
+                this.invalid_here(tk_public);
+                this.invalid_here(tk_unsafe);
+
                 let name = this.expect_ident("expected name");
                 this.expect(Token::Colon);
                 let ty = this.type_hint();
@@ -1971,6 +1964,9 @@ impl<'a> Parser<'a> {
 
                 members.push(Member { vis: Visibility::Public, name, ty, default: value });
             } else {
+                this.invalid_here(tk_public);
+                this.invalid_here(tk_unsafe);
+
                 let name = this.expect_ident("expected variant name");
                 let data = if let Some(start) = this.next_if(Token::LParen) {
                     let mut hint_data = vec![];
@@ -2075,11 +2071,12 @@ impl<'a> Parser<'a> {
         let mut impls = Vec::new();
         let total_span = self.next_until(Token::RCurly, earliest, |this| {
             let attrs = this.attributes();
+            let (tk_public, vis) = this.visiblity();
+            let tk_unsafe = this.next_if(Token::Unsafe);
             if let Some(token) = this.next_if(Token::Impl) {
-                impls.push(this.impl_block(attrs, token));
+                this.invalid_here(tk_public);
+                impls.push(this.impl_block(attrs, token, tk_unsafe.is_some()));
             } else {
-                let (tk_public, vis) = this.visiblity();
-                let tk_unsafe = this.next_if(Token::Unsafe);
                 let config = FnConfig {
                     body: Body::Required,
                     vis,
@@ -2101,7 +2098,7 @@ impl<'a> Parser<'a> {
         )
     }
 
-    fn impl_block(&mut self, attrs: Attributes, span: Span) -> Located<ImplBlock> {
+    fn impl_block(&mut self, attrs: Attributes, span: Span, is_unsafe: bool) -> Located<ImplBlock> {
         let type_params = self.type_params();
         let path = self.type_or_trait_path(true);
         self.expect(Token::LCurly);
@@ -2127,6 +2124,7 @@ impl<'a> Parser<'a> {
                 vis: Visibility::Public,
                 is_unsafe: tk_unsafe.is_some(),
                 body: Body::Required,
+                lead_span: tk_unsafe,
                 ..Default::default()
             };
             match this.expect_fn(config, attrs) {
@@ -2141,7 +2139,10 @@ impl<'a> Parser<'a> {
             }
         });
 
-        Located::new(span, ImplBlock { attrs, type_params, path, functions, assoc_types })
+        Located::new(
+            span,
+            ImplBlock { attrs, type_params, path, functions, assoc_types, is_unsafe },
+        )
     }
 
     fn try_function(

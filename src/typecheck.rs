@@ -1442,7 +1442,8 @@ impl<'a> TypeChecker<'a> {
     ) -> Vec<(ImplId, UncheckedImpl)> {
         let mut impls = Vec::new();
         for block in blocks {
-            let ImplBlock { path, functions, type_params, attrs, assoc_types } = &block.data;
+            let ImplBlock { path, functions, type_params, attrs, assoc_types, is_unsafe } =
+                &block.data;
             if self.check_disabled(attrs, block.span, true) {
                 continue;
             }
@@ -1468,6 +1469,7 @@ impl<'a> TypeChecker<'a> {
                     span: path.span(),
                     scope: this.current,
                     is_type_param: None,
+                    is_unsafe: *is_unsafe,
                 };
 
                 fns.extend(this.declare_fns(functions));
@@ -1499,6 +1501,7 @@ impl<'a> TypeChecker<'a> {
                     span: f.name.span,
                     scope: this.current,
                     is_type_param: None,
+                    is_unsafe: false,
                 };
 
                 fns.push(this.declare_fn(Located::new(full_span, &f)));
@@ -5252,7 +5255,15 @@ impl TypeChecker<'_> {
             this: &mut TypeChecker,
             id: ImplId,
             mut ty: TypeId,
-            UncheckedImpl { tr, type_params, assoc_types, span, scope, is_type_param: is_template }: UncheckedImpl,
+            UncheckedImpl {
+                tr,
+                type_params,
+                assoc_types,
+                span,
+                scope,
+                is_type_param,
+                is_unsafe,
+            }: UncheckedImpl,
         ) -> Option<TraitImpl> {
             let tr = this.enter_id_and_resolve(scope, |this| {
                 resolve_type!(this, ty);
@@ -5271,7 +5282,7 @@ impl TypeChecker<'_> {
                     UncheckedImplTrait::Known(tr) => Some(tr),
                 }
             })?;
-            let scope = if let Some(id) = is_template {
+            let scope = if let Some(id) = is_type_param {
                 this.resolve_super_traits(tr.id);
                 for sup in this.proj.scopes.walk_super_traits(&this.proj.types, tr.clone()) {
                     if tr.id == sup.id {
@@ -5293,6 +5304,18 @@ impl TypeChecker<'_> {
                 }
                 None
             } else {
+                let tr_data = this.proj.scopes.get(tr.id);
+                if tr_data.is_unsafe != is_unsafe {
+                    this.proj.diag.report(Error::new(
+                        format!(
+                            "trait '{}' requires {}safe implementation",
+                            strdata!(this, tr_data.name.data),
+                            if tr_data.is_unsafe { "un" } else { "" },
+                        ),
+                        span,
+                    ));
+                }
+
                 Some(scope)
             };
 

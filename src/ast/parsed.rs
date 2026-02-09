@@ -537,6 +537,7 @@ pub struct ImplBlock {
     pub path: Path,
     pub assoc_types: Vec<(Located<StrId>, TypeHint)>,
     pub functions: Vec<Located<Fn>>,
+    pub is_unsafe: bool,
 }
 
 #[derive(Clone, Copy)]
