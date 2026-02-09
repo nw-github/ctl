@@ -8,7 +8,7 @@ use crate::{
     nearest_pow_of_two,
     project::Project,
     sym::*,
-    typecheck::{MemberFn, SharedStuff},
+    typecheck::{LookupTraitFn, MemberFn},
     typeid::{
         BitSizeResult, FnPtr, GenericFn, GenericTrait, GenericUserType, Integer, LayoutItemKind,
         Type, TypeArgs, TypeId, Types,
@@ -133,7 +133,7 @@ impl TypeGen {
         writeln_de!(buf, "{VTABLE_TRAIT_LEN}={offset}}};");
     }
 
-    fn gen_usertype(decls: &mut Buffer, defs: &mut Buffer, ut: &GenericUserType) {
+    fn gen_usertype(decls: &mut Buffer, defs: &mut Buffer, sa: &mut Buffer, ut: &GenericUserType) {
         let emit_member = |name: StrId, ty: TypeId, size: usize, buffer: &mut Buffer| {
             if size == 0 {
                 write_de!(buffer, "CTL_ZST ");
@@ -209,20 +209,20 @@ impl TypeGen {
 
         let name = defs.1.fmt_ut(ut).to_string().replace("\"", "\\\"");
         writeln_de!(
-            defs,
+            sa,
             "CTL_STATIC_ASSERT(sizeof(struct {type_name}) == {} && _Alignof(struct {type_name}) == {}, \"Disagreement between C compiler and CTL about alignment of type {name}\");",
             layout.size,
             layout.align,
         );
     }
 
-    fn emit(&self, decls: &mut Buffer) {
+    fn emit(&self, decls: &mut Buffer, sa: &mut Buffer) {
         let mut traits = HashSet::new();
         let mut defs = Buffer::new(decls.1);
         self.types.visit_all(|&id| match &decls.1.types[id] {
             Type::Fn(f) => Self::gen_fn(&mut defs, f),
             Type::FnPtr(f) => Self::gen_fnptr(&mut defs, f),
-            Type::User(ut) => Self::gen_usertype(decls, &mut defs, ut),
+            Type::User(ut) => Self::gen_usertype(decls, &mut defs, sa, ut),
             Type::DynPtr(tr) | Type::DynMutPtr(tr) => {
                 if traits.insert(tr.id) {
                     Self::gen_vtable_info(&mut defs, tr.id);
@@ -560,8 +560,15 @@ impl<'a> Buffer<'a> {
     }
 
     fn emit_trait_name(&mut self, tr: &GenericTrait) {
-        write_de!(self, "T");
-        self.scope_emit_mangled_name(self.1.scopes.get(tr.id).body_scope, &tr.ty_args);
+        if self.1.conf.build.minify {
+            write_de!(self, "t{}", tr.id);
+            for &ty in tr.ty_args.values() {
+                self.emit_mangled_name(ty);
+            }
+        } else {
+            write_de!(self, "T");
+            self.scope_emit_mangled_name(self.1.scopes.get(tr.id).body_scope, &tr.ty_args);
+        }
     }
 
     fn emit_array_struct_name(&mut self, ty: TypeId, size: usize) {
@@ -893,6 +900,7 @@ pub struct Codegen<'a> {
     cur_loop: ScopeId,
     vtables: Buffer<'a>,
     arrays: Buffer<'a>,
+    static_asserts: Buffer<'a>,
     defer_buf: Buffer<'a>,
     emitted_vtables: HashSet<Vtable>,
     defers: Vec<(ScopeId, Vec<(String, String)>)>,
@@ -927,6 +935,7 @@ impl<'a> Codegen<'a> {
             vtables: Buffer::new(proj),
             arrays: Buffer::new(proj),
             defer_buf: Buffer::new(proj),
+            static_asserts: Buffer::new(proj),
             cur_block: Default::default(),
             cur_loop: Default::default(),
             emitted_vtables: Default::default(),
@@ -1018,7 +1027,7 @@ impl<'a> Codegen<'a> {
             this.buffer.emit("){.span={.ptr=(u8*)data,.len=(usize)n}}\n");
         }
 
-        this.tg.emit(&mut this.buffer);
+        this.tg.emit(&mut this.buffer, &mut this.static_asserts);
         this.buffer.emit(prototypes.finish());
         this.buffer.emit(this.vtables.finish());
         this.buffer.emit(this.arrays.finish());
@@ -1030,7 +1039,9 @@ impl<'a> Codegen<'a> {
         if let Some(main) = main {
             this.buffer.emit(main);
         }
-
+        if !this.proj.conf.build.minify {
+            this.buffer.emit(this.static_asserts.finish());
+        }
         this.buffer.finish()
     }
 
@@ -1287,36 +1298,42 @@ impl<'a> Codegen<'a> {
                     write_de!(buf, "$defer{scope}$");
                 });
 
-                let struct_name = format!("{fn_name}params");
-
                 let mut fn_buf = Buffer::new(self.proj);
-                usebuf!(self, &mut fn_buf, {
-                    write_de!(self.buffer, "typedef struct {{");
-                    for &id in defer_state.referenced_vars.iter() {
-                        let ty = self
-                            .proj
-                            .scopes
-                            .get(id)
-                            .ty
-                            .with_templates(&self.proj.types, &state.func.ty_args);
-                        self.emit_type(ty);
-                        let var = self.proj.scopes.get(id);
-                        if !var.mutable {
-                            let mutable = self.proj.types[ty]
-                                .as_user()
-                                .is_some_and(|ut| self.proj.scopes.get(ut.id).interior_mutable);
-                            self.buffer.emit(if !mutable { " const" } else { "/*const*/" });
+                let struct_name = usebuf!(self, &mut fn_buf, {
+                    let (struct_name, maybe_unused) = if defer_state.referenced_vars.is_empty() {
+                        ("$void".into(), format!("(void){};", defer_state.params))
+                    } else {
+                        let struct_name = format!("{fn_name}params");
+                        write_de!(self.buffer, "typedef struct {{");
+                        for &id in defer_state.referenced_vars.iter() {
+                            let ty = self
+                                .proj
+                                .scopes
+                                .get(id)
+                                .ty
+                                .with_templates(&self.proj.types, &state.func.ty_args);
+                            self.emit_type(ty);
+                            let var = self.proj.scopes.get(id);
+                            if !var.mutable {
+                                let mutable = self.proj.types[ty]
+                                    .as_user()
+                                    .is_some_and(|ut| self.proj.scopes.get(ut.id).interior_mutable);
+                                self.buffer.emit(if !mutable { " const" } else { "/*const*/" });
+                            }
+                            write_de!(self.buffer, "*");
+                            self.emit_var_name(id, state);
+                            writeln_de!(self.buffer, ";");
                         }
-                        write_de!(self.buffer, "*");
-                        self.emit_var_name(id, state);
-                        writeln_de!(self.buffer, ";");
-                    }
+                        writeln_de!(self.buffer, "}} {struct_name};");
+                        (struct_name, String::new())
+                    };
                     writeln_de!(
                         self.buffer,
-                        "}} {struct_name};static void {fn_name}(void *data){{{struct_name}*{}=({struct_name}*)data;{}}}",
+                        "static void {fn_name}({struct_name} *{}){{{maybe_unused}{}}}",
                         defer_state.params,
                         expr_buf.finish(),
                     );
+                    struct_name
                 });
 
                 self.defer_buf.emit(fn_buf.finish());
@@ -1914,12 +1931,6 @@ impl<'a> Codegen<'a> {
                 self.buffer.emit(")");
             }
             &ExprData::ClosureToFnPtr(inner) => {
-                hoist!(self, {
-                    write_de!(self.buffer, "(void)");
-                    self.emit_expr_inline(inner, state);
-                    self.buffer.emit(";\n");
-                });
-
                 let closure = self.proj.types[inner.ty]
                     .as_user()
                     .unwrap()
@@ -2590,7 +2601,11 @@ impl<'a> Codegen<'a> {
                     .ok();
 
                 // TODO: Compiler options like --remap-path-prefix & flag to omit source information
-                let path = self.proj.diag.file_path(span.file).to_string_lossy().to_string();
+                let path = if !self.proj.conf.build.minify {
+                    self.proj.diag.file_path(span.file).to_string_lossy().to_string()
+                } else {
+                    String::from("??")
+                };
                 let name = tmpbuf!(self, state, |tmp| {
                     write_de!(self.buffer, "static const ");
                     self.emit_type(sl_typ);
@@ -2606,7 +2621,9 @@ impl<'a> Codegen<'a> {
                     let union = ut.kind.as_union().unwrap();
                     // TODO: when the enum variant optimization eventually optimizes ?str, this
                     // will need to change
-                    if let Some(func) = func {
+                    if let Some(func) = func
+                        && !self.proj.conf.build.minify
+                    {
                         let str = self.function_name(func, state);
                         write_de!(self.buffer, "{{.{UNION_TAG_NAME}=");
                         self.emit_literal(
@@ -3223,9 +3240,7 @@ impl<'a> Codegen<'a> {
         if is_import {
             write_de!(self.buffer, "extern ");
         } else {
-            if !f.attrs.export {
-                write_de!(self.buffer, "static ");
-            }
+            write_if!(!f.attrs.export, self.buffer, "static ");
 
             // TODO: inline manually
             match f.attrs.inline {
@@ -3237,19 +3252,9 @@ impl<'a> Codegen<'a> {
         }
 
         write_de!(self.buffer, "{} ", f.abi.attr());
-
-        if !is_prototype && f.attrs.cold {
-            write_de!(self.buffer, "CTL_COLD ");
-        }
-
-        if f.attrs.malloc {
-            write_de!(self.buffer, "CTL_MALLOC ");
-        }
-
-        if ret == TypeId::NEVER {
-            // && real
-            write_de!(self.buffer, "CTL_NORETURN ");
-        }
+        write_if!(!is_prototype && f.attrs.cold, self.buffer, "CTL_COLD ");
+        write_if!(f.attrs.malloc, self.buffer, "CTL_MALLOC ");
+        write_if!(ret == TypeId::NEVER, self.buffer, "CTL_NORETURN ");
 
         if ret.is_void_like() {
             write_de!(self.buffer, "void ");
@@ -3319,9 +3324,7 @@ impl<'a> Codegen<'a> {
             write_de!(self.buffer, ")");
         }
 
-        if !nonnull.is_empty() {
-            write_de!(self.buffer, "CTL_NONNULL({})", nonnull.join(","));
-        }
+        write_if!(!nonnull.is_empty(), self.buffer, "CTL_NONNULL({})", nonnull.join(","));
 
         (unused, thisptr)
     }
@@ -3336,7 +3339,7 @@ impl<'a> Codegen<'a> {
         let var = self.proj.scopes.get(id);
         if var.kind.is_static() {
             if var.is_extern {
-                self.buffer.emit_str(var.attrs.link_name.unwrap_or(var.name.data))
+                self.buffer.emit_str(var.attrs.link_name.unwrap_or(var.name.data));
             } else {
                 self.buffer.emit("CTL$");
                 self.buffer.scope_emit_mangled_name(var.scope, &TypeArgs::default());
@@ -3929,8 +3932,7 @@ impl<'a> Codegen<'a> {
             if let Some(this_ptr) = this_ptr {
                 defer_state.referenced_vars.insert(this_ptr);
                 self.emit_var_name(this_ptr, state);
-                write_de!(self.buffer, ")");
-                write_de!(self.buffer, "->{}", member_name(self.proj, var.name.data));
+                write_de!(self.buffer, ")->{}", member_name(self.proj, var.name.data));
             } else {
                 defer_state.referenced_vars.insert(id);
                 self.emit_var_name(id, state);
@@ -3945,7 +3947,7 @@ impl<'a> Codegen<'a> {
     }
 }
 
-impl SharedStuff for Codegen<'_> {
+impl LookupTraitFn for Codegen<'_> {
     fn proj(&self) -> &Project {
         self.proj
     }
@@ -4002,6 +4004,9 @@ fn vtable_methods(scopes: &Scopes, types: &Types, tr: TraitId) -> Vec<FunctionId
 }
 
 fn member_name(proj: &Project, name: StrId) -> String {
+    // if proj.conf.build.minify {
+    //     return format!("m{}", name.into_inner());
+    // }
     let data = proj.str(name);
     if !is_c_reserved_ident(data) { data.into() } else { format!("${data}") }
 }

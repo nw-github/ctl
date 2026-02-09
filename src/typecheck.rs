@@ -7598,7 +7598,7 @@ impl TypeChecker<'_> {
     }
 }
 
-impl SharedStuff for TypeChecker<'_> {
+impl LookupTraitFn for TypeChecker<'_> {
     fn proj(&self) -> &Project {
         &self.proj
     }
@@ -7609,7 +7609,7 @@ impl SharedStuff for TypeChecker<'_> {
     }
 }
 
-pub trait SharedStuff {
+pub trait LookupTraitFn {
     fn proj(&self) -> &Project;
     fn get_tuple(&mut self, ty_args: Vec<TypeId>) -> TypeId;
 
