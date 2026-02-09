@@ -1980,10 +1980,10 @@ impl<'a> Codegen<'a> {
         if self.proj.scopes.get(ut.id).kind.is_packed_struct() {
             return tmpbuf_emit!(self, state, |tmp| {
                 self.emit_type(ty);
-                writeln_de!(self.buffer, " {tmp};");
+                writeln_de!(self.buffer, " {tmp} = {{}};");
                 for (&name, &value) in members {
                     let expr = hoist!(self, self.emit_tmpvar(value, state));
-                    self.emit_bitfield_write(&tmp, ut, name, value.ty, &expr);
+                    self.emit_bitfield_write(&tmp, ut, name, value.ty, &expr, true);
                 }
             });
         } else if self.proj.scopes.get(ut.id).attrs.layout == Layout::Transparent {
@@ -3459,7 +3459,7 @@ impl<'a> Codegen<'a> {
             writeln_de!(self.buffer, ";");
             tmp
         });
-        hoist!(self, self.emit_bitfield_write(&src, ut, member, ty, &expr));
+        hoist!(self, self.emit_bitfield_write(&src, ut, member, ty, &expr, false));
         self.buffer.emit(VOID_INSTANCE);
     }
 
@@ -3504,6 +3504,7 @@ impl<'a> Codegen<'a> {
         member: StrId,
         ty: TypeId,
         expr: &str,
+        init: bool,
     ) {
         let mut word_type = None;
         self.bitfield_access(ut, member, ty, |this, access| {
@@ -3520,9 +3521,11 @@ impl<'a> Codegen<'a> {
                 word_type.get_or_insert_with(|| this.proj.types.insert(Type::Uint(word_size_bits)));
             let mask = bit_mask(reading);
 
-            write_de!(this.buffer, "{tmp}.{ARRAY_DATA_NAME}[{word}]&=");
-            this.emit_cast(*word_ty);
-            writeln_de!(this.buffer, "{:#x};", !(mask << word_offset) & bit_mask(word_size_bits));
+            if !init {
+                write_de!(this.buffer, "{tmp}.{ARRAY_DATA_NAME}[{word}]&=");
+                this.emit_cast(*word_ty);
+                writeln_de!(this.buffer, "{:#x};", !(mask << word_offset) & bit_mask(word_size_bits));
+            }
 
             // negative signed bitints contain 1s in the inaccessible bits (ie -1i2 == 0b1111_1111,
             // not 0b0000_0011) so we need the mask even for a non-partial write
@@ -3895,7 +3898,7 @@ impl<'a> Codegen<'a> {
             writeln_de!(self.buffer, ";");
             tmp
         });
-        hoist!(self, self.emit_bitfield_write(&source, ut, member, member_ty, &copy));
+        hoist!(self, self.emit_bitfield_write(&source, ut, member, member_ty, &copy, false));
 
         self.buffer.emit(result);
     }
