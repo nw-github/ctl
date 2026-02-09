@@ -49,7 +49,9 @@ impl Strings {
     pub const ATTR_LANG: StrId = str_id(SID::ATTR_LANG);
     pub const ATTR_INTRINSIC: StrId = str_id(SID::ATTR_INTRINSIC);
     pub const ATTR_MACRO: StrId = str_id(SID::ATTR_MACRO);
-    pub const ATTR_LINKNAME: StrId = str_id(SID::ATTR_LINKNAME);
+    pub const ATTR_LINK_NAME: StrId = str_id(SID::ATTR_LINK_NAME);
+    pub const ATTR_LINK_PREFIX: StrId = str_id(SID::ATTR_LINK_PREFIX);
+    pub const ATTR_LINK_SUFFIX: StrId = str_id(SID::ATTR_LINK_SUFFIX);
     pub const ATTR_PANIC_HANDLER: StrId = str_id(SID::ATTR_PANIC_HANDLER);
     pub const ATTR_INLINE: StrId = str_id(SID::ATTR_INLINE);
     pub const ATTR_FEATURE: StrId = str_id(SID::ATTR_FEATURE);
@@ -79,7 +81,9 @@ impl Strings {
         assert_eq!(Self::SOME, rodeo.get_or_intern_static("Some"));
         assert_eq!(Self::TUPLE_ZERO, rodeo.get_or_intern_static("0"));
         assert_eq!(Self::ATTR_MACRO, rodeo.get_or_intern_static("c_macro"));
-        assert_eq!(Self::ATTR_LINKNAME, rodeo.get_or_intern_static("link_name"));
+        assert_eq!(Self::ATTR_LINK_NAME, rodeo.get_or_intern_static("link_name"));
+        assert_eq!(Self::ATTR_LINK_PREFIX, rodeo.get_or_intern_static("link_prefix"));
+        assert_eq!(Self::ATTR_LINK_SUFFIX, rodeo.get_or_intern_static("link_suffix"));
         assert_eq!(Self::FN_WRITTEN, rodeo.get_or_intern_static("written"));
         assert_eq!(Self::FN_INSERT, rodeo.get_or_intern_static("insert"));
         assert_eq!(Self::VAR_LESS, rodeo.get_or_intern_static("Less"));
@@ -153,7 +157,9 @@ enum SID {
     SOME,
     TUPLE_ZERO,
     ATTR_MACRO,
-    ATTR_LINKNAME,
+    ATTR_LINK_NAME,
+    ATTR_LINK_PREFIX,
+    ATTR_LINK_SUFFIX,
     FN_WRITTEN,
     FN_INSERT,
     VAR_LESS,

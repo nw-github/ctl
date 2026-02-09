@@ -80,7 +80,7 @@ impl VariableAttrs {
         let mut this = Self::default();
         for attr in attrs.iter() {
             match attr.name.data {
-                AN::Str(id @ Strings::ATTR_LINKNAME) => {
+                AN::Str(id @ Strings::ATTR_LINK_NAME) => {
                     this.link_name = one_str_arg(attr, id, proj)
                 }
                 AN::Str(Strings::ATTR_THREAD_LOCAL) => this.thread_local = true,
@@ -139,7 +139,21 @@ impl FunctionAttrs {
                     }
                 }
                 Strings::ATTR_COLD => this.cold = true,
-                Strings::ATTR_LINKNAME => this.link_name = one_str_arg(attr, id, proj),
+                Strings::ATTR_LINK_NAME => this.link_name = one_str_arg(attr, id, proj),
+                Strings::ATTR_LINK_PREFIX => {
+                    let before = this.link_name.unwrap_or(fn_name);
+                    if let Some(prefix) = one_str_arg(attr, id, proj) {
+                        let val = format!("{}{}", proj.str(prefix), proj.str(before));
+                        this.link_name = Some(proj.strings.get_or_intern(val));
+                    }
+                }
+                Strings::ATTR_LINK_SUFFIX => {
+                    let before = this.link_name.unwrap_or(fn_name);
+                    if let Some(suffix) = one_str_arg(attr, id, proj) {
+                        let val = format!("{}{}", proj.str(before), proj.str(suffix));
+                        this.link_name = Some(proj.strings.get_or_intern(val));
+                    }
+                }
                 Strings::ATTR_SKIP => {
                     this.test_skip = Some(opt_str_arg(attr, id, proj).map(|s| s.data))
                 }
