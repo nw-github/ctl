@@ -175,7 +175,7 @@ impl<'a> Parser<'a> {
             is_unsafe: safety.is_some_and(|s| s.data == Safety::Unsafe),
             body: if is_extern { Body::Optional } else { Body::Required },
             lead_span: earliest_span,
-            unsafe_if_no_body: is_extern,
+            unsafe_if_no_body: is_extern && !safety.is_some_and(|s| s.data == Safety::Safe),
         };
         if let Some(func) = self.try_function(conf, attrs.clone()) {
             return Ok(self.normal_fn(func));
