@@ -23,12 +23,7 @@ pub unsafe fn compare<T>(lhs: ^T, rhs: ^T, num: uint): bool {
 }
 
 pub unsafe fn zeroed<T>(): T {
-    // unsafe Uninit::<T>::assume_init_by(|out| unsafe intrin::memset(out.cast(), 0, size_of::<T>())).0
-    mut out = Uninit::<T>::uninit();
-    unsafe {
-        intrin::memset(out.as_raw_mut().cast(), 0, size_of::<T>());
-        out.assume_init()
-    }
+    unsafe Uninit::<T>::assume_init_by(|out| unsafe intrin::memset(out.cast(), 0, size_of::<T>())).0
 }
 
 pub fn swap<T>(lhs: *mut T, rhs: *mut T) => unsafe (lhs as ^mut T).swap(rhs);

@@ -148,38 +148,23 @@ extension<Int: Integral> Int {
 
     $[inline]
     pub fn overflowing_add(this, rhs: Int): (Int, bool) {
-        // unsafe Uninit::assume_init_by(|=this, =rhs, out| {
-        //     unsafe gcc_intrin::__builtin_add_overflow(*this, rhs, out)
-        // })
-        mut out = Uninit::<Int>::uninit();
-        unsafe {
-            let res = gcc_intrin::__builtin_add_overflow(*this, rhs, out.as_raw_mut());
-            (out.assume_init(), res)
-        }
+        unsafe Uninit::assume_init_by(|=this, =rhs, out| {
+            unsafe gcc_intrin::__builtin_add_overflow(*this, rhs, out)
+        })
     }
 
     $[inline]
     pub fn overflowing_sub(this, rhs: Int): (Int, bool) {
-        // unsafe Uninit::assume_init_by(|=this, =rhs, out| {
-        //     unsafe gcc_intrin::__builtin_sub_overflow(*this, rhs, out)
-        // })
-        mut out = Uninit::<Int>::uninit();
-        unsafe {
-            let res = gcc_intrin::__builtin_sub_overflow(*this, rhs, out.as_raw_mut());
-            (out.assume_init(), res)
-        }
+        unsafe Uninit::assume_init_by(|=this, =rhs, out| {
+            unsafe gcc_intrin::__builtin_sub_overflow(*this, rhs, out)
+        })
     }
 
     $[inline]
     pub fn overflowing_mul(this, rhs: Int): (Int, bool) {
-        // unsafe Uninit::assume_init_by(|=this, =rhs, out| {
-        //     unsafe gcc_intrin::__builtin_mul_overflow(*this, rhs, out)
-        // })
-        mut out = Uninit::<Int>::uninit();
-        unsafe {
-            let res = gcc_intrin::__builtin_mul_overflow(*this, rhs, out.as_raw_mut());
-            (out.assume_init(), res)
-        }
+        unsafe Uninit::assume_init_by(|=this, =rhs, out| {
+            unsafe gcc_intrin::__builtin_mul_overflow(*this, rhs, out)
+        })
     }
 
     $[inline]
