@@ -35,13 +35,20 @@ extension<T> ^T {
 
     impl Debug {
         fn dbg(this, f: *mut Formatter) {
-            let opts = f.options();
-            this.addr().hex(&mut f.with_options(Options(
-                alt: true,
-                sign: opts.sign,
-                width: opts.width,
-                upper: opts.upper,
-            )));
+            mut opts = *f.options();
+            if opts.alt and std::mem::size_of_val(this) == 8 {
+                mut buf = [b'0'; 17];
+                buf[8] = b'`';
+                unsafe {
+                    mut bytes = std::mem::Uninit::from_mut(&mut buf).as_bytes_mut();
+                    (this.addr() & 0xffff_ffff).write_digits(bytes, 16, opts.upper);
+                    (this.addr() >> 32).write_digits(bytes[..8u], 16, opts.upper);
+                    f.pad(str::from_utf8_unchecked(buf[..]));
+                }
+            } else {
+                opts.alt = true;
+                this.addr().hex(&mut f.with_options(opts));
+            }
         }
     }
 
