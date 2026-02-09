@@ -34,7 +34,7 @@ pub type _Unwind_Stop_Fn = extern fn(
     user: ?^mut void,
 ) => _Unwind_Reason_Code;
 
-$[align(16)]
+$[layout(C), align(16)]
 pub struct _Unwind_Exception {
     pub class: _Unwind_Exception_Class,
     pub cleanup: _Unwind_Exception_Cleanup_Fn,
