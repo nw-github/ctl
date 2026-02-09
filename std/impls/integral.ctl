@@ -272,8 +272,7 @@ extension<Int: Integral> Int {
     /// `buf`   must have a length of at least size_of::<T> * 8
     ///
     /// Returns the position of the start of the digits within `buf`
-    /// TODO: this should be library-public, not pub
-    pub unsafe fn write_digits(my mut this, buf: [mut Uninit<u8>..], radix: int, upper: bool): uint {
+    lib unsafe fn write_digits(my mut this, buf: [mut Uninit<u8>..], radix: int, upper: bool): uint {
         static UPPER_DIGITS: *[u8; 36] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
         static LOWER_DIGITS: *[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
 

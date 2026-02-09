@@ -331,10 +331,7 @@ impl LanguageServer for LspBackend {
                     let tr_data = proj.scopes.get(id);
                     let mut res = String::new();
                     res += &visualize_location(tr_data.scope, proj);
-                    if tr_data.public {
-                        res += "pub ";
-                    }
-
+                    write_de!(res, "{}", tr_data.vis);
                     write_de!(res, "trait {}", proj.strings.resolve(&tr_data.name.data));
                     visualize_type_params(&mut res, &tr_data.type_params, proj);
 
@@ -343,7 +340,7 @@ impl LanguageServer for LspBackend {
                 LspItem::Alias(id) => {
                     let alias = proj.scopes.get(id);
                     let mut str = String::new();
-                    write_if!(alias.public, str, "pub ");
+                    write_de!(str, "{}", alias.vis);
                     write_de!(str, "type {}", proj.strings.resolve(&alias.name.data));
                     visualize_type_params(&mut str, &alias.type_params, proj);
                     write_de!(str, " = {}", proj.fmt_ty(alias.ty.unwrap_or_default()));
@@ -353,11 +350,11 @@ impl LanguageServer for LspBackend {
                     let ut = proj.scopes.get(id);
                     let mem = ut.members.get(&name);
                     let public = if ut.kind.is_union() {
-                        "shared "
-                    } else if mem.is_some_and(|m| m.public) {
-                        "pub "
+                        String::from("shared ")
+                    } else if let Some(vis) = mem.map(|m| m.vis) {
+                        vis.to_string()
                     } else {
-                        ""
+                        String::new()
                     };
                     let ty = mem.map_or(TypeId::UNKNOWN, |m| m.ty);
                     if matches!(ut.kind, UserTypeKind::Tuple) {
@@ -380,9 +377,7 @@ impl LanguageServer for LspBackend {
                     if let Some(parent) = scope.parent.filter(|parent| *parent != ScopeId::ROOT) {
                         res += &visualize_location(parent, proj);
                     }
-                    if scope.public {
-                        res += "pub ";
-                    }
+                    write_de!(res, "{}", scope.vis);
                     Some(format!(
                         "{res}mod {}",
                         proj.strings.resolve(&scope.kind.name(&proj.scopes).unwrap().data)
@@ -1358,7 +1353,7 @@ fn visualize_func(id: FunctionId, small: bool, proj: &Project) -> String {
     let mut res = if small { String::new() } else { visualize_location(func.scope, proj) };
 
     if !small {
-        write_if!(func.public, res, "pub ");
+        write_de!(res, "{}", func.vis);
         write_if!(!func.abi.is_ctl(), res, "{} ", func.abi);
         write_if!(func.is_unsafe, res, "unsafe ");
         write_de!(res, "fn {}", proj.strings.resolve(&func.name.data))
@@ -1424,9 +1419,7 @@ fn visualize_var(id: VariableId, proj: &Project) -> String {
     if !var.kind.is_local() {
         res += &visualize_location(var.scope, proj);
     }
-    if var.public {
-        res += "pub ";
-    }
+    write_de!(res, "{}", var.vis);
     res += match (var.kind, var.mutable) {
         (VariableKind::Const, _) => "const",
         (VariableKind::Static, true) => "static mut",
@@ -1449,11 +1442,9 @@ fn visualize_type(id: UserTypeId, proj: &Project) -> String {
         }
         for (name, member) in ut.members.iter() {
             let header = if ut.kind.is_union() {
-                "shared "
-            } else if member.public {
-                "pub "
+                String::from("shared ")
             } else {
-                ""
+                member.vis.to_string()
             };
 
             write_de!(
@@ -1489,9 +1480,7 @@ fn visualize_type(id: UserTypeId, proj: &Project) -> String {
         writeln_de!(res, "// size = {}, align = {}", S(sz), S(align));
     }
 
-    if ut.public {
-        res += "pub ";
-    }
+    write_de!(res, "{}", ut.vis);
     match &ut.kind {
         &UserTypeKind::Struct(_, packed) => {
             if packed {

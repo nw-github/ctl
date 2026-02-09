@@ -3,7 +3,7 @@ use enum_as_inner::EnumAsInner;
 
 use crate::{
     ast::{
-        DefaultCapturePolicy, FnAbi,
+        DefaultCapturePolicy, FnAbi, Visibility,
         checked::{Expr as CheckedExpr, PatternData as CheckedPatternData},
         declared::UsePath,
         parsed::{Expr, FunctionType, Path, Pattern, TypeHint},
@@ -40,7 +40,7 @@ macro_rules! id {
             fn insert_in(
                 scopes: &mut Scopes,
                 value: Self::Value,
-                public: bool,
+                vis: Visibility,
                 scope: ScopeId,
             ) -> InsertionResult<Self> {
                 let index = scopes.$vec.len();
@@ -48,7 +48,7 @@ macro_rules! id {
                 let id = $name(index);
                 let name = scopes.$vec[id.0].name.data;
                 let kind = id.into();
-                let prev = scopes[scope].$namespace.insert(name, Vis { id: kind, public });
+                let prev = scopes[scope].$namespace.insert(name, Vis { id: kind, vis });
                 InsertionResult { id, existed: prev.is_some(), item: kind.into() }
             }
 
@@ -185,7 +185,7 @@ impl VariableKind {
 #[derive(Default)]
 pub struct Variable {
     pub attrs: VariableAttrs,
-    pub public: bool,
+    pub vis: Visibility,
     pub name: Located<StrId>,
     pub ty: TypeId,
     pub kind: VariableKind,
@@ -199,7 +199,7 @@ pub struct Variable {
 
 #[derive(Default)]
 pub struct Function {
-    pub public: bool,
+    pub vis: Visibility,
     pub attrs: FunctionAttrs,
     pub name: Located<StrId>,
     pub abi: FnAbi,
@@ -236,7 +236,7 @@ impl FunctionId {
 
 #[derive(Constructor)]
 pub struct CheckedMember {
-    pub public: bool,
+    pub vis: Visibility,
     pub ty: TypeId,
     pub span: Span,
 }
@@ -347,7 +347,7 @@ impl UserTypeKind {
 
 pub struct UserType {
     pub attrs: UserTypeAttrs,
-    pub public: bool,
+    pub vis: Visibility,
     pub name: Located<StrId>,
     pub body_scope: ScopeId,
     pub kind: UserTypeKind,
@@ -376,7 +376,7 @@ impl UserType {
 
     pub fn type_param(name: Located<StrId>) -> Self {
         Self {
-            public: false,
+            vis: Visibility::Private,
             name,
             body_scope: ScopeId::DUMMY,
             kind: UserTypeKind::Template,
@@ -424,7 +424,7 @@ impl UserType {
 }
 
 pub struct Alias {
-    pub public: bool,
+    pub vis: Visibility,
     pub name: Located<StrId>,
     pub type_params: Vec<TypeParamId>,
     pub ty: Option<TypeId>,
@@ -457,7 +457,7 @@ impl SuperTraits {
 
 pub struct Trait {
     pub attrs: TraitAttrs,
-    pub public: bool,
+    pub vis: Visibility,
     pub name: Located<StrId>,
     pub body_scope: ScopeId,
     pub type_params: Vec<TypeParamId>,
@@ -465,7 +465,7 @@ pub struct Trait {
     pub assoc_types: HashMap<StrId, TypeParamId>,
     /// The template parameter corresponding to the `This` type
     pub this: TypeParamId,
-    pub is_sealed: bool,
+    pub seal: Visibility,
     pub is_unsafe: bool,
     pub implementors: Vec<ImplId>,
     pub full_span: Span,
@@ -518,7 +518,7 @@ pub struct Vis<T> {
     #[deref]
     #[deref_mut]
     pub id: T,
-    pub public: bool,
+    pub vis: Visibility,
 }
 
 pub trait ItemId: Sized + Copy + Clone {
@@ -531,7 +531,7 @@ pub trait ItemId: Sized + Copy + Clone {
     fn insert_in(
         scopes: &mut Scopes,
         val: Self::Value,
-        public: bool,
+        vis: Visibility,
         id: ScopeId,
     ) -> InsertionResult<Self>;
 }
@@ -554,7 +554,7 @@ pub enum ValueItem {
 
 #[derive(Default)]
 pub struct Scope {
-    pub public: bool,
+    pub vis: Visibility,
     pub kind: ScopeKind,
     pub parent: Option<ScopeId>,
     pub tns: HashMap<StrId, Vis<TypeItem>>,
@@ -572,7 +572,7 @@ impl Scope {
     }
 
     pub fn find_fn(&self, name: StrId) -> Option<Vis<FunctionId>> {
-        self.find_in_vns(name).and_then(|v| v.into_fn().ok().map(|id| Vis::new(id, v.public)))
+        self.find_in_vns(name).and_then(|v| v.into_fn().ok().map(|id| Vis::new(id, v.vis)))
     }
 
     pub fn iter_fns(&self) -> impl Iterator<Item = FunctionId> {
@@ -607,9 +607,9 @@ impl Scopes {
         }
     }
 
-    pub fn create_scope(&mut self, parent: ScopeId, kind: ScopeKind, public: bool) -> ScopeId {
+    pub fn create_scope(&mut self, parent: ScopeId, kind: ScopeKind, vis: Visibility) -> ScopeId {
         let id = ScopeId(self.scopes.len());
-        self.scopes.push(Scope { parent: Some(parent), kind, public, ..Default::default() });
+        self.scopes.push(Scope { parent: Some(parent), kind, vis, ..Default::default() });
         id
     }
 
@@ -666,7 +666,7 @@ impl Scopes {
                     UserTypeId::insert_in(
                         self,
                         UserType::type_param(Default::default()),
-                        false,
+                        Visibility::Internal,
                         ScopeId::ROOT,
                     )
                     .id
@@ -676,13 +676,20 @@ impl Scopes {
             let res = UserTypeId::insert_in(
                 self,
                 UserType {
-                    public: false,
+                    vis: Visibility::Internal,
                     members: type_params
                         .iter()
                         .enumerate()
                         .map(|(i, id)| {
                             let ty = Type::User(GenericUserType::from_id(self, types, *id));
-                            (names[i], CheckedMember::new(true, types.insert(ty), Span::default()))
+                            (
+                                names[i],
+                                CheckedMember::new(
+                                    Visibility::Public,
+                                    types.insert(ty),
+                                    Span::default(),
+                                ),
+                            )
                         })
                         .collect(),
                     name: Located::nowhere(Strings::TUPLE_NAME),
@@ -696,7 +703,7 @@ impl Scopes {
                     interior_mutable: false,
                     full_span: Span::nowhere(),
                 },
-                false,
+                Visibility::Internal,
                 ScopeId::ROOT,
             );
 

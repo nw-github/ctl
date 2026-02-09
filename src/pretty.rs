@@ -18,6 +18,12 @@ macro_rules! bool {
     };
 }
 
+macro_rules! dbgvar {
+    ($id: expr) => {
+        HeaderVar::Named(stringify!($id).into(), format!("{:?}", $id))
+    };
+}
+
 macro_rules! str {
     ($self: expr, $id: expr) => {
         HeaderVar::Named(stringify!($id).into(), $self.strings.resolve($id).into())
@@ -105,7 +111,7 @@ impl Pretty<'_> {
                 self.print_struct("StmtData::UnsafeUnion", vec![], base, None, indent)
             }
             StmtData::Trait {
-                public,
+                vis,
                 name,
                 type_params,
                 super_traits,
@@ -117,7 +123,7 @@ impl Pretty<'_> {
                 self.print_header(
                     &tabs,
                     "Stmt::Trait",
-                    &[str!(self, name, LOCATED), bool!(public), bool!(is_sealed), bool!(is_unsafe)],
+                    &[str!(self, name, LOCATED), dbgvar!(vis), bool!(is_sealed), bool!(is_unsafe)],
                 );
 
                 self.print_type_params(type_params, indent + 1, None);
@@ -152,13 +158,13 @@ impl Pretty<'_> {
                 }
                 self.print_impls(indent, impls);
             }
-            StmtData::Binding { name, ty, value, public, constant, is_extern, mutable } => {
+            StmtData::Binding { name, ty, value, vis, constant, is_extern, mutable } => {
                 self.print_header(
                     &tabs,
                     "Stmt::Binding",
                     &[
                         str!(self, name, LOCATED),
-                        bool!(public),
+                        dbgvar!(vis),
                         bool!(constant),
                         bool!(is_extern),
                         bool!(mutable),
@@ -170,11 +176,11 @@ impl Pretty<'_> {
                     self.print_expr(value, indent + 1);
                 }
             }
-            StmtData::Module { name, body, public, file: _ } => {
+            StmtData::Module { name, body, vis, file: _ } => {
                 self.print_header(
                     &tabs,
                     "Stmt::Module",
-                    &[str!(self, name, LOCATED), bool!(public)],
+                    &[str!(self, name, LOCATED), dbgvar!(vis)],
                 );
                 self.print_stmts(body, indent + 1);
             }
@@ -182,11 +188,11 @@ impl Pretty<'_> {
                 self.print_header(&tabs, "Stmt::ExternBlock", &[]);
                 self.print_stmts(body, indent + 1);
             }
-            StmtData::ModuleOOL { public, name, resolved } => {
+            StmtData::ModuleOOL { vis, name, resolved } => {
                 self.print_header(
                     &tabs,
                     "Stmt::ModuleOOL",
-                    &[str!(self, name, LOCATED), bool!(public), bool!(resolved)],
+                    &[str!(self, name, LOCATED), dbgvar!(vis), bool!(resolved)],
                 );
             }
             StmtData::Use(path) => {
@@ -199,8 +205,8 @@ impl Pretty<'_> {
                     )],
                 );
             }
-            StmtData::Alias { public, name, type_params, ty } => {
-                self.print_header(&tabs, "Stmt::Alias", &[bool!(public)]);
+            StmtData::Alias { vis, name, type_params, ty } => {
+                self.print_header(&tabs, "Stmt::Alias", &[dbgvar!(vis)]);
                 let tabs = INDENT.repeat(indent + 1);
                 eprintln!("{tabs}{}: {}", "Name".yellow(), self.strings.resolve(&name.data));
 
@@ -695,7 +701,7 @@ impl Pretty<'_> {
             variadic,
             params,
             ret,
-            public,
+            vis,
             body,
             typ: _,
             attrs: _,
@@ -710,8 +716,8 @@ impl Pretty<'_> {
                 bool!(is_async),
                 bool!(is_unsafe),
                 bool!(variadic),
-                bool!(public),
-                HeaderVar::Named("abi", format!("{abi:?}")),
+                dbgvar!(vis),
+                dbgvar!(abi),
             ],
             &ret.as_ref()
                 .map(|ret| format!(" {} {}", "->".cyan(), self.typ(*ret)))
@@ -740,13 +746,13 @@ impl Pretty<'_> {
         &self,
         type_name: &str,
         mut headers: Vec<HeaderVar>,
-        Struct { name, type_params, members, impls, functions, public, operators }: &Struct,
+        Struct { name, type_params, members, impls, functions, vis, operators }: &Struct,
         variants: Option<&[Variant]>,
         indent: usize,
     ) {
         let tabs = INDENT.repeat(indent);
         headers.push(HeaderVar::Named("name", self.strings.resolve(&name.data).into()));
-        headers.push(bool!(public));
+        headers.push(dbgvar!(vis));
         self.print_header(&tabs, type_name, &headers);
 
         let plus_1 = INDENT.repeat(indent + 1);
@@ -774,7 +780,7 @@ impl Pretty<'_> {
             for member in members {
                 eprintln!(
                     "{plus_2}{}{}: {}",
-                    if member.public { "pub " } else { "" },
+                    member.vis,
                     self.strings.resolve(&member.name.data),
                     self.typ(member.ty)
                 );

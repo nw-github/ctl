@@ -1,5 +1,5 @@
 use crate::{
-    ast::{Alignment, FnAbi, DefaultCapturePolicy, Sign},
+    ast::{Alignment, DefaultCapturePolicy, FnAbi, Sign, Visibility},
     ds::{
         ComptimeInt,
         arena::{Arena, Id},
@@ -49,7 +49,7 @@ pub enum UsePathComponent {
 
 #[derive(Clone)]
 pub struct UsePath {
-    pub public: bool,
+    pub vis: Visibility,
     pub origin: UsePathOrigin,
     pub component: UsePathComponent,
 }
@@ -86,7 +86,7 @@ pub enum StmtData {
     },
     UnsafeUnion(Struct),
     Trait {
-        public: bool,
+        vis: Visibility,
         is_sealed: bool,
         is_unsafe: bool,
         name: Located<StrId>,
@@ -104,7 +104,7 @@ pub enum StmtData {
         operators: Vec<Located<OperatorFn>>,
     },
     Binding {
-        public: bool,
+        vis: Visibility,
         constant: bool,
         is_extern: bool,
         mutable: bool,
@@ -113,18 +113,18 @@ pub enum StmtData {
         value: Option<Expr>,
     },
     Module {
-        public: bool,
+        vis: Visibility,
         file: bool,
         name: Located<StrId>,
         body: Vec<Stmt>,
     },
     ModuleOOL {
-        public: bool,
+        vis: Visibility,
         name: Located<StrId>,
         resolved: bool,
     },
     Alias {
-        public: bool,
+        vis: Visibility,
         name: Located<StrId>,
         type_params: TypeParams,
         ty: TypeHint,
@@ -451,7 +451,7 @@ pub enum FunctionType {
 #[derive(Clone)]
 pub struct Fn {
     pub attrs: Attributes,
-    pub public: bool,
+    pub vis: Visibility,
     pub name: Located<StrId>,
     pub abi: FnAbi,
     pub is_async: bool,
@@ -468,7 +468,7 @@ impl Fn {
     pub fn from_operator_fn(name: StrId, func: OperatorFn) -> Self {
         Self {
             attrs: func.attrs,
-            public: true,
+            vis: Visibility::Public,
             name: Located::new(func.name.span, name),
             abi: FnAbi::Ctl,
             is_async: false,
@@ -499,7 +499,7 @@ pub struct OperatorFn {
 
 #[derive(Clone)]
 pub struct Member {
-    pub public: bool,
+    pub vis: Visibility,
     pub name: Located<StrId>,
     pub ty: TypeHint,
     pub default: Option<Expr>,
@@ -521,7 +521,7 @@ pub struct Variant {
 
 #[derive(Clone)]
 pub struct Struct {
-    pub public: bool,
+    pub vis: Visibility,
     pub name: Located<StrId>,
     pub type_params: TypeParams,
     pub members: Vec<Member>,

@@ -111,11 +111,11 @@ impl<T: SourceProvider> Compiler<Source<T>> {
         for module in module.mods {
             let mod_name = strings.get_or_intern(&module.name);
             let attrs = body.iter_mut().find_map(|stmt| {
-                if let StmtData::ModuleOOL { public, name, resolved } = &mut stmt.data.data
+                if let StmtData::ModuleOOL { vis, name, ref mut resolved } = stmt.data.data
                     && name.data == mod_name
                 {
                     *resolved = true;
-                    Some(ModuleAttributes { attrs: stmt.attrs.clone(), public: *public })
+                    Some(ModuleAttributes { attrs: stmt.attrs.clone(), vis })
                 } else {
                     None
                 }

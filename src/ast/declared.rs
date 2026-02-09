@@ -1,5 +1,8 @@
 use crate::{
-    ast::parsed::{Expr, Pattern, TypeHint, UsePathComponent},
+    ast::{
+        Visibility,
+        parsed::{Expr, Pattern, TypeHint, UsePathComponent},
+    },
     intern::StrId,
     lexer::Located,
     sym::{AliasId, ExtensionId, FunctionId, ScopeId, TraitId, UserTypeId, VariableId},
@@ -26,7 +29,7 @@ pub enum Stmt {
 }
 
 pub struct UsePath {
-    pub public: bool,
+    pub vis: Visibility,
     pub in_type: bool,
     pub scope: Option<ScopeId>,
     pub comp: UsePathComponent,

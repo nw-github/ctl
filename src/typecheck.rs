@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use crate::{
     FeatureSet, Warning,
     ast::{
-        Attribute, Attributes, BinaryOp, FnAbi, UnaryOp,
+        Attribute, Attributes, BinaryOp, FnAbi, UnaryOp, Visibility,
         checked::{
             ArrayPattern, Block, Expr as CExpr, ExprArena, ExprData as CExprData,
             FormatOpts as CFormatSpec, Pattern as CPattern, PatternData, RestPattern,
@@ -372,14 +372,20 @@ impl<'a> TypeChecker<'a> {
                 this.enter_id_and_resolve(scope, |_| {});
 
                 for (&name, &item) in this.proj.scopes[scope].tns.iter() {
-                    if item.public {
-                        this.proj.autouse_tns.entry(name).or_insert(Vis::new(*item, false));
+                    if item.vis.is_public() {
+                        this.proj
+                            .autouse_tns
+                            .entry(name)
+                            .or_insert(Vis::new(*item, Visibility::Private));
                     }
                 }
 
                 for (&name, &item) in this.proj.scopes[scope].vns.iter() {
-                    if item.public {
-                        this.proj.autouse_vns.entry(name).or_insert(Vis::new(*item, false));
+                    if item.vis.is_public() {
+                        this.proj
+                            .autouse_vns
+                            .entry(name)
+                            .or_insert(Vis::new(*item, Visibility::Private));
                     }
                 }
             }
@@ -462,12 +468,12 @@ impl<'a> TypeChecker<'a> {
     }
 
     fn enter<T>(&mut self, kind: ScopeKind, f: impl FnOnce(&mut Self) -> T) -> T {
-        let id = self.proj.scopes.create_scope(self.current, kind, false);
+        let id = self.proj.scopes.create_scope(self.current, kind, Visibility::Private);
         self.enter_id(id, f)
     }
 
-    fn insert<T: ItemId>(&mut self, value: T::Value, public: bool, no_redef: bool) -> T {
-        let res = T::insert_in(&mut self.proj.scopes, value, public, self.current);
+    fn insert<T: ItemId>(&mut self, value: T::Value, vis: Visibility, no_redef: bool) -> T {
+        let res = T::insert_in(&mut self.proj.scopes, value, vis, self.current);
         self.check_hover(res.id.name(&self.proj.scopes).span, res.item);
 
         if res.existed && no_redef {
@@ -477,12 +483,40 @@ impl<'a> TypeChecker<'a> {
         res.id
     }
 
-    fn can_access_privates(&self, scope: ScopeId) -> bool {
-        self.proj
-            .scopes
-            .module_of(scope)
-            .map(|target| self.proj.scopes.walk(self.current).any(|(id, _)| id == target))
-            .unwrap_or_default()
+    fn can_access_in_scope(&self, scope: ScopeId, vis: Visibility) -> bool {
+        if vis == Visibility::Public {
+            return true;
+        }
+        self.access_to_scope(scope).can_access(vis)
+    }
+
+    fn access_to_scope(&self, scope: ScopeId) -> Visibility {
+        let mut my_lib = self.current;
+        let Some(his_mod) = self.proj.scopes.module_of(scope) else {
+            return Visibility::Public;
+        };
+        for (id, scope) in self.proj.scopes.walk(self.current) {
+            if id == his_mod {
+                return Visibility::Private;
+            }
+
+            if scope.parent == Some(ScopeId::ROOT) {
+                my_lib = id;
+                break;
+            }
+        }
+
+        for (id, scope) in self.proj.scopes.walk(his_mod).skip(1) {
+            if scope.parent == Some(ScopeId::ROOT) {
+                if id == my_lib {
+                    return Visibility::Library;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        Visibility::Public
     }
 
     fn check_local(&mut self, id: VariableId, span: Span, mut in_closure: bool) {
@@ -543,7 +577,7 @@ impl TypeChecker<'_> {
         let mut added = HashSet::new();
         let mut add_methods =
             |this: &Self, c: &mut Vec<LspItem>, scope: ScopeId, tr: Option<TraitId>| {
-                let cap = tr.is_some() || this.can_access_privates(scope);
+                let access = /* tr.is_some() || */ this.access_to_scope(scope);
                 for id in this.proj.scopes[scope].iter_fns() {
                     let f = this.proj.scopes.get(id);
                     if added.contains(&f.name.data) {
@@ -560,7 +594,7 @@ impl TypeChecker<'_> {
                         continue;
                     }
 
-                    if (f.public || cap)
+                    if access.can_access(f.vis)
                         && (!method
                             || f.params.first().is_some_and(|p| p.label == Strings::THIS_PARAM))
                     {
@@ -581,8 +615,8 @@ impl TypeChecker<'_> {
         if let Some(ut_id) = self.proj.types[ty].as_user().map(|ut| ut.id) {
             let data = self.proj.scopes.get(ut_id);
             if method {
-                let cap = self.can_access_privates(data.scope);
-                for (name, _) in data.members.iter().filter(|(_, m)| m.public || cap) {
+                let access = self.access_to_scope(data.scope);
+                for (name, _) in data.members.iter().filter(|(_, m)| access.can_access(m.vis)) {
                     completions.push(LspItem::Property(Some(ty), ut_id, *name))
                 }
             }
@@ -710,10 +744,10 @@ impl TypeChecker<'_> {
         }
 
         let mut completions = vec![];
-        let cap = self.can_access_privates(scope);
+        let access = self.access_to_scope(scope);
         let scope = &self.proj.scopes[scope];
         if !ty {
-            for (_, item) in scope.vns.iter().filter(|item| item.1.public || cap) {
+            for (_, item) in scope.vns.iter().filter(|item| access.can_access(item.1.vis)) {
                 match item.id {
                     ValueItem::Fn(id) => {
                         if matches!(scope.kind, ScopeKind::UserType(_)) {
@@ -734,7 +768,7 @@ impl TypeChecker<'_> {
             }
         }
 
-        for (_, item) in scope.tns.iter().filter(|item| item.1.public || cap) {
+        for (_, item) in scope.tns.iter().filter(|item| access.can_access(item.1.vis)) {
             if let Some(&id) = item.as_type() {
                 let ut = self.proj.scopes.get(id);
                 if strdata!(self, ut.name.data).starts_with('$') || ut.kind.is_template() {
@@ -766,8 +800,8 @@ impl TypeChecker<'_> {
 
 /// Forward declaration pass routines
 impl<'a> TypeChecker<'a> {
-    fn insert_user_type(&mut self, value: UserType, public: bool) -> UserTypeId {
-        let id = self.insert::<UserTypeId>(value, public, true);
+    fn insert_user_type(&mut self, value: UserType, vis: Visibility) -> UserTypeId {
+        let id = self.insert::<UserTypeId>(value, vis, true);
         if let Some(name) = self.proj.scopes.get(id).attrs.lang {
             self.proj.scopes.lang_types.insert(name, id);
         }
@@ -784,11 +818,18 @@ impl<'a> TypeChecker<'a> {
         attrs: &Attributes,
         packed: bool,
     ) -> DStmt {
-        let pub_constructor = base.public && !base.members.iter().any(|m| !m.public);
+        let constructor_vis =
+            if base.vis.is_public() && base.members.iter().all(|m| m.vis.is_public()) {
+                Visibility::Public
+            } else if base.vis.is_library() && base.members.iter().all(|m| m.vis.is_library()) {
+                Visibility::Library
+            } else {
+                Visibility::Private
+            };
         let (ut, init, mut fns, impls) = self.enter(ScopeKind::None, |this| {
             let init = this.enter(ScopeKind::None, |this| {
                 this.declare_fn(Located::nowhere(&Fn {
-                    public: pub_constructor,
+                    vis: constructor_vis,
                     name: base.name,
                     abi: FnAbi::Ctl,
                     is_async: false,
@@ -816,7 +857,7 @@ impl<'a> TypeChecker<'a> {
                 let prev = members.insert(
                     member.name.data,
                     CheckedMember::new(
-                        member.public,
+                        member.vis,
                         this.declare_type_hint(member.ty),
                         member.name.span,
                     ),
@@ -834,7 +875,7 @@ impl<'a> TypeChecker<'a> {
             let ut = this.create_user_type(
                 attrs,
                 base.name,
-                base.public,
+                base.vis,
                 members,
                 UserTypeKind::Struct(init.id, packed),
                 type_params,
@@ -844,10 +885,10 @@ impl<'a> TypeChecker<'a> {
         });
 
         let scope = ut.body_scope;
-        let id = self.insert_user_type(ut, base.public);
+        let id = self.insert_user_type(ut, base.vis);
         let prev = self.proj.scopes[self.current].vns.insert(
             base.name.data,
-            Vis::new(ValueItem::StructConstructor(id, init.id), pub_constructor),
+            Vis::new(ValueItem::StructConstructor(id, init.id), constructor_vis),
         );
         if prev.is_some() {
             self.error(Error::redefinition(
@@ -882,7 +923,7 @@ impl<'a> TypeChecker<'a> {
                     .insert(
                         member.name.data,
                         CheckedMember::new(
-                            member.public,
+                            member.vis,
                             this.declare_type_hint(member.ty),
                             member.name.span,
                         ),
@@ -946,7 +987,7 @@ impl<'a> TypeChecker<'a> {
                 );
 
                 fns.push(this.declare_fn(Located::nowhere(&Fn {
-                    public: base.public,
+                    vis: base.vis,
                     name: Located::new(variant.name.span, variant.name.data),
                     abi: FnAbi::Ctl,
                     is_async: false,
@@ -969,7 +1010,7 @@ impl<'a> TypeChecker<'a> {
             let ut = this.create_user_type(
                 attrs,
                 base.name,
-                base.public,
+                base.vis,
                 members,
                 UserTypeKind::Union(Union { tag, variants, enum_union }),
                 type_params,
@@ -979,7 +1020,7 @@ impl<'a> TypeChecker<'a> {
             (ut, impls, fns, member_cons_len)
         });
         let scope = ut.body_scope;
-        let id = self.insert_user_type(ut, base.public);
+        let id = self.insert_user_type(ut, base.vis);
         self.proj.scopes.get_mut(id).impls = self.declare_impls(id, impls);
 
         self.proj.scopes[scope].kind = ScopeKind::UserType(id);
@@ -996,7 +1037,11 @@ impl<'a> TypeChecker<'a> {
             for member in base.members.iter() {
                 let prev = members.insert(
                     member.name.data,
-                    CheckedMember::new(true, this.declare_type_hint(member.ty), member.name.span),
+                    CheckedMember::new(
+                        Visibility::Public,
+                        this.declare_type_hint(member.ty),
+                        member.name.span,
+                    ),
                 );
                 if prev.is_some() {
                     let name = strdata!(this, member.name.data);
@@ -1011,7 +1056,7 @@ impl<'a> TypeChecker<'a> {
             let ut = this.create_user_type(
                 attrs,
                 base.name,
-                base.public,
+                base.vis,
                 members,
                 UserTypeKind::UnsafeUnion,
                 type_params,
@@ -1021,12 +1066,12 @@ impl<'a> TypeChecker<'a> {
         });
 
         let scope = ut.body_scope;
-        let id = self.insert_user_type(ut, base.public);
+        let id = self.insert_user_type(ut, base.vis);
         self.proj.scopes.get_mut(id).impls = self.declare_impls(id, impls);
 
         let prev = self.proj.scopes[self.current]
             .vns
-            .insert(base.name.data, Vis::new(ValueItem::UnionConstructor(id), base.public));
+            .insert(base.name.data, Vis::new(ValueItem::UnionConstructor(id), base.vis));
         if prev.is_some() {
             self.error(Error::redefinition(
                 strdata!(self, self.proj.scopes.get(id).name.data),
@@ -1056,13 +1101,13 @@ impl<'a> TypeChecker<'a> {
         }
 
         Some(match &stmt.data.data {
-            &PStmtData::Module { public, name, ref body, .. } => {
+            &PStmtData::Module { vis, name, ref body, .. } => {
                 let parent = self.current;
                 self.enter(ScopeKind::Module(name), |this| {
                     this.check_hover(name.span, this.current);
                     if this.proj.scopes[parent]
                         .tns
-                        .insert(name.data, Vis::new(this.current.into(), public))
+                        .insert(name.data, Vis::new(this.current.into(), vis))
                         .is_some()
                     {
                         let data = strdata!(this, name.data);
@@ -1119,7 +1164,7 @@ impl<'a> TypeChecker<'a> {
                 self.declare_unsafe_union(stmt.data.span, base, &stmt.attrs)
             }
             &PStmtData::Trait {
-                public,
+                vis,
                 name,
                 is_sealed,
                 is_unsafe,
@@ -1131,7 +1176,7 @@ impl<'a> TypeChecker<'a> {
                 let (tr, fns, this_id) = self.enter(ScopeKind::None, |this| {
                     let this_id = this.insert(
                         UserType::type_param(Located::new(name.span, Strings::THIS_TYPE)),
-                        false,
+                        vis,
                         false,
                     );
 
@@ -1139,13 +1184,13 @@ impl<'a> TypeChecker<'a> {
                     let tr = Trait {
                         attrs: TraitAttrs::relevant(&stmt.attrs, &mut this.proj),
                         body_scope: this.current,
-                        public,
+                        vis,
                         name,
                         type_params: this.declare_type_params(type_params),
                         super_traits: SuperTraits::Unchecked(super_traits.clone()),
                         assoc_types: this.declare_associated_types(assoc_types),
                         this: this_id,
-                        is_sealed,
+                        seal: if is_sealed { Visibility::Private } else { Visibility::Public },
                         is_unsafe,
                         implementors: vec![],
                         full_span: stmt.data.span,
@@ -1154,7 +1199,7 @@ impl<'a> TypeChecker<'a> {
                 });
 
                 let scope = tr.body_scope;
-                let id = self.insert::<TraitId>(tr, public, true);
+                let id = self.insert::<TraitId>(tr, vis, true);
                 if let Some(name) = self.proj.scopes.get(id).attrs.lang {
                     self.proj.scopes.lang_traits.insert(name, id);
                 }
@@ -1190,7 +1235,7 @@ impl<'a> TypeChecker<'a> {
                     let ext = this.create_user_type(
                         &stmt.attrs,
                         Located::new(*span, Strings::EXTENSION_NAME),
-                        false,
+                        Visibility::Internal,
                         Default::default(),
                         UserTypeKind::Extension(Some(ty)),
                         type_params,
@@ -1200,7 +1245,7 @@ impl<'a> TypeChecker<'a> {
                 });
 
                 let scope = ext.body_scope;
-                let id = self.insert::<UserTypeId>(ext, false, false);
+                let id = self.insert::<UserTypeId>(ext, Visibility::Internal, false);
                 if let Some(name) = self.proj.scopes.get(id).attrs.lang {
                     self.proj.scopes.lang_types.insert(name, id);
                 }
@@ -1209,27 +1254,27 @@ impl<'a> TypeChecker<'a> {
                 self.proj.scopes[scope].kind = ScopeKind::UserType(id);
                 DStmt::Extension { id, fns }
             }
-            &PStmtData::Alias { public, name, ref type_params, ty } => {
+            &PStmtData::Alias { vis, name, ref type_params, ty } => {
                 // TODO: ensure all type params are referenced
                 let value = self.enter(ScopeKind::None, |this| Alias {
-                    public,
+                    vis,
                     name,
                     type_params: this.declare_type_params(type_params),
                     ty: Some(this.declare_type_hint(ty)),
                     body_scope: this.current,
                 });
-                let id = self.insert::<AliasId>(value, public, true);
+                let id = self.insert::<AliasId>(value, vis, true);
                 DStmt::Alias { id }
             }
             PStmtData::Fn(f) => DStmt::Fn(self.declare_fn(Located::new(stmt.data.span, f))),
-            &PStmtData::Binding { public, constant, name, mutable, ty, value, is_extern } => {
+            &PStmtData::Binding { vis, constant, name, mutable, ty, value, is_extern } => {
                 let ty = self.declare_type_hint(ty);
                 let attrs = VariableAttrs::relevant(&stmt.attrs, &mut self.proj);
                 DStmt::Binding {
                     id: self.insert::<VariableId>(
                         Variable {
                             attrs,
-                            public,
+                            vis,
                             name,
                             ty,
                             unused: true,
@@ -1239,7 +1284,7 @@ impl<'a> TypeChecker<'a> {
                             mutable: mutable && !constant,
                             ..Default::default()
                         },
-                        public,
+                        vis,
                         true,
                     ),
                     value,
@@ -1258,7 +1303,7 @@ impl<'a> TypeChecker<'a> {
                     UsePathOrigin::Here => None,
                 };
 
-                self.resolve_use(path.public, scope, &path.component, false, true);
+                self.resolve_use(path.vis, scope, &path.component, false, true);
                 return None;
             }
             &PStmtData::Let { ty, value, ref patt } => DStmt::Let { ty, value, patt: patt.clone() },
@@ -1290,7 +1335,7 @@ impl<'a> TypeChecker<'a> {
         let attrs = FunctionAttrs::relevant(f.name.data, &f.attrs, &mut self.proj, false);
         let id = self.insert::<FunctionId>(
             Function {
-                public: f.public,
+                vis: f.vis,
                 attrs,
                 name: f.name,
                 abi: f.abi,
@@ -1307,7 +1352,7 @@ impl<'a> TypeChecker<'a> {
                 constructor: None,
                 full_span,
             },
-            f.public,
+            f.vis,
             true,
         );
 
@@ -1374,7 +1419,7 @@ impl<'a> TypeChecker<'a> {
     fn declare_type_params(&mut self, vec: &TypeParams) -> Vec<UserTypeId> {
         vec.iter()
             .map(|(name, impls)| {
-                let id = self.insert(UserType::type_param(*name), false, true);
+                let id = self.insert(UserType::type_param(*name), Visibility::Private, true);
                 self.declare_template_impls(id, impls);
                 id
             })
@@ -1384,7 +1429,7 @@ impl<'a> TypeChecker<'a> {
     fn declare_associated_types(&mut self, vec: &TypeParams) -> HashMap<StrId, UserTypeId> {
         vec.iter()
             .map(|(name, impls)| {
-                let id = self.insert(UserType::type_param(*name), false, true);
+                let id = self.insert(UserType::type_param(*name), Visibility::Private, true);
                 self.declare_template_impls(id, impls);
                 (name.data, id)
             })
@@ -1571,7 +1616,7 @@ impl<'a> TypeChecker<'a> {
         &mut self,
         attrs: &Attributes,
         name: Located<StrId>,
-        public: bool,
+        vis: Visibility,
         members: IndexMap<StrId, CheckedMember>,
         kind: UserTypeKind,
         type_params: Vec<UserTypeId>,
@@ -1590,7 +1635,7 @@ impl<'a> TypeChecker<'a> {
         UserType {
             attrs,
             name,
-            public,
+            vis,
             kind,
             impls: vec![],
             members,
@@ -1628,7 +1673,7 @@ impl TypeChecker<'_> {
             for id in this.proj.scopes.walk(this.current).map(|(id, _)| id).collect::<Vec<_>>() {
                 this.enter_id(id, |this| {
                     for stmt in std::mem::take(&mut this.proj.scopes[this.current].use_stmts) {
-                        this.resolve_use(stmt.public, stmt.scope, &stmt.comp, stmt.in_type, false);
+                        this.resolve_use(stmt.vis, stmt.scope, &stmt.comp, stmt.in_type, false);
                     }
                 });
             }
@@ -1907,7 +1952,7 @@ impl TypeChecker<'_> {
 
         let tr_data = self.proj.scopes.get(tr.id);
         let this_id = tr_data.this;
-        if tr_data.is_sealed && !self.can_access_privates(tr_data.scope) {
+        if !self.can_access_in_scope(tr_data.scope, tr_data.seal) {
             self.error(Error::new(
                 format!("cannot implement sealed trait '{}'", strdata!(self, tr_data.name.data)),
                 imp.span,
@@ -2424,9 +2469,12 @@ impl TypeChecker<'_> {
                     kind: VariableKind::Capture,
                     ..Default::default()
                 };
-                self.insert::<VariableId>(var, false, true);
+                self.insert::<VariableId>(var, Visibility::Private, true);
                 instance.insert(name.data, expr);
-                members.insert(name.data, CheckedMember::new(false, expr.ty, Span::nowhere()));
+                members.insert(
+                    name.data,
+                    CheckedMember::new(Visibility::Internal, expr.ty, Span::nowhere()),
+                );
                 continue;
             }
 
@@ -2484,8 +2532,9 @@ impl TypeChecker<'_> {
                 kind: VariableKind::Capture,
                 ..Default::default()
             };
-            self.insert::<VariableId>(var, false, true);
-            members.insert(name.data, CheckedMember::new(false, ty, Span::nowhere()));
+            self.insert::<VariableId>(var, Visibility::Private, true);
+            members
+                .insert(name.data, CheckedMember::new(Visibility::Internal, ty, Span::nowhere()));
         }
 
         let mut names = vec![];
@@ -2524,22 +2573,19 @@ impl TypeChecker<'_> {
             tuple_ty_args.push(ty);
         }
 
-        let closure_ut_scope =
-            self.enter_id(ScopeId::ROOT, |this| this.enter(ScopeKind::None, |this| this.current));
-
         let span = body.span;
         let (_, body) =
             self.with_safety(Safety::Safe, |this| this.check_expr_no_never_propagation(body, ret));
         let ret = self.proj.scopes[self.current].kind.as_closure().unwrap().0.unwrap_or(body.ty);
         let body = self.type_check_checked(body, ret, span);
         let args_tuple = self.proj.scopes.get_tuple(names, tuple_ty_args, &self.proj.types);
-        self.enter_id(closure_ut_scope, |this| {
+        self.enter(ScopeKind::None, |this| {
             let no_captures = members.is_empty();
             let impl_id = this.proj.impls.alloc(TraitImpl::None);
             let closure_id = this.insert::<UserTypeId>(
                 UserType {
                     attrs: Default::default(),
-                    public: false,
+                    vis: Visibility::Internal,
                     name: Located::nowhere(Strings::CLOSURE_NAME),
                     body_scope: this.current,
                     kind: UserTypeKind::Closure,
@@ -2551,7 +2597,7 @@ impl TypeChecker<'_> {
                     interior_mutable: true,
                     full_span: Span::nowhere(),
                 },
-                false,
+                Visibility::Internal,
                 false,
             );
 
@@ -2574,7 +2620,7 @@ impl TypeChecker<'_> {
                                         ty: this_ptr_mut_ty,
                                         ..Default::default()
                                     },
-                                    false,
+                                    Visibility::Internal,
                                     false,
                                 ),
                             )),
@@ -2593,7 +2639,7 @@ impl TypeChecker<'_> {
                     body_scope: do_invoke_scope,
                     ..Default::default()
                 };
-                let do_invoke_id = this.insert::<FunctionId>(func, false, false);
+                let do_invoke_id = this.insert::<FunctionId>(func, Visibility::Internal, false);
                 this.proj.scopes[do_invoke_scope].kind = ScopeKind::Function(do_invoke_id);
                 do_invoke_id
             };
@@ -2606,7 +2652,7 @@ impl TypeChecker<'_> {
                             ty: args_tuple,
                             ..Default::default()
                         },
-                        false,
+                        Visibility::Internal,
                         false,
                     );
 
@@ -2617,7 +2663,7 @@ impl TypeChecker<'_> {
                             ty: this_ptr_ty,
                             ..Default::default()
                         },
-                        false,
+                        Visibility::Internal,
                         false,
                     );
 
@@ -2672,7 +2718,7 @@ impl TypeChecker<'_> {
                 });
 
                 let func = Function {
-                    public: true,
+                    vis: Visibility::Public,
                     name: Located::nowhere(this.proj.strings.get_or_intern_static("invoke")),
                     has_body: true,
                     params,
@@ -2681,7 +2727,7 @@ impl TypeChecker<'_> {
                     body_scope: invoke_scope,
                     ..Default::default()
                 };
-                let invoke_id = this.insert::<FunctionId>(func, true, false);
+                let invoke_id = this.insert::<FunctionId>(func, Visibility::Public, false);
                 this.proj.scopes[invoke_scope].kind = ScopeKind::Function(invoke_id);
 
                 *this.proj.impls.get_mut(impl_id) = TraitImpl::Checked(CheckedImpl {
@@ -3465,7 +3511,7 @@ impl TypeChecker<'_> {
                         dummy_scope: self.proj.scopes.create_scope(
                             ScopeId::ROOT,
                             ScopeKind::None,
-                            false,
+                            Visibility::Internal,
                         ),
                     },
                 )
@@ -3536,7 +3582,7 @@ impl TypeChecker<'_> {
                 }
 
                 let ty = member.ty.with_ut_templates(&self.proj.types, id);
-                if !member.public && !self.can_access_privates(ut.scope) {
+                if !self.can_access_in_scope(ut.scope, member.vis) {
                     self.proj.diag.report(Error::private_member(
                         self.proj.fmt_ty(id),
                         strdata!(self, name.data),
@@ -3664,7 +3710,7 @@ impl TypeChecker<'_> {
                         dummy_scope: self.proj.scopes.create_scope(
                             ScopeId::ROOT,
                             ScopeKind::None,
-                            false,
+                            Visibility::Internal,
                         ),
                     },
                 )
@@ -3801,7 +3847,9 @@ impl TypeChecker<'_> {
     fn define(&mut self, vars: &[VariableId]) {
         for &var in vars.iter() {
             let name = self.proj.scopes.get(var).name.data;
-            self.proj.scopes[self.current].vns.insert(name, Vis::new(ValueItem::Var(var), false));
+            self.proj.scopes[self.current]
+                .vns
+                .insert(name, Vis::new(ValueItem::Var(var), Visibility::Private));
         }
     }
 
@@ -4188,7 +4236,7 @@ impl TypeChecker<'_> {
                     value: None,
                     ..Default::default()
                 },
-                false,
+                Visibility::Internal,
                 false,
             );
 
@@ -5415,7 +5463,7 @@ impl TypeChecker<'_> {
         for ut in ut.as_ref().into_iter().chain(exts.iter()) {
             let body = self.proj.scopes.get(ut.id).body_scope;
             if let Some(f) = self.proj.scopes[body].find_fn(name) {
-                if !f.public && !self.can_access_privates(body) {
+                if !self.can_access_in_scope(body, f.vis) {
                     continue;
                 }
 
@@ -5741,7 +5789,7 @@ impl TypeChecker<'_> {
                 has_hint,
                 ..Default::default()
             },
-            false,
+            Visibility::Private,
             typ != PatternType::Regular && name.data != Strings::UNDERSCORE,
         );
         if let Some(listen) = &mut self.listening_vars {
@@ -6144,7 +6192,7 @@ impl TypeChecker<'_> {
         let ut_id = ut.id;
         self.resolve_members(ut_id);
 
-        let cap = self.can_access_privates(self.proj.scopes.get(ut_id).scope);
+        let access = self.access_to_scope(self.proj.scopes.get(ut_id).scope);
         let mut irrefutable = true;
         let mut checked = Vec::new();
 
@@ -6158,7 +6206,7 @@ impl TypeChecker<'_> {
                 continue;
             };
 
-            if !member.public && !cap {
+            if !access.can_access(member.vis) {
                 self.proj.diag.report(Error::private_member(
                     self.proj.fmt_ty(scrutinee),
                     strdata!(self, name.data),
@@ -6625,7 +6673,7 @@ impl TypeChecker<'_> {
 
     fn resolve_use(
         &mut self,
-        public: bool,
+        vis: Visibility,
         scope: Option<ScopeId>,
         comp: &UsePathComponent,
         mut in_type: bool,
@@ -6642,7 +6690,7 @@ impl TypeChecker<'_> {
         let resolve_later = |this: &mut Self, ident: Option<Located<StrId>>| {
             if declaring {
                 this.proj.scopes[this.current].use_stmts.push(DUsePath {
-                    public,
+                    vis,
                     in_type,
                     scope,
                     comp: comp.clone(),
@@ -6667,13 +6715,13 @@ impl TypeChecker<'_> {
             let mut found = false;
             if let Some(item) = this.proj.scopes[scope].find_in_tns(name.data) {
                 check_hover_both(this, (*item).into());
-                if !item.public && !this.can_access_privates(scope) {
+                if !this.can_access_in_scope(scope, item.vis) {
                     named_error!(this, Error::private, name.data, name.span)
                 }
 
                 if this.proj.scopes[this.current]
                     .tns
-                    .insert(new_name.data, Vis::new(*item, public))
+                    .insert(new_name.data, Vis::new(*item, vis))
                     .is_some()
                 {
                     named_error!(this, Error::redefinition, new_name.data, new_name.span)
@@ -6693,7 +6741,7 @@ impl TypeChecker<'_> {
                 );
 
                 let mut skip = false;
-                if !item.public && !this.can_access_privates(scope) {
+                if !this.can_access_in_scope(scope, item.vis) {
                     if !found {
                         named_error!(this, Error::private, name.data, name.span)
                     }
@@ -6703,7 +6751,7 @@ impl TypeChecker<'_> {
                 if !skip
                     && this.proj.scopes[this.current]
                         .vns
-                        .insert(new_name.data, Vis::new(*item, public))
+                        .insert(new_name.data, Vis::new(*item, vis))
                         .is_some()
                 {
                     named_error!(this, Error::redefinition, new_name.data, new_name.span)
@@ -6723,17 +6771,14 @@ impl TypeChecker<'_> {
         match comp {
             UsePathComponent::Multi(comps) => {
                 for comp in comps {
-                    self.resolve_use(public, scope, comp, in_type, declaring);
+                    self.resolve_use(vis, scope, comp, in_type, declaring);
                 }
             }
             UsePathComponent::Ident { ident, next } => {
                 if let Some(next) = next {
                     let value = if let Some(scope) = scope {
                         let item = self.proj.scopes[scope].find_in_tns(ident.data);
-                        if let Some(item) = item
-                            && !item.public
-                            && !self.can_access_privates(scope)
-                        {
+                        if item.is_some_and(|item| !self.can_access_in_scope(scope, item.vis)) {
                             named_error!(self, Error::private, ident.data, ident.span)
                         }
                         item
@@ -6756,7 +6801,7 @@ impl TypeChecker<'_> {
                         _ => return resolve_later(self, Some(*ident)),
                     };
 
-                    return self.resolve_use(public, Some(scope), next, in_type, declaring);
+                    return self.resolve_use(vis, Some(scope), next, in_type, declaring);
                 }
 
                 import(self, *ident, *ident);
@@ -6771,18 +6816,18 @@ impl TypeChecker<'_> {
                     return resolve_later(self, None);
                 }
 
-                let cap = self.can_access_privates(scope);
+                let access = self.access_to_scope(scope);
                 let mut tns = vec![];
                 let mut vns = vec![];
                 for (&name, &item) in self.proj.scopes[scope].tns.iter() {
-                    if item.public || cap {
-                        tns.push((name, Vis::new(*item, public)));
+                    if access.can_access(item.vis) {
+                        tns.push((name, Vis::new(*item, vis)));
                     }
                 }
 
                 for (&name, &item) in self.proj.scopes[scope].vns.iter() {
-                    if (item.public || cap) && can_import_value_item(self, *item) {
-                        vns.push((name, Vis::new(*item, public)));
+                    if access.can_access(item.vis) && can_import_value_item(self, *item) {
+                        vns.push((name, Vis::new(*item, vis)));
                     }
                 }
 
@@ -6943,7 +6988,7 @@ impl TypeChecker<'_> {
                 return named_error!(self, Error::no_symbol, name.data, name.span);
             };
 
-            if !item.public && !self.can_access_privates(scope) {
+            if !self.can_access_in_scope(scope, item.vis) {
                 named_error!(self, Error::private, name.data, name.span)
             }
 
@@ -7229,7 +7274,7 @@ impl TypeChecker<'_> {
                 return ResolvedValue::NotFound(*name);
             };
 
-            if !item.public && !self.can_access_privates(scope) {
+            if !self.can_access_in_scope(scope, item.vis) {
                 named_error!(self, Error::private, name.data, name.span)
             }
 
@@ -7274,7 +7319,7 @@ impl TypeChecker<'_> {
             return ResolvedValue::NotFound(*last_name);
         };
 
-        if !item.public && !self.can_access_privates(scope) {
+        if !self.can_access_in_scope(scope, item.vis) {
             named_error!(self, Error::private, last_name.data, last_name.span)
         }
 

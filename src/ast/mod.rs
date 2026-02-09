@@ -381,3 +381,24 @@ impl std::str::FromStr for FnAbi {
         }
     }
 }
+
+#[derive(
+    Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, EnumAsInner, Display,
+)]
+pub enum Visibility {
+    #[display("pub ")]
+    Public,
+    #[display("lib ")]
+    Library,
+    #[default]
+    #[display("")]
+    Private,
+    #[display("(internal) ")]
+    Internal,
+}
+
+impl Visibility {
+    pub fn can_access(self, other: Visibility) -> bool {
+        self >= other
+    }
+}

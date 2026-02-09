@@ -343,10 +343,7 @@ pub struct FmtUsePath<'a> {
 
 impl std::fmt::Display for FmtUsePath<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.path.public {
-            write!(f, "pub ")?;
-        }
-
+        write!(f, "{}", self.path.vis)?;
         match self.path.origin {
             UsePathOrigin::Root(_) => write!(f, "::")?,
             UsePathOrigin::Super(_) => write!(f, "super::")?,
