@@ -20,9 +20,7 @@ pub use attrs::*;
 mod attrs;
 
 macro_rules! id {
-    ($name: ident => $output: ident,
-     $vec: ident,
-     $namespace: ident) => {
+    ($name: ident => $output: ident, $vec: ident, $namespace: ident) => {
         #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
         pub struct $name(usize);
 
@@ -40,13 +38,13 @@ macro_rules! id {
             fn insert_in(
                 scopes: &mut Scopes,
                 value: Self::Value,
-                vis: Visibility,
                 scope: ScopeId,
             ) -> InsertionResult<Self> {
                 let index = scopes.$vec.len();
                 scopes.$vec.push(Scoped::new(value, scope));
                 let id = $name(index);
                 let name = scopes.$vec[id.0].name.data;
+                let vis = scopes.$vec[id.0].vis;
                 let kind = id.into();
                 let prev = scopes[scope].$namespace.insert(name, Vis { id: kind, vis });
                 InsertionResult { id, existed: prev.is_some(), item: kind.into() }
@@ -527,13 +525,7 @@ pub trait ItemId: Sized + Copy + Clone {
     fn get(self, scopes: &Scopes) -> &Scoped<Self::Value>;
     fn get_mut(self, scopes: &mut Scopes) -> &mut Scoped<Self::Value>;
     fn name<'a>(&self, scopes: &'a Scopes) -> &'a Located<StrId>;
-
-    fn insert_in(
-        scopes: &mut Scopes,
-        val: Self::Value,
-        vis: Visibility,
-        id: ScopeId,
-    ) -> InsertionResult<Self>;
+    fn insert_in(scopes: &mut Scopes, val: Self::Value, id: ScopeId) -> InsertionResult<Self>;
 }
 
 #[derive(Debug, Clone, Copy, EnumAsInner, From)]
@@ -666,7 +658,6 @@ impl Scopes {
                     UserTypeId::insert_in(
                         self,
                         UserType::type_param(Default::default()),
-                        Visibility::Internal,
                         ScopeId::ROOT,
                     )
                     .id
@@ -703,7 +694,6 @@ impl Scopes {
                     interior_mutable: false,
                     full_span: Span::nowhere(),
                 },
-                Visibility::Internal,
                 ScopeId::ROOT,
             );
 

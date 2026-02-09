@@ -472,8 +472,8 @@ impl<'a> TypeChecker<'a> {
         self.enter_id(id, f)
     }
 
-    fn insert<T: ItemId>(&mut self, value: T::Value, vis: Visibility, no_redef: bool) -> T {
-        let res = T::insert_in(&mut self.proj.scopes, value, vis, self.current);
+    fn insert<T: ItemId>(&mut self, value: T::Value, no_redef: bool) -> T {
+        let res = T::insert_in(&mut self.proj.scopes, value, self.current);
         self.check_hover(res.id.name(&self.proj.scopes).span, res.item);
 
         if res.existed && no_redef {
@@ -800,8 +800,8 @@ impl TypeChecker<'_> {
 
 /// Forward declaration pass routines
 impl<'a> TypeChecker<'a> {
-    fn insert_user_type(&mut self, value: UserType, vis: Visibility) -> UserTypeId {
-        let id = self.insert::<UserTypeId>(value, vis, true);
+    fn insert_user_type(&mut self, value: UserType) -> UserTypeId {
+        let id = self.insert::<UserTypeId>(value, true);
         if let Some(name) = self.proj.scopes.get(id).attrs.lang {
             self.proj.scopes.lang_types.insert(name, id);
         }
@@ -885,7 +885,7 @@ impl<'a> TypeChecker<'a> {
         });
 
         let scope = ut.body_scope;
-        let id = self.insert_user_type(ut, base.vis);
+        let id = self.insert_user_type(ut);
         let prev = self.proj.scopes[self.current].vns.insert(
             base.name.data,
             Vis::new(ValueItem::StructConstructor(id, init.id), constructor_vis),
@@ -1020,7 +1020,7 @@ impl<'a> TypeChecker<'a> {
             (ut, impls, fns, member_cons_len)
         });
         let scope = ut.body_scope;
-        let id = self.insert_user_type(ut, base.vis);
+        let id = self.insert_user_type(ut);
         self.proj.scopes.get_mut(id).impls = self.declare_impls(id, impls);
 
         self.proj.scopes[scope].kind = ScopeKind::UserType(id);
@@ -1066,7 +1066,7 @@ impl<'a> TypeChecker<'a> {
         });
 
         let scope = ut.body_scope;
-        let id = self.insert_user_type(ut, base.vis);
+        let id = self.insert_user_type(ut);
         self.proj.scopes.get_mut(id).impls = self.declare_impls(id, impls);
 
         let prev = self.proj.scopes[self.current]
@@ -1176,7 +1176,6 @@ impl<'a> TypeChecker<'a> {
                 let (tr, fns, this_id) = self.enter(ScopeKind::None, |this| {
                     let this_id = this.insert(
                         UserType::type_param(Located::new(name.span, Strings::THIS_TYPE)),
-                        vis,
                         false,
                     );
 
@@ -1199,7 +1198,7 @@ impl<'a> TypeChecker<'a> {
                 });
 
                 let scope = tr.body_scope;
-                let id = self.insert::<TraitId>(tr, vis, true);
+                let id = self.insert::<TraitId>(tr, true);
                 if let Some(name) = self.proj.scopes.get(id).attrs.lang {
                     self.proj.scopes.lang_traits.insert(name, id);
                 }
@@ -1245,7 +1244,7 @@ impl<'a> TypeChecker<'a> {
                 });
 
                 let scope = ext.body_scope;
-                let id = self.insert::<UserTypeId>(ext, Visibility::Internal, false);
+                let id = self.insert::<UserTypeId>(ext, false);
                 if let Some(name) = self.proj.scopes.get(id).attrs.lang {
                     self.proj.scopes.lang_types.insert(name, id);
                 }
@@ -1263,7 +1262,7 @@ impl<'a> TypeChecker<'a> {
                     ty: Some(this.declare_type_hint(ty)),
                     body_scope: this.current,
                 });
-                let id = self.insert::<AliasId>(value, vis, true);
+                let id = self.insert::<AliasId>(value, true);
                 DStmt::Alias { id }
             }
             PStmtData::Fn(f) => DStmt::Fn(self.declare_fn(Located::new(stmt.data.span, f))),
@@ -1284,7 +1283,6 @@ impl<'a> TypeChecker<'a> {
                             mutable: mutable && !constant,
                             ..Default::default()
                         },
-                        vis,
                         true,
                     ),
                     value,
@@ -1352,7 +1350,6 @@ impl<'a> TypeChecker<'a> {
                 constructor: None,
                 full_span,
             },
-            f.vis,
             true,
         );
 
@@ -1419,7 +1416,7 @@ impl<'a> TypeChecker<'a> {
     fn declare_type_params(&mut self, vec: &TypeParams) -> Vec<UserTypeId> {
         vec.iter()
             .map(|(name, impls)| {
-                let id = self.insert(UserType::type_param(*name), Visibility::Private, true);
+                let id = self.insert(UserType::type_param(*name), true);
                 self.declare_template_impls(id, impls);
                 id
             })
@@ -1429,7 +1426,7 @@ impl<'a> TypeChecker<'a> {
     fn declare_associated_types(&mut self, vec: &TypeParams) -> HashMap<StrId, UserTypeId> {
         vec.iter()
             .map(|(name, impls)| {
-                let id = self.insert(UserType::type_param(*name), Visibility::Private, true);
+                let id = self.insert(UserType::type_param(*name), true);
                 self.declare_template_impls(id, impls);
                 (name.data, id)
             })
@@ -2459,17 +2456,19 @@ impl TypeChecker<'_> {
         for capture in captures {
             if let &Capture::New { mutable, ident: name, expr } = capture {
                 let expr = self.check_expr(expr, None);
-                let var = Variable {
-                    name,
-                    ty: expr.ty,
-                    mutable,
-                    unused: true,
-                    param: false,
-                    has_hint: false,
-                    kind: VariableKind::Capture,
-                    ..Default::default()
-                };
-                self.insert::<VariableId>(var, Visibility::Private, true);
+                self.insert::<VariableId>(
+                    Variable {
+                        name,
+                        ty: expr.ty,
+                        mutable,
+                        unused: true,
+                        param: false,
+                        has_hint: false,
+                        kind: VariableKind::Capture,
+                        ..Default::default()
+                    },
+                    true,
+                );
                 instance.insert(name.data, expr);
                 members.insert(
                     name.data,
@@ -2522,17 +2521,19 @@ impl TypeChecker<'_> {
                 );
             }
 
-            let var = Variable {
-                name,
-                ty,
-                mutable,
-                unused: true,
-                param: false,
-                has_hint: false,
-                kind: VariableKind::Capture,
-                ..Default::default()
-            };
-            self.insert::<VariableId>(var, Visibility::Private, true);
+            self.insert::<VariableId>(
+                Variable {
+                    name,
+                    ty,
+                    mutable,
+                    unused: true,
+                    param: false,
+                    has_hint: false,
+                    kind: VariableKind::Capture,
+                    ..Default::default()
+                },
+                true,
+            );
             members
                 .insert(name.data, CheckedMember::new(Visibility::Internal, ty, Span::nowhere()));
         }
@@ -2597,7 +2598,6 @@ impl TypeChecker<'_> {
                     interior_mutable: true,
                     full_span: Span::nowhere(),
                 },
-                Visibility::Internal,
                 false,
             );
 
@@ -2618,9 +2618,9 @@ impl TypeChecker<'_> {
                                     Variable {
                                         name: Located::nowhere(Strings::THIS_PARAM),
                                         ty: this_ptr_mut_ty,
+                                        vis: Visibility::Internal,
                                         ..Default::default()
                                     },
-                                    Visibility::Internal,
                                     false,
                                 ),
                             )),
@@ -2630,16 +2630,19 @@ impl TypeChecker<'_> {
                     );
                 }
                 let do_invoke_scope = this.enter(ScopeKind::None, |this| this.current);
-                let func = Function {
-                    name: Located::nowhere(Strings::FN_CLOSURE_DO_INVOKE),
-                    has_body: true,
-                    params: checked_params,
-                    ret,
-                    body: Some(body),
-                    body_scope: do_invoke_scope,
-                    ..Default::default()
-                };
-                let do_invoke_id = this.insert::<FunctionId>(func, Visibility::Internal, false);
+                let do_invoke_id = this.insert::<FunctionId>(
+                    Function {
+                        name: Located::nowhere(Strings::FN_CLOSURE_DO_INVOKE),
+                        has_body: true,
+                        params: checked_params,
+                        ret,
+                        body: Some(body),
+                        body_scope: do_invoke_scope,
+                        vis: Visibility::Internal,
+                        ..Default::default()
+                    },
+                    false,
+                );
                 this.proj.scopes[do_invoke_scope].kind = ScopeKind::Function(do_invoke_id);
                 do_invoke_id
             };
@@ -2650,9 +2653,9 @@ impl TypeChecker<'_> {
                         Variable {
                             name: Located::nowhere(Strings::FN_TR_ARGS_NAME),
                             ty: args_tuple,
+                            vis: Visibility::Internal,
                             ..Default::default()
                         },
-                        Visibility::Internal,
                         false,
                     );
 
@@ -2661,9 +2664,9 @@ impl TypeChecker<'_> {
                         Variable {
                             name: Located::nowhere(Strings::THIS_PARAM),
                             ty: this_ptr_ty,
+                            vis: Visibility::Internal,
                             ..Default::default()
                         },
-                        Visibility::Internal,
                         false,
                     );
 
@@ -2727,7 +2730,7 @@ impl TypeChecker<'_> {
                     body_scope: invoke_scope,
                     ..Default::default()
                 };
-                let invoke_id = this.insert::<FunctionId>(func, Visibility::Public, false);
+                let invoke_id = this.insert::<FunctionId>(func, false);
                 this.proj.scopes[invoke_scope].kind = ScopeKind::Function(invoke_id);
 
                 *this.proj.impls.get_mut(impl_id) = TraitImpl::Checked(CheckedImpl {
@@ -4234,9 +4237,9 @@ impl TypeChecker<'_> {
                     ty: iter.ty,
                     mutable: true,
                     value: None,
+                    vis: Visibility::Internal,
                     ..Default::default()
                 },
-                Visibility::Internal,
                 false,
             );
 
@@ -5789,7 +5792,6 @@ impl TypeChecker<'_> {
                 has_hint,
                 ..Default::default()
             },
-            Visibility::Private,
             typ != PatternType::Regular && name.data != Strings::UNDERSCORE,
         );
         if let Some(listen) = &mut self.listening_vars {
