@@ -398,12 +398,12 @@ impl<'a> TypeChecker<'a> {
         }
 
         this.proj.main_module = Some(last_scope);
-        this.proj.main = this.proj.scopes[last_scope]
-            .vns
-            .get(&Strings::FN_MAIN)
-            .and_then(|id| id.as_fn())
-            .copied();
         if !this.proj.conf.is_library && !this.proj.conf.in_test_mode() {
+            this.proj.main = this.proj.scopes[last_scope]
+                .vns
+                .get(&Strings::FN_MAIN)
+                .and_then(|id| id.as_fn())
+                .copied();
             if let Some(id) = this.proj.main {
                 let func = this.proj.scopes.get(id);
                 if !func.params.is_empty() {
