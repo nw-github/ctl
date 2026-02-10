@@ -97,7 +97,7 @@ fn install_fault_handler() {
                 } else {
                     eprintln_unlocked("{i:>5}: ?? [{pc:#x}]");
                 }
-                true
+                :Continue
             });
         };
 

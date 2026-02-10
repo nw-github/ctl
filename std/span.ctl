@@ -135,8 +135,8 @@ pub struct SpanMut<T> {
     }
 
     pub fn sort_by<F: Fn(*T, *T) => Ordering>(my this, f: F) {
-        fn do_sort_by<T, F: Fn(*T, *T) => Ordering>(self: [mut T..], f: *F) {
-            guard !self.is_empty() else {
+        fn quick_sort<T, F: Fn(*T, *T) => Ordering>(self: [mut T..], f: *F) {
+            guard self.len > 1 else {
                 return;
             }
 
@@ -144,19 +144,19 @@ pub struct SpanMut<T> {
             let pivot = unsafe self.get_unchecked(end);
             mut part_idx = 0u;
             for i in 0u..end {
-                if f(unsafe self.get_unchecked(i), pivot) is :Less | :Equal {
+                if f(unsafe self.get_unchecked(i), pivot) is :Less {
                     self.swap(part_idx++, i);
                 }
             }
 
             self.swap(part_idx, end);
             unsafe {
-                do_sort_by(self.subspan_mut_unchecked(0u..part_idx), f);
-                do_sort_by(self.subspan_mut_unchecked(part_idx + 1..), f);
+                quick_sort(self.subspan_mut_unchecked(0u..part_idx), f);
+                quick_sort(self.subspan_mut_unchecked(part_idx + 1..), f);
             }
         }
 
-        do_sort_by(this, &f)
+        quick_sort(this, &f)
     }
 
     pub fn sort_by_key<K: Cmp<K>, F: Fn(*T) => K>(my this, f: F) {

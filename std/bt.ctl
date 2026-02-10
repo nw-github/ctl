@@ -1,8 +1,8 @@
 use std::runtime::*;
-use std::deps::libdwfl::*;
-use std::deps::libc;
+use std::deps::{libc, libdwfl::*};
 use std::panic::SourceLocation;
 use std::str::CStr;
+use std::fmt::{Format, Formatter, StringBuilder};
 
 extension str {
     fn advance_if_eq(mut this, v: char): bool {
@@ -55,7 +55,7 @@ pub struct MaybeMangledName {
     pub fn from_str(func: str): This => This(func: func.as_bytes());
     pub fn from_bytes(func: [u8..]): This => This(func:);
 
-    fn demangle_type_name(name: *mut str, f: *mut std::fmt::Formatter): ?void {
+    fn demangle_type_name(name: *mut str, f: *mut Formatter): ?void {
         match name.advance()? {
             'v' => write(f, "void"),
             'V' => write(f, "never"),
@@ -128,7 +128,7 @@ pub struct MaybeMangledName {
 
     fn demangle_len_prefixed(
         name: *mut str,
-        f: *mut std::fmt::Formatter,
+        f: *mut Formatter,
         prefix: str,
         wrote: *mut bool,
         is_type: bool = false,
@@ -164,15 +164,15 @@ pub struct MaybeMangledName {
         }
     }
 
-    fn demangle_name(name: *mut str, f: *mut std::fmt::Formatter): ?void {
+    fn demangle_name(name: *mut str, f: *mut Formatter): ?void {
         mut wrote = false;
         while !name.is_empty() {
             This::demangle_len_prefixed(name, f, "::", &mut wrote)?;
         }
     }
 
-    impl std::fmt::Format {
-        fn fmt(this, f: *mut std::fmt::Formatter) {
+    impl Format {
+        fn fmt(this, f: *mut Formatter) {
             guard str::from_utf8(this.func) is ?base else {
                 for ch in this.func.iter_chars_lossy() {
                     f.write_char(ch);
@@ -285,8 +285,7 @@ pub struct Backtrace {
                 // TODO: allow this to fail
                 addrs.push(pc);
             }
-
-            true
+            :Continue
         });
 
         Backtrace(addrs:)
@@ -304,7 +303,7 @@ pub struct BacktraceIter {
 }
 
 $[inline(never)]
-pub unsafe fn backtrace<F: Fn(uint) => bool>(f: F, kw start_pc: ?uint = null) {
+pub unsafe fn backtrace<F: Fn(uint) => std::utils::ControlFlow>(f: F, kw start_pc: ?uint = null) {
     $[feature(backtrace)]
     unsafe {
         use std::deps::libunwind::*;
@@ -326,7 +325,7 @@ pub unsafe fn backtrace<F: Fn(uint) => bool>(f: F, kw start_pc: ?uint = null) {
                 state.ignore_until = null;
             }
 
-            if !(state.callback)(pc) {
+            if (state.callback)(pc) is :Break {
                 return _URC_END_OF_STACK;
             }
 
@@ -338,15 +337,15 @@ pub unsafe fn backtrace<F: Fn(uint) => bool>(f: F, kw start_pc: ?uint = null) {
 $[feature(alloc)]
 pub fn demangle_name(name: [u8..]): ?str {
     mut name = str::from_utf8(name)?.strip_prefix("CTL$")?;
-    mut builder = std::fmt::StringBuilder::new();
-    MaybeMangledName::demangle_name(&mut name, &mut std::fmt::Formatter::new(&mut builder))?;
+    mut builder = StringBuilder::new();
+    MaybeMangledName::demangle_name(&mut name, &mut Formatter::new(&mut builder))?;
     builder.into_str()
 }
 
 $[feature(alloc)]
 pub fn demangle_type_name(name: [u8..]): ?str {
     mut name = str::from_utf8(name)?;
-    mut builder = std::fmt::StringBuilder::new();
-    MaybeMangledName::demangle_type_name(&mut name, &mut std::fmt::Formatter::new(&mut builder))?;
+    mut builder = StringBuilder::new();
+    MaybeMangledName::demangle_type_name(&mut name, &mut Formatter::new(&mut builder))?;
     builder.into_str()
 }
