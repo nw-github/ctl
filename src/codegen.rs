@@ -140,7 +140,7 @@ impl TypeGen {
             }
 
             buffer.emit_type(ty);
-            writeln_de!(buffer, " {};", member_name(buffer.1, name));
+            writeln_de!(buffer, " {};", MemberName(buffer.1, name));
         };
 
         let type_name = Buffer::format(defs.1, |buf| buf.emit_type_name(ut));
@@ -210,7 +210,7 @@ impl TypeGen {
         let name = defs.1.fmt_ut(ut).to_string().replace("\"", "\\\"");
         writeln_de!(
             sa,
-            "CTL_STATIC_ASSERT(sizeof(struct {type_name}) == {} && _Alignof(struct {type_name}) == {}, \"Disagreement between C compiler and CTL about alignment of type {name}\");",
+            "CTL_STATIC_ASSERT(sizeof(struct {type_name}) == {} && _Alignof(struct {type_name}) == {}, \"Disagreement between C compiler and CTL about layout of type {name}\");",
             layout.size,
             layout.align,
         );
@@ -751,6 +751,19 @@ impl Display for StringLiteral<'_> {
             }
             write!(f, "\",{})", self.0.len())
         }
+    }
+}
+
+struct MemberName<'a>(&'a Project, StrId);
+
+impl Display for MemberName<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // if proj.conf.build.minify {
+        //     return format!("m{}", name.into_inner());
+        // }
+        let &MemberName(proj, name) = self;
+        let data = proj.str(name);
+        if !is_c_reserved_ident(data) { f.write_str(data) } else { write!(f, "${data}") }
     }
 }
 
@@ -1714,7 +1727,7 @@ impl<'a> Codegen<'a> {
                 } else {
                     self.emit_expr(source, state);
                     if ut_data.attrs.layout != Layout::Transparent {
-                        write_de!(self.buffer, ".{}", member_name(self.proj, member));
+                        write_de!(self.buffer, ".{}", MemberName(self.proj, member));
                     }
                 }
             }
@@ -2009,7 +2022,7 @@ impl<'a> Codegen<'a> {
             for (&name, value) in members {
                 let mut value = *value;
                 value.ty = value.ty.with_templates(&self.proj.types, &state.func.ty_args);
-                write_de!(self.buffer, "{tmp}.{}=", member_name(self.proj, name));
+                write_de!(self.buffer, "{tmp}.{}=", MemberName(self.proj, name));
                 self.emit_expr(value, state);
                 writeln_de!(self.buffer, ";");
             }
@@ -2049,11 +2062,11 @@ impl<'a> Codegen<'a> {
                     write_de!(
                         self.buffer,
                         "{tmp}.{}.{}=",
-                        member_name(self.proj, variant),
-                        member_name(self.proj, name),
+                        MemberName(self.proj, variant),
+                        MemberName(self.proj, name),
                     );
                 } else {
-                    write_de!(self.buffer, "{tmp}.{}=", member_name(self.proj, name));
+                    write_de!(self.buffer, "{tmp}.{}=", MemberName(self.proj, name));
                 }
                 self.emit_expr_inline(expr, state);
                 writeln_de!(self.buffer, ";");
@@ -2720,7 +2733,7 @@ impl<'a> Codegen<'a> {
                     .expect("ICE: InvokeWithTuple second argument should be a tuple");
                 for (i, member) in self.proj.scopes.get(ut.id).members.keys().enumerate() {
                     write_if!(i != 0, self.buffer, ", ");
-                    write_de!(self.buffer, "{args_tmpvar}.{}", member_name(self.proj, *member));
+                    write_de!(self.buffer, "{args_tmpvar}.{}", MemberName(self.proj, *member));
                 }
                 write_de!(self.buffer, ")");
             }
@@ -2826,7 +2839,7 @@ impl<'a> Codegen<'a> {
                         write_str!(self.proj.str(name));
                         if let Some(ty) = variant.ty {
                             let ty = ty.with_templates(&self.proj.types, &ut.ty_args);
-                            let buf = format!("{arg}.{}", member_name(self.proj, name));
+                            let buf = format!("{arg}.{}", MemberName(self.proj, name));
                             self.emit_builtin_dbg(args, ty, &buf, fmt, state, lvl + 1);
                         }
                         writeln_de!(self.buffer, "break;}}");
@@ -2868,7 +2881,7 @@ impl<'a> Codegen<'a> {
                             tmp
                         })
                     } else if ut_data.attrs.layout != Layout::Transparent {
-                        format!("{arg}.{}", member_name(self.proj, name))
+                        format!("{arg}.{}", MemberName(self.proj, name))
                     } else {
                         arg.to_string()
                     };
@@ -3014,7 +3027,7 @@ impl<'a> Codegen<'a> {
                         self.emit_pattern_inner(
                             state,
                             &pattern.data,
-                            &format!("{src}.{}", member_name(self.proj, variant)),
+                            &format!("{src}.{}", MemberName(self.proj, variant)),
                             inner,
                             borrow || borrows,
                             bindings,
@@ -3073,7 +3086,7 @@ impl<'a> Codegen<'a> {
                     self.emit_pattern_inner(
                         state,
                         &patt.data,
-                        &format!("{src}.{}", member_name(self.proj, *member)),
+                        &format!("{src}.{}", MemberName(self.proj, *member)),
                         inner,
                         borrow || *borrows,
                         bindings,
@@ -3954,7 +3967,7 @@ impl<'a> Codegen<'a> {
             if let Some(this_ptr) = this_ptr {
                 defer_state.referenced_vars.insert(this_ptr);
                 self.emit_var_name(this_ptr, state);
-                write_de!(self.buffer, ")->{}", member_name(self.proj, var.name.data));
+                write_de!(self.buffer, ")->{}", MemberName(self.proj, var.name.data));
             } else {
                 defer_state.referenced_vars.insert(id);
                 self.emit_var_name(id, state);
@@ -3962,7 +3975,7 @@ impl<'a> Codegen<'a> {
             }
         } else if let Some(this_ptr) = this_ptr {
             self.emit_var_name(this_ptr, state);
-            write_de!(self.buffer, "->{}", member_name(self.proj, var.name.data));
+            write_de!(self.buffer, "->{}", MemberName(self.proj, var.name.data));
         } else {
             self.emit_var_name(id, state);
         }
@@ -4023,14 +4036,6 @@ fn vtable_methods(scopes: &Scopes, types: &Types, tr: TraitId) -> Vec<FunctionId
         }
     }
     funcs
-}
-
-fn member_name(proj: &Project, name: StrId) -> String {
-    // if proj.conf.build.minify {
-    //     return format!("m{}", name.into_inner());
-    // }
-    let data = proj.str(name);
-    if !is_c_reserved_ident(data) { data.into() } else { format!("${data}") }
 }
 
 #[rustfmt::skip]
