@@ -94,6 +94,7 @@ pub mod math {
         pub safe fn tan(n: f64): f64;
         pub safe fn floor(n: f64): f64;
         pub safe fn ceil(n: f64): f64;
+        pub safe fn fmod(x: f64, y: f64): f64;
 
         pub safe fn sqrtf(n: f32): f32;
         pub safe fn sinf(n: f32): f32;
@@ -101,6 +102,7 @@ pub mod math {
         pub safe fn tanf(n: f32): f32;
         pub safe fn floorf(n: f32): f32;
         pub safe fn ceilf(n: f32): f32;
+        pub safe fn fmodf(x: f32, y: f32): f32;
     }
 }
 

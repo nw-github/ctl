@@ -15,8 +15,7 @@ extension f32 {
     $[intrinsic(binary_op)]
     pub fn /(this, rhs: This): This => this / rhs;
 
-    $[intrinsic(binary_op)]
-    pub fn %(this, rhs: This): This => this % rhs;
+    pub fn %(this, rhs: This): This => math::fmodf(*this, rhs);
 
     $[intrinsic(binary_op)]
     pub fn +=(mut this, rhs: This) => *this += rhs;
@@ -30,8 +29,7 @@ extension f32 {
     $[intrinsic(binary_op)]
     pub fn /=(mut this, rhs: This) => *this /= rhs;
 
-    $[intrinsic(binary_op)]
-    pub fn %=(mut this, rhs: This) => *this %= rhs;
+    pub fn %=(mut this, rhs: This) => *this = *this % rhs;
 
     pub fn parse(s: str): ?f32 => s2f::s2f(s.as_bytes()) is :Ok(v) then v;
 
@@ -131,8 +129,7 @@ extension f64 {
     $[intrinsic(binary_op)]
     pub fn /(this, rhs: This): This => this / rhs;
 
-    $[intrinsic(binary_op)]
-    pub fn %(this, rhs: This): This => this % rhs;
+    pub fn %(this, rhs: This): This => math::fmod(*this, rhs);
 
     $[intrinsic(binary_op)]
     pub fn +=(mut this, rhs: This) => *this += rhs;
@@ -146,8 +143,7 @@ extension f64 {
     $[intrinsic(binary_op)]
     pub fn /=(mut this, rhs: This) => *this /= rhs;
 
-    $[intrinsic(binary_op)]
-    pub fn %=(mut this, rhs: This) => *this %= rhs;
+    pub fn %=(mut this, rhs: This) => *this = *this % rhs;
 
     pub fn parse(s: str): ?f64 => s2d::s2d(s.as_bytes()) is :Ok(v) then v;
 

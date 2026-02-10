@@ -588,8 +588,9 @@ impl TypeId {
         let this = &types[self];
         match op {
             Assign => true,
-            Add | Sub | Mul | Div | Rem | AddAssign | SubAssign | MulAssign | DivAssign
-            | RemAssign => this.is_f32() || this.is_f64(),
+            Add | Sub | Mul | Div | AddAssign | SubAssign | MulAssign | DivAssign => {
+                this.is_f32() || this.is_f64()
+            }
             BitAnd | Xor | BitOr | BitAndAssign | XorAssign | BitOrAssign => {
                 this.is_integral() || this.is_bool()
             }
@@ -610,7 +611,7 @@ impl TypeId {
                 )
             }
             LogicalOr | LogicalAnd => this.is_bool(),
-            NoneCoalesce | NoneCoalesceAssign | Call => false,
+            Rem | RemAssign | NoneCoalesce | NoneCoalesceAssign | Call => false,
         }
     }
 
