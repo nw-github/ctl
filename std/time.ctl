@@ -51,7 +51,7 @@ pub struct Instant {
     ns: u64,
 
     pub fn now(): This {
-        mut tp = libc::Timespec(tv_sec: 0, tv_nsec: 0);
+        mut tp = libc::timespec(tv_sec: 0, tv_nsec: 0);
         clock_gettime(CLOCK_MONOTONIC, &mut tp);
         Instant(ns: tp.tv_nsec.cast() + tp.tv_sec.cast() * 1_000_000_000)
     }
@@ -77,11 +77,35 @@ pub struct Instant {
     pub fn <=>(this, rhs: *This): std::ops::Ordering => this.ns <=> rhs.ns;
     pub fn ==(this, rhs: *This): bool => this.ns == rhs.ns;
 
+    pub fn checked_add(this, dur: Duration): ?This {
+        This(ns: this.ns.checked_add(dur.as_nanos())?)
+    }
+
+    pub fn checked_sub(this, dur: Duration): ?This {
+        This(ns: this.ns.checked_add(dur.as_nanos())?)
+    }
+
+    pub fn +(this, dur: Duration): This => this.checked_add(dur)!;
+    pub fn -(this, dur: Duration): This => this.checked_sub(dur)!;
+
+    pub fn +=(mut this, dur: Duration) => *this = this + dur;
+    pub fn -=(mut this, dur: Duration) => *this = this - dur;
+
     impl std::ops::TotallyOrdered {}
 }
 
 pub fn sleep(dur: Duration) {
-    mut spec = libc::Timespec(tv_sec: dur.secs.saturating_cast(), tv_nsec: dur.nanos.cast());
-    while nanosleep(&spec, &mut spec) != 0 {
+    mut spec = libc::timespec(tv_sec: dur.secs.saturating_cast(), tv_nsec: dur.nanos.cast());
+    while clock_nanosleep(CLOCK_MONOTONIC, 0, &spec, &mut spec) is res and res != 0 {
+        assert_eq(res, libc::EINTR);
+    }
+}
+
+pub fn sleep_until(deadline: Instant) {
+    let dur = Duration::from_nanos(deadline.ns);
+    // TODO: Handle this better for 32 bit platforms
+    let spec = libc::timespec(tv_sec: dur.secs.saturating_cast(), tv_nsec: dur.nanos.cast());
+    while clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &spec, null) is res and res != 0 {
+        assert_eq(res, libc::EINTR);
     }
 }

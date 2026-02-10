@@ -1,15 +1,17 @@
 pub type size_t = uint;
 
 $[layout(C)]
-pub struct JmpBuf {
+pub struct jmp_buf {
     pad: [u8; 0xc8],
 }
 
 $[layout(C)]
-pub struct Timespec {
+pub struct timespec {
     pub tv_sec: c_long,
     pub tv_nsec: c_long,
 }
+
+pub const EINTR: c_int = 4;
 
 extern "C" {
     pub safe fn abort(): never;
@@ -22,8 +24,8 @@ extern "C" {
     pub fn free(addr: ?^mut void);
 
     // The C macro `setjmp` calls _setjmp, which does not save the signal mask
-    pub fn _setjmp(env: *mut JmpBuf): c_int;
-    pub fn longjmp(env: *mut JmpBuf, val: c_int): never;
+    pub fn _setjmp(env: *mut jmp_buf): c_int;
+    pub fn longjmp(env: *mut jmp_buf, val: c_int): never;
 
     pub fn memmem(kw haystack: ^void, kw hlen: uint, kw needle: ^void, kw nlen: uint): ?^void;
 }
@@ -105,13 +107,16 @@ pub mod math {
 pub mod posix {
     use super::*;
 
-    pub const CLOCK_MONOTONIC: c_int = 1;
+    pub const CLOCK_MONOTONIC: clockid_t = 1;
+
+    pub const TIMER_ABSTIME: c_int = 1;
 
     pub type pid_t = c_int;
     pub type uid_t = c_uint;
     pub type clock_t = c_long;
     pub type __SI_BAND_TYPE = c_long;
     pub type off_t = c_long;
+    pub type clockid_t = c_int;
 
     $[layout(C)]
     pub struct sigset_t {
@@ -251,8 +256,13 @@ pub mod posix {
 
     extern "C" {
         pub fn write(fd: c_int, buf: ^void, count: uint): int;
-        pub safe fn clock_gettime(clockid: c_int, tp: *mut Timespec): c_int;
-        pub safe fn nanosleep(time: *Timespec, remaining: ?*mut Timespec): c_int;
+        pub safe fn clock_gettime(clockid: clockid_t, tp: *mut timespec): c_int;
+        pub safe fn clock_nanosleep(
+            clockid: clockid_t,
+            flags: c_int,
+            time: *timespec,
+            remaining: ?*mut timespec,
+        ): c_int;
         pub safe fn getpid(): pid_t;
 
         pub fn sigemptyset(set: ^mut sigset_t): c_int;

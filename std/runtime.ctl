@@ -3,7 +3,7 @@ use std::deps::{libgc, libc};
 pub static mut CTL_ARGV: ?^mut ^mut c_char = null;
 pub static mut CTL_ARGC: c_int = 0;
 
-$[used(ctl), link_name("$ctl_stdlib_init"), feature(hosted)]
+$[used(ctl), link_name("$ctl_stdlib_init")]
 extern "C" fn init(argc: c_int, argv: ?^mut ^mut c_char) {
     unsafe {
         $[cfg("!ctl:no-gc")]
@@ -17,7 +17,7 @@ extern "C" fn init(argc: c_int, argv: ?^mut ^mut c_char) {
     }
 }
 
-$[used(ctl), link_name("$ctl_stdlib_deinit"), feature(hosted)]
+$[used(ctl), link_name("$ctl_stdlib_deinit")]
 extern "C" fn deinit() {
     $[cfg("!ctl:no-gc")]
     unsafe libgc::GC_deinit();
@@ -45,8 +45,8 @@ fn install_fault_handler() {
         if mmap_addr == ?MAP_FAILED {
             perror("mmap\0".as_raw().cast());
         } else {
-            mut stack = stack_t(ss_flags: 0, ss_size: stack_size, ss_sp: mmap_addr);
-            if sigaltstack(&mut stack, null) == -1 {
+            let stack = stack_t(ss_flags: 0, ss_size: stack_size, ss_sp: mmap_addr);
+            if sigaltstack(&stack, null) == -1 {
                 perror("sigaltstack\0".as_raw().cast());
             }
         }

@@ -7,6 +7,9 @@ pub mod io;
 $[feature(hosted)]
 pub mod env;
 
+$[feature(hosted)]
+pub mod time;
+
 $[feature(alloc)]
 pub mod alloc;
 
@@ -14,8 +17,10 @@ $[cfg(test)]
 pub mod test;
 
 mod deps;
-mod runtime;
 mod ryu;
+
+$[feature(hosted)]
+mod runtime;
 
 $[autouse]
 mod prelude {

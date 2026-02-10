@@ -73,7 +73,7 @@ pub fn debug_assert(_cond: bool, _msg: ?Arguments = null, _loc: *SrcLoc = SrcLoc
 }
 
 $[thread_local, feature(hosted)]
-static mut CTL_PANIC_JMPBUF: ?(libc::JmpBuf, ?^mut void) = null;
+static mut CTL_PANIC_JMPBUF: ?(libc::jmp_buf, ?^mut void) = null;
 
 $[thread_local, feature(hosted)]
 static mut CTL_PANIC_INFO: str = "";
