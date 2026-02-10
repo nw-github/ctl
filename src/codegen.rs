@@ -738,11 +738,19 @@ struct StringLiteral<'a>(&'a str);
 
 impl Display for StringLiteral<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "STRLIT(\"")?;
-        for byte in self.0.as_bytes() {
-            write!(f, "\\x{byte:x}")?;
+        if f.alternate() {
+            write!(f, "{{.span={{.ptr=(u8*)\"")?;
+            for byte in self.0.as_bytes() {
+                write!(f, "\\x{byte:x}")?;
+            }
+            write!(f, "\",.len={}}}}}", self.0.len())
+        } else {
+            write!(f, "STRLIT(\"")?;
+            for byte in self.0.as_bytes() {
+                write!(f, "\\x{byte:x}")?;
+            }
+            write!(f, "\",{})", self.0.len())
         }
-        write!(f, "\",{})", self.0.len())
     }
 }
 
@@ -2613,7 +2621,7 @@ impl<'a> Codegen<'a> {
                     self.emit_type(sl_typ);
                     write_de!(
                         self.buffer,
-                        " {tmp}={{.file={},.line={},.col={},.func=",
+                        " {tmp}={{.file={:#},.line={},.col={},.func=",
                         StringLiteral(&path),
                         range.map(|s| s.start.line).unwrap_or_default() + 1,
                         range.map(|s| s.start.character).unwrap_or_default() + 1,
@@ -2632,7 +2640,7 @@ impl<'a> Codegen<'a> {
                             union.discriminant(Strings::SOME).unwrap().clone(),
                             union.tag,
                         );
-                        write_de!(self.buffer, ",.Some={}}}", StringLiteral(&str));
+                        write_de!(self.buffer, ",.Some.$0={:#}}}", StringLiteral(&str));
                     } else {
                         write_de!(self.buffer, "{{.{UNION_TAG_NAME}=");
                         self.emit_literal(
