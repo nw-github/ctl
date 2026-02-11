@@ -6233,6 +6233,7 @@ impl TypeChecker<'_> {
                 continue;
             };
 
+            check_hover!(self, name.span, LspItem::Property(Some(stripped), ut_id, name.data));
             if !access.can_access(member.vis) {
                 self.proj.diag.report(Error::private_member(
                     self.proj.fmt_ty(scrutinee),
