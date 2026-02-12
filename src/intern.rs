@@ -4,8 +4,14 @@ use lasso::Rodeo;
 
 pub type StrId = lasso::Spur;
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct ByteStrId(NonZeroU32, NonZeroU32);
+
+impl std::fmt::Display for ByteStrId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "$BSTR{}_{}", self.0, self.1)
+    }
+}
 
 pub const THIS_PARAM: &str = "this";
 pub const THIS_TYPE: &str = "This";

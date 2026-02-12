@@ -4,7 +4,7 @@ use crate::{
     CachingSourceProvider, Diagnostics, OffsetMode, SourceProvider, Span,
     ast::{Alignment, BinaryOp, Sign, UnaryOp, checked::*, parsed::RangePattern},
     ds::{ComptimeInt, Dependencies, DependencyGraph, HashMap, HashSet, IndexMap},
-    intern::{StrId, Strings},
+    intern::{ByteStrId, StrId, Strings},
     nearest_pow_of_two,
     project::Project,
     sym::*,
@@ -921,10 +921,10 @@ pub struct Codegen<'a> {
     cur_block: ScopeId,
     cur_loop: ScopeId,
     vtables: Buffer<'a>,
-    arrays: Buffer<'a>,
     static_asserts: Buffer<'a>,
     defer_buf: Buffer<'a>,
     emitted_vtables: HashSet<Vtable>,
+    emitted_bstrs: HashSet<(ByteStrId, TypeId)>,
     defers: Vec<(ScopeId, Vec<(String, String)>)>,
     tg: TypeGen,
     str_interp: StrInterp,
@@ -957,12 +957,12 @@ impl<'a> Codegen<'a> {
             buffer: Buffer::new(proj),
             temporaries: Buffer::new(proj),
             vtables: Buffer::new(proj),
-            arrays: Buffer::new(proj),
             defer_buf: Buffer::new(proj),
             static_asserts: Buffer::new(proj),
             cur_block: Default::default(),
             cur_loop: Default::default(),
             emitted_vtables: Default::default(),
+            emitted_bstrs: Default::default(),
             defers: Default::default(),
             tg: Default::default(),
             source: CachingSourceProvider::new(),
@@ -1054,7 +1054,17 @@ impl<'a> Codegen<'a> {
         this.tg.emit(&mut this.buffer, &mut this.static_asserts);
         this.buffer.emit(prototypes.finish());
         this.buffer.emit(this.vtables.finish());
-        this.buffer.emit(this.arrays.finish());
+
+        for (id, ty) in this.emitted_bstrs {
+            write_de!(this.buffer, "static const ");
+            this.buffer.emit_type(ty);
+            write_de!(this.buffer, " {id}={{.{ARRAY_DATA_NAME}=\"");
+            for byte in this.proj.strings.resolve_byte_str(id) {
+                write_de!(this.buffer, "\\x{byte:x}");
+            }
+            writeln_de!(this.buffer, "\"}};");
+        }
+
         this.buffer.emit(static_defs.finish());
         this.buffer.emit(functions.finish());
         this.buffer.emit("static void $ctl_static_init(void){");
@@ -1689,16 +1699,11 @@ impl<'a> Codegen<'a> {
             }
             &ExprData::String(v) => write_de!(self.buffer, "{}", StringLiteral(self.proj.str(v))),
             ExprData::GeneratedString(v) => write_de!(self.buffer, "{}", StringLiteral(v)),
-            ExprData::ByteString(value) => {
-                write_de!(self.arrays, "static const ");
-                emit_type!(self, expr.ty.as_pointee(&self.proj.types).unwrap(), self.arrays);
-                write_de!(self.arrays, " $BSTR{}={{.{ARRAY_DATA_NAME}=\"", expr.data.as_raw());
-                for byte in self.proj.strings.resolve_byte_str(*value) {
-                    write_de!(self.arrays, "\\x{byte:x}");
-                }
-                writeln_de!(self.arrays, "\"}};");
-
-                write_de!(self.buffer, "&$BSTR{}", expr.data.as_raw());
+            &ExprData::ByteString(id) => {
+                let inner = expr.ty.as_pointee(&self.proj.types).unwrap();
+                self.tg.add_type(&self.proj.scopes, &self.proj.types, inner);
+                self.emitted_bstrs.insert((id, inner));
+                write_de!(self.buffer, "&{id}");
             }
             ExprData::Void => self.buffer.emit(VOID_INSTANCE),
             ExprData::Fn(func) => {
