@@ -6669,7 +6669,8 @@ impl TypeChecker<'_> {
     fn find_in_vns(&self, name: StrId) -> Option<Vis<ValueItem>> {
         for (id, scope) in self.proj.scopes.walk(self.current) {
             if let Some(item) = self.proj.scopes[id].find_in_vns(name) {
-                if item.is_fn() && matches!(scope.kind, ScopeKind::UserType(_)) {
+                if item.is_fn() && matches!(scope.kind, ScopeKind::UserType(_) | ScopeKind::Impl(_))
+                {
                     continue;
                 }
 
