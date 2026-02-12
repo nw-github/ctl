@@ -274,6 +274,14 @@ impl TypeGen {
             return;
         }
 
+        let needs_direct_dep = |inner: TypeId| {
+            matches!(types[inner], Type::Fn(_) | Type::FnPtr(_))
+                || inner.can_omit_tag(scopes, types).is_some()
+                || types[inner]
+                    .as_user()
+                    .is_some_and(|ut| scopes.get(ut.id).attrs.layout == Layout::Transparent)
+        };
+
         let mut deps = HashSet::new();
         macro_rules! dependency {
             ($ty: expr) => {{
@@ -282,12 +290,7 @@ impl TypeGen {
                 while let Some(id) = inner.as_pointee(types) {
                     inner = id;
                 }
-                if matches!(types[inner], Type::Fn(_) | Type::FnPtr(_))
-                    || inner.can_omit_tag(scopes, types).is_some()
-                    || types[inner]
-                        .as_user()
-                        .is_some_and(|ut| scopes.get(ut.id).attrs.layout == Layout::Transparent)
-                {
+                if needs_direct_dep(inner) {
                     deps.insert(inner);
                 } else if matches!(
                     types[dep],
@@ -312,9 +315,7 @@ impl TypeGen {
                 while let Some(id) = inner.as_pointee(types) {
                     inner = id;
                 }
-                if matches!(types[inner], Type::Fn(_) | Type::FnPtr(_))
-                    || inner.can_omit_tag(scopes, types).is_some()
-                {
+                if needs_direct_dep(inner) {
                     deps.insert(inner);
                 }
 
