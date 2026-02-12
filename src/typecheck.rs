@@ -7898,7 +7898,7 @@ pub trait LookupTraitFn {
             match ty {
                 Type::Fn(f) => {
                     let data = scopes.get(f.id);
-                    if !data.abi.is_ctl() || data.is_unsafe {
+                    if data.is_unsafe {
                         return None;
                     }
 
@@ -7915,7 +7915,7 @@ pub trait LookupTraitFn {
                         [args, ret],
                     ));
                 }
-                Type::FnPtr(f) if f.abi.is_ctl() && !f.is_unsafe => {
+                Type::FnPtr(f) if !f.is_unsafe => {
                     let ret = f.ret;
                     let args = self.get_tuple(f.params.clone());
                     return Some(GenericTrait::from_type_args(
