@@ -101,6 +101,10 @@ where
 }
 
 impl<T> WithTypeArgs<T> {
+    pub fn non_generic(id: T) -> Self {
+        Self::new(id, Default::default())
+    }
+
     pub fn fill_templates(&mut self, types: &Types, map: &TypeArgs) {
         for ty in self.ty_args.values_mut() {
             *ty = ty.with_templates(types, map);

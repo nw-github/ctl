@@ -362,7 +362,6 @@ impl TypeGen {
     }
 }
 
-#[derive(Eq, Clone)]
 struct State {
     func: GenericFn,
     tmpvar: usize,
@@ -374,18 +373,6 @@ impl State {
         Self { func, tmpvar: 0, emitted_names: Default::default() }
     }
 
-    pub fn from_non_generic(id: FunctionId, scopes: &Scopes) -> Self {
-        Self::new(GenericFn::from_id(scopes, id))
-    }
-
-    pub fn with_inst(mut func: GenericFn, types: &Types, inst: TypeId) -> Self {
-        if let Type::User(ut) = &types[inst] {
-            func.ty_args.copy_args(&ut.ty_args);
-        }
-
-        Self::new(func)
-    }
-
     pub fn tmpvar(&mut self) -> String {
         let v = format!("_{}", self.tmpvar);
         self.tmpvar += 1;
@@ -393,19 +380,6 @@ impl State {
     }
 }
 
-impl std::hash::Hash for State {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.func.hash(state);
-    }
-}
-
-impl PartialEq for State {
-    fn eq(&self, other: &Self) -> bool {
-        self.func == other.func
-    }
-}
-
-#[derive(Clone)]
 struct Buffer<'a>(String, &'a Project);
 
 impl<'a> Buffer<'a> {
@@ -915,7 +889,7 @@ pub struct Codegen<'a> {
     proj: &'a Project,
     buffer: Buffer<'a>,
     temporaries: Buffer<'a>,
-    funcs: HashSet<State>,
+    funcs: HashSet<GenericFn>,
     statics: HashSet<VariableId>,
     emitted_never_in_this_block: bool,
     cur_block: ScopeId,
@@ -945,7 +919,7 @@ impl<'a> Codegen<'a> {
                 .filter(|(_, f)| {
                     f.attrs.used.is_some() || (f.attrs.export && f.type_params.is_empty())
                 })
-                .map(|(id, _)| State::from_non_generic(id, &proj.scopes))
+                .map(|(id, _)| GenericFn::non_generic(id))
                 .collect(),
             statics: proj
                 .scopes
@@ -974,15 +948,14 @@ impl<'a> Codegen<'a> {
         let mut prototypes = Buffer::new(proj);
         let mut emitted_fns = HashSet::new();
         let mut emitted_statics = HashSet::new();
-        let static_state =
-            &mut State::new(GenericFn::from_id(&this.proj.scopes, FunctionId::RESERVED));
+        let static_state = &mut State::new(GenericFn::non_generic(FunctionId::RESERVED));
 
         while !this.funcs.is_empty() || !this.statics.is_empty() {
             let diff = this.funcs.difference(&emitted_fns).cloned().collect::<Vec<_>>();
             emitted_fns.extend(this.funcs.drain());
 
-            for mut state in diff {
-                let data = this.emit_fn(&mut state, &mut prototypes);
+            for func in diff {
+                let data = this.emit_fn(&mut State::new(func), &mut prototypes);
                 this.buffer.emit(this.defer_buf.take().finish());
                 if let Some(data) = data {
                     this.buffer.emit(data);
@@ -1105,7 +1078,7 @@ impl<'a> Codegen<'a> {
                     );
                     self.buffer.emit_fn_name(&func);
                     write_de!(self.buffer, ",");
-                    self.funcs.insert(State::new(func));
+                    self.funcs.insert(func);
                 }
             }
             writeln_de!(self.buffer, "}};");
@@ -1125,9 +1098,9 @@ impl<'a> Codegen<'a> {
             return Some(self.buffer.take().finish());
         }
 
-        let main = State::from_non_generic(self.proj.main?, &self.proj.scopes);
+        let main = GenericFn::non_generic(self.proj.main?);
         self.buffer.emit(MAIN);
-        self.buffer.emit_fn_name(&main.func);
+        self.buffer.emit_fn_name(&main);
         self.buffer.emit("();$ctl_stdlib_deinit();return 0;}\n");
         self.funcs.insert(main);
         Some(self.buffer.take().finish())
@@ -1149,8 +1122,7 @@ impl<'a> Codegen<'a> {
             self.buffer.emit_type_name(&GenericUserType::new(test_info_ty, TypeArgs::default()));
             self.buffer.emit(" tests[]={");
 
-            let mut runner =
-                State::from_non_generic(self.proj.test_runner.unwrap(), &self.proj.scopes);
+            let mut runner = State::new(GenericFn::non_generic(self.proj.test_runner.unwrap()));
 
             let mut modules = vec![];
             if let Some(args) = &self.proj.conf.test_args
@@ -1177,7 +1149,7 @@ impl<'a> Codegen<'a> {
                     continue;
                 }
 
-                let state = State::from_non_generic(id, &self.proj.scopes);
+                let state = GenericFn::non_generic(id);
                 write_de!(
                     self.buffer,
                     "{{.skip={},.name={},.module={},.test=",
@@ -1185,7 +1157,7 @@ impl<'a> Codegen<'a> {
                     StringLiteral(self.proj.str(func.name.data)),
                     StringLiteral(&full_name_pretty(self.proj, func.scope, true))
                 );
-                self.buffer.emit_fn_name(&state.func);
+                self.buffer.emit_fn_name(&state);
 
                 write_de!(self.buffer, ",.skip_reason=");
                 let skip_reason_ty = self
@@ -1214,7 +1186,7 @@ impl<'a> Codegen<'a> {
             write_de!(self.buffer, "(");
             self.emit_cast(self.proj.scopes.get(runner.func.id).params[0].ty);
             writeln_de!(self.buffer, "{{.ptr=tests,.len={test_count}}});");
-            self.funcs.insert(runner);
+            self.funcs.insert(runner.func);
         });
     }
 
@@ -1630,22 +1602,18 @@ impl<'a> Codegen<'a> {
 
                 let args = args.clone();
                 tmpbuf_emit!(self, state, |tmp| {
-                    self.emit_with_capacity(expr.ty, &tmp, ut, args.len());
-                    let insert = State::with_inst(
-                        GenericFn::from_id(
-                            &self.proj.scopes,
-                            self.proj
-                                .scopes
-                                .get(ut.id)
-                                .find_associated_fn(&self.proj.scopes, Strings::FN_INSERT)
-                                .unwrap(),
-                        ),
-                        &self.proj.types,
-                        expr.ty,
+                    let mut insert = GenericFn::non_generic(
+                        self.proj
+                            .scopes
+                            .get(ut.id)
+                            .find_associated_fn(&self.proj.scopes, Strings::FN_INSERT)
+                            .unwrap(),
                     );
+                    insert.ty_args.copy_args(&ut.ty_args);
 
+                    self.emit_with_capacity(expr.ty, &tmp, ut, args.len());
                     for val in args {
-                        self.buffer.emit_fn_name(&insert.func);
+                        self.buffer.emit_fn_name(&insert);
                         write_de!(self.buffer, "(&{tmp},");
                         self.emit_expr_inline(val, state);
                         writeln_de!(self.buffer, ");");
@@ -1661,22 +1629,18 @@ impl<'a> Codegen<'a> {
 
                 let args = args.clone();
                 tmpbuf_emit!(self, state, |tmp| {
-                    let insert = State::with_inst(
-                        GenericFn::from_id(
-                            &self.proj.scopes,
-                            self.proj
-                                .scopes
-                                .get(ut.id)
-                                .find_associated_fn(&self.proj.scopes, Strings::FN_INSERT)
-                                .unwrap(),
-                        ),
-                        &self.proj.types,
-                        expr.ty,
+                    let mut insert = GenericFn::non_generic(
+                        self.proj
+                            .scopes
+                            .get(ut.id)
+                            .find_associated_fn(&self.proj.scopes, Strings::FN_INSERT)
+                            .unwrap(),
                     );
+                    insert.ty_args.copy_args(&ut.ty_args);
 
                     self.emit_with_capacity(expr.ty, &tmp, ut, args.len());
                     for (key, val) in args {
-                        self.buffer.emit_fn_name(&insert.func);
+                        self.buffer.emit_fn_name(&insert);
                         write_de!(self.buffer, "(&{tmp},");
                         self.emit_expr(key, state);
                         write_de!(self.buffer, ",");
@@ -1709,7 +1673,7 @@ impl<'a> Codegen<'a> {
             ExprData::Fn(func) => {
                 let func = func.with_templates(&self.proj.types, &state.func.ty_args);
                 self.buffer.emit_fn_name(&func);
-                self.funcs.insert(State::new(func));
+                self.funcs.insert(func);
             }
             ExprData::MemFn(mfn) => self.emit_member_fn(state, mfn.clone()),
             &ExprData::Var(id) => self.emit_var_access(id, state),
@@ -1974,7 +1938,7 @@ impl<'a> Codegen<'a> {
 
                 let func = GenericFn::new(id, closure.ty_args.clone());
                 self.buffer.emit_fn_name(&func);
-                self.funcs.insert(State::new(func));
+                self.funcs.insert(func);
             }
             ExprData::Error => panic!("ICE: ExprData::Error in gen_expr"),
         }
@@ -2001,7 +1965,7 @@ impl<'a> Codegen<'a> {
 
         mfn.func.fill_templates(&self.proj.types, &state.func.ty_args);
         self.buffer.emit_fn_name(&mfn.func);
-        self.funcs.insert(State::new(mfn.func));
+        self.funcs.insert(mfn.func);
     }
 
     fn emit_instance(&mut self, state: &mut State, ty: TypeId, members: &IndexMap<StrId, Expr>) {
@@ -2405,18 +2369,18 @@ impl<'a> Codegen<'a> {
     }
 
     fn emit_new(&mut self, ut: &GenericUserType) {
-        let new_state = State::new(GenericFn::new(
+        let func = GenericFn::new(
             self.proj
                 .scopes
                 .get(ut.id)
                 .find_associated_fn(&self.proj.scopes, Strings::FN_NEW)
                 .unwrap(),
             ut.ty_args.clone(),
-        ));
+        );
 
-        self.buffer.emit_fn_name(&new_state.func);
+        self.buffer.emit_fn_name(&func);
         write_de!(self.buffer, "()");
-        self.funcs.insert(new_state);
+        self.funcs.insert(func);
     }
 
     fn emit_with_capacity(
@@ -2428,18 +2392,18 @@ impl<'a> Codegen<'a> {
     ) {
         self.emit_type(ty);
         write_de!(self.buffer, " {tmp}=");
-        let state = State::new(GenericFn::new(
+        let func = GenericFn::new(
             self.proj
                 .scopes
                 .get(ut.id)
                 .find_associated_fn(&self.proj.scopes, Strings::FN_WITH_CAPACITY)
                 .unwrap(),
             ut.ty_args.clone(),
-        ));
+        );
 
-        self.buffer.emit_fn_name(&state.func);
+        self.buffer.emit_fn_name(&func);
         writeln_de!(self.buffer, "({len});");
-        self.funcs.insert(state);
+        self.funcs.insert(func);
     }
 
     fn emit_intrinsic(
@@ -2483,13 +2447,12 @@ impl<'a> Codegen<'a> {
                 );
             }
             Intrinsic::Panic => {
-                let panic = State::from_non_generic(
+                let panic = GenericFn::non_generic(
                     self.proj.panic_handler.expect("a panic handler should exist"),
-                    &self.proj.scopes,
                 );
 
                 write_de!(self.buffer, "{VOID}(");
-                self.buffer.emit_fn_name(&panic.func);
+                self.buffer.emit_fn_name(&panic);
                 write_de!(self.buffer, "(");
                 for (i, (_, expr)) in args.into_iter().enumerate() {
                     if i > 0 {
@@ -2826,7 +2789,7 @@ impl<'a> Codegen<'a> {
             let func = GenericFn::from_type_args(&this.proj.scopes, args.value, [ty]);
             this.buffer.emit_fn_name(&func);
             write_de!(this.buffer, "(&{fmtr_name},&");
-            this.funcs.insert(State::new(func));
+            this.funcs.insert(func);
         };
 
         let end = |this: &mut Self, name: String| {
@@ -2884,7 +2847,7 @@ impl<'a> Codegen<'a> {
 
                 self.buffer.emit_fn_name(&func);
                 write_de!(self.buffer, "(&{fmtr_name},{},&", StringLiteral(name_data));
-                self.funcs.insert(State::new(func));
+                self.funcs.insert(func);
             } else {
                 start_print_value(self, &fmtr_name, member_ty);
             }
@@ -3870,7 +3833,7 @@ impl<'a> Codegen<'a> {
         let fn_name = Buffer::format(self.proj, |buf| {
             buf.emit_fn_name(&formatter_write_str);
         });
-        self.funcs.insert(State::new(formatter_write_str));
+        self.funcs.insert(formatter_write_str);
 
         let debug_list = *self.proj.scopes.lang_types.get(&LangType::DebugList).unwrap();
         let dl_scope = &self.proj.scopes[self.proj.scopes.get(debug_list).body_scope];
@@ -3880,13 +3843,18 @@ impl<'a> Codegen<'a> {
         let named = dl_scope.find_fn(self.proj.strings.get("named").unwrap()).unwrap().id;
         let value = dl_scope.find_fn(self.proj.strings.get("value").unwrap()).unwrap().id;
 
+        let begin = GenericFn::new(begin, Default::default());
+        let end = GenericFn::new(end, Default::default());
+        self.funcs.insert(begin.clone());
+        self.funcs.insert(end.clone());
+
         BuiltinDbgArgs {
             dbg_fn,
             dbg_tr,
             formatter_write_str: fn_name,
             fallback_dbg_ext,
-            begin: GenericFn::new(begin, Default::default()),
-            end: GenericFn::new(end, Default::default()),
+            begin,
+            end,
             named,
             value,
         }
@@ -4166,13 +4134,13 @@ impl StrInterp {
             .scopes
             .lang_types
             .get(&LangType::String)
-            .map(|&ut| GenericUserType::from_id(&proj.scopes, &proj.types, ut));
+            .map(|&id| GenericUserType::non_generic(id));
         Self {
             fmt_arg: proj
                 .scopes
                 .lang_types
                 .get(&LangType::FmtArg)
-                .map(|&ut| GenericUserType::from_id(&proj.scopes, &proj.types, ut)),
+                .map(|&id| GenericUserType::non_generic(id)),
             string_ty: string.as_ref().map(|s| proj.types.insert(Type::User(s.clone()))),
             string,
             opts: proj.strings.get("opts").unwrap(),
