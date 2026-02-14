@@ -37,14 +37,9 @@ pub struct Set<T: Hash + Eq<T>> {
 
     impl std::fmt::Debug {
         fn dbg(this, f: *mut std::fmt::Formatter) {
-            f.write_str("#[");
-            for (i, item) in this.iter().enumerate() {
-                if i > 0 {
-                    f.write_str(", ");
-                }
-                write(f, "{item:?}");
-            }
-            f.write_str("]");
+            f.dbg_list(begin: "#[", |=this, =f, list| {
+                this.iter().for_each(|=list, item| list.value(item))
+            });
         }
     }
 }

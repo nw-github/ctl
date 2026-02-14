@@ -77,6 +77,12 @@ pub trait Iterator<T> {
         acc
     }
 
+    fn for_each<F: Fn(T)>(my mut this, f: F) {
+        while this.next() is ?next {
+            f(next);
+        }
+    }
+
     fn reduce<F: Fn(T, T) => T>(my mut this, f: F): ?T => ?this.fold(this.next()?, f);
 }
 

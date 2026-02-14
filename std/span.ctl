@@ -68,14 +68,7 @@ pub struct Span<T> {
 
     impl Debug {
         fn dbg(this, f: *mut Formatter) {
-            f.write_char('[');
-            for (i, item) in this.iter().enumerate() {
-                if i > 0 {
-                    f.write_str(", ");
-                }
-                write(f, "{item:?}");
-            }
-            f.write_char(']');
+            f.dbg_list(|=this, =f, list| this.iter().for_each(|=list, item| list.value(item)));
         }
     }
 }

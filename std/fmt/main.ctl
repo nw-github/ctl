@@ -1,3 +1,5 @@
+mod debug;
+
 $[lang(fmt_write)]
 pub trait Write {
     fn write_str(mut this, data: str);
@@ -20,10 +22,12 @@ struct Pad {
 pub struct Formatter {
     write: *dyn mut Write,
     opts: Options,
+    /// TODO: replace this with opts.width and a flag
+    indent: u16,
 
-    pub fn new(write: *dyn mut Write): This => Formatter(write:, opts: Options());
+    pub fn new(write: *dyn mut Write): This => This(write:, opts: Options(), indent: 0);
 
-    pub fn with_options(this, opts: Options): Formatter => Formatter(write: this.write, opts:);
+    pub fn with_options(this, opts: Options): This => This(write: this.write, opts:, indent: this.indent);
 
     pub fn options(this): *Options => &this.opts;
 

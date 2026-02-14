@@ -178,14 +178,7 @@ pub struct Map<K: Hash + Eq<K>, V /*, H: Hasher + Default */> {
 
     impl std::fmt::Debug {
         fn dbg(this, f: *mut std::fmt::Formatter) {
-            f.write_str("[");
-            for (i, (key, value)) in this.iter().enumerate() {
-                if i > 0 {
-                    f.write_str(", ");
-                }
-                write(f, "{key:?}: {value:?}");
-            }
-            f.write_str("]");
+            f.dbg_list(|=this, =f, list| this.iter().for_each(|=list, (k, v)| list.named(k, v)));
         }
     }
 }
