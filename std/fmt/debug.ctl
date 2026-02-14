@@ -21,6 +21,7 @@ extension Formatter {
     }
 }
 
+$[lang(debug_list)]
 pub struct List {
     fmt: Formatter,
     items: bool = false,
@@ -60,7 +61,16 @@ pub struct List {
         f()
     }
 
-    pub fn named<K, V>(mut this, k: *K, v: *V) {
+    // Used by the compiler for derived Debug impl
+    pub fn named<V>(mut this, k: str, v: *V) {
+        this.item(|=this, =k, =v| {
+            this.fmt.write_str(k);
+            this.fmt.write_str(": ");
+            v.dbg(&mut this.fmt);
+        })
+    }
+
+    pub fn keyed<K, V>(mut this, k: *K, v: *V) {
         this.item(|=this, =k, =v| {
             k.dbg(&mut this.fmt);
             this.fmt.write_str(": ");

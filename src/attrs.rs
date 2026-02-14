@@ -375,6 +375,7 @@ pub enum LangType {
     RangeFrom,
     RangeInclusive,
 
+    DebugList,
     FallbackDebug,
 }
 
@@ -400,6 +401,7 @@ impl LangType {
             "range_from" => Some(Self::RangeFrom),
             "range_inclusive" => Some(Self::RangeInclusive),
             "fallback_debug" => Some(Self::FallbackDebug),
+            "debug_list" => Some(Self::DebugList),
             _ => None,
         }
     }

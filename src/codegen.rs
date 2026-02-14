@@ -2712,7 +2712,6 @@ impl<'a> Codegen<'a> {
                             &format!("(*{arg})"),
                             &fmt,
                             state,
-                            0,
                         );
                     });
                 });
@@ -2772,7 +2771,6 @@ impl<'a> Codegen<'a> {
         arg: &str,
         fmt: &str,
         state: &mut State,
-        lvl: usize,
     ) {
         if let Some(mfn) =
             self.lookup_trait_fn(arg_ty, &args.dbg_tr, args.dbg_fn, |_, _| TypeArgs::default())
@@ -2795,19 +2793,8 @@ impl<'a> Codegen<'a> {
             };
         }
 
-        macro_rules! write_str_fmt {
-            ($($arg:tt)*) => {
-                writeln_de!(
-                    self.buffer,
-                    "{}({fmt},{});",
-                    args.formatter_write_str,
-                    StringLiteral(&format!($($arg)*))
-                )
-            };
-        }
-
-        match &self.proj.types[arg_ty] {
-            Type::Never => write_str!("never"),
+        let ut = match &self.proj.types[arg_ty] {
+            Type::Never => return write_str!("never"),
             Type::Fn(func) => {
                 let ty = self.proj.types.insert(Type::RawPtr(TypeId::VOID));
                 let ptr = Buffer::format(self.proj, |buf| {
@@ -2815,97 +2802,110 @@ impl<'a> Codegen<'a> {
                     buf.emit_fn_name(func);
                     write_de!(buf, "}}");
                 });
-                self.emit_builtin_dbg(args, ty, &ptr, fmt, state, 0);
+                return self.emit_builtin_dbg(args, ty, &ptr, fmt, state);
             }
             Type::FnPtr(_) => {
                 let ty = self.proj.types.insert(Type::RawPtr(TypeId::VOID));
                 let ptr = format!("(void const*){{{arg}}}");
-                self.emit_builtin_dbg(args, ty, &ptr, fmt, state, 0);
+                return self.emit_builtin_dbg(args, ty, &ptr, fmt, state);
             }
-            Type::User(ut) => {
-                let ut_data = self.proj.scopes.get(ut.id);
-                if let Some(union) = ut_data.kind.as_union() {
-                    if ut.can_omit_tag(&self.proj.scopes, &self.proj.types).is_some() {
-                        write_de!(self.buffer, "if ({arg}) {{");
-                        write_str!("Some(");
-                        let ty = ut.get_type_arg(0, &self.proj.scopes).unwrap();
-                        self.emit_builtin_dbg(args, ty, arg, fmt, state, lvl + 1);
-                        write_str!(")");
-                        write_de!(self.buffer, "}}else{{");
-                        write_str!("null");
-                        write_de!(self.buffer, "}}");
-                        return;
-                    }
-
-                    // TODO: shared members
-                    write_de!(self.buffer, "switch({arg}.{UNION_TAG_NAME}){{");
-                    for (&name, variant) in union.variants.iter() {
-                        let discrim = variant.discrim.as_checked().unwrap();
-                        writeln_de!(self.buffer, "case {discrim}:{{");
-                        write_str!(self.proj.str(name));
-                        if let Some(ty) = variant.ty {
-                            let ty = ty.with_templates(&self.proj.types, &ut.ty_args);
-                            let buf = format!("{arg}.{}", MemberName(self.proj, name));
-                            self.emit_builtin_dbg(args, ty, &buf, fmt, state, lvl + 1);
-                        }
-                        writeln_de!(self.buffer, "break;}}");
-                    }
-                    writeln_de!(self.buffer, "default:CTL_UNREACHABLE();}}");
-                    return;
-                }
-
-                let is_tuple = ut_data.kind.is_tuple();
-                if !is_tuple {
-                    write_str!(self.proj.str(ut_data.name.data));
-                }
-
-                write_str!("(");
-                for (i, (&name, member)) in ut_data.members.iter().enumerate() {
-                    if i != 0 {
-                        write_str!(", ");
-                    }
-
-                    if !is_tuple {
-                        // TODO: emit_bitfield_read
-                        write_de!(self.buffer, "if({fmt}->opts.{ARRAY_DATA_NAME}[0]&(1ull<<56)){{");
-                        write_str_fmt!("\n{:<width$}", "", width = (lvl + 1) * 4);
-                        write_de!(self.buffer, "}}");
-                    }
-
-                    let name_data = self.proj.str(name);
-                    if !is_tuple || !name_data.starts_with(|ch: char| ch.is_ascii_digit()) {
-                        write_str_fmt!("{name_data}: ");
-                    }
-
-                    let ty = member.ty.with_templates(&self.proj.types, &ut.ty_args);
-                    let buf = if ut_data.kind.is_packed_struct() {
-                        tmpbuf!(self, state, |tmp| {
-                            self.emit_type(ty);
-                            write_de!(self.buffer, " {tmp}=");
-                            self.emit_bitfield_read(arg, ut, name, ty);
-                            writeln_de!(self.buffer, ";");
-                            tmp
-                        })
-                    } else if ut_data.attrs.layout != Layout::Transparent {
-                        format!("{arg}.{}", MemberName(self.proj, name))
-                    } else {
-                        arg.to_string()
-                    };
-                    self.emit_builtin_dbg(args, ty, &buf, fmt, state, lvl + 1);
-                }
-
-                if !is_tuple && !ut_data.members.is_empty() {
-                    write_de!(self.buffer, "if({fmt}->opts.{ARRAY_DATA_NAME}[0]&(1ull<<56)){{");
-                    write_str_fmt!(",\n{:<width$})", "", width = lvl * 4);
-                    write_de!(self.buffer, "}}else{{");
-                    write_str!(")");
-                    write_de!(self.buffer, "}}");
-                } else {
-                    write_str!(")");
-                }
-            }
+            Type::User(ut) => ut,
             _ => panic!("ICE: attempt to emit_builtin_dbg for '{}'", self.proj.fmt_ty(arg_ty)),
+        };
+
+        let mut begin = |this: &mut Self| {
+            let name = state.tmpvar();
+            this.emit_type(this.proj.scopes.get(args.begin.id).ret);
+            write_de!(this.buffer, " {name}=");
+            this.buffer.emit_fn_name(&args.begin);
+            writeln_de!(this.buffer, "({fmt},{});", StringLiteral("("));
+            name
+        };
+
+        let start_print_value = |this: &mut Self, fmtr_name: &str, ty: TypeId| {
+            let func = GenericFn::from_type_args(&this.proj.scopes, args.value, [ty]);
+            this.buffer.emit_fn_name(&func);
+            write_de!(this.buffer, "(&{fmtr_name},&");
+            this.funcs.insert(State::new(func));
+        };
+
+        let end = |this: &mut Self, name: String| {
+            this.buffer.emit_fn_name(&args.end);
+            write_de!(this.buffer, "(&{name},{});", StringLiteral(")"));
+        };
+
+        let ut_data = self.proj.scopes.get(ut.id);
+        if let Some(union) = ut_data.kind.as_union() {
+            if ut.can_omit_tag(&self.proj.scopes, &self.proj.types).is_some() {
+                write_de!(self.buffer, "if ({arg}) {{");
+                {
+                    write_str!("Some");
+                    let name = begin(self);
+                    start_print_value(self, &name, ut.get_type_arg(0, &self.proj.scopes).unwrap());
+                    writeln_de!(self.buffer, "{arg});");
+                    end(self, name);
+                }
+                write_de!(self.buffer, "}}else{{");
+                {
+                    write_str!("null");
+                }
+                write_de!(self.buffer, "}}");
+                return;
+            }
+
+            // TODO: shared members
+            write_de!(self.buffer, "switch({arg}.{UNION_TAG_NAME}){{");
+            for (&name, variant) in union.variants.iter() {
+                let discrim = variant.discrim.as_checked().unwrap();
+                writeln_de!(self.buffer, "case {discrim}:{{");
+                write_str!(self.proj.str(name));
+                if let Some(ty) = variant.ty {
+                    let ty = ty.with_templates(&self.proj.types, &ut.ty_args);
+                    let buf = format!("{arg}.{}", MemberName(self.proj, name));
+                    self.emit_builtin_dbg(args, ty, &buf, fmt, state);
+                }
+                writeln_de!(self.buffer, "break;}}");
+            }
+            writeln_de!(self.buffer, "default:CTL_UNREACHABLE();}}");
+            return;
         }
+
+        let is_tuple = ut_data.kind.is_tuple();
+        if !is_tuple {
+            write_str!(self.proj.str(ut_data.name.data));
+        }
+
+        let fmtr_name = begin(self);
+        for (&name, member) in ut_data.members.iter() {
+            let name_data = self.proj.str(name);
+            let member_ty = member.ty.with_templates(&self.proj.types, &ut.ty_args);
+            if !is_tuple || !name_data.starts_with(|ch: char| ch.is_ascii_digit()) {
+                let func = GenericFn::from_type_args(&self.proj.scopes, args.named, [member_ty]);
+
+                self.buffer.emit_fn_name(&func);
+                write_de!(self.buffer, "(&{fmtr_name},{},&", StringLiteral(name_data));
+                self.funcs.insert(State::new(func));
+            } else {
+                start_print_value(self, &fmtr_name, member_ty);
+            }
+
+            if ut_data.kind.is_packed_struct() {
+                let tmp = tmpbuf!(self, state, |tmp| {
+                    self.emit_type(member_ty);
+                    write_de!(self.buffer, " {tmp}=");
+                    self.emit_bitfield_read(arg, ut, name, member_ty);
+                    writeln_de!(self.buffer, ";");
+                    tmp
+                });
+                writeln_de!(self.buffer, "{tmp});");
+            } else if ut_data.attrs.layout != Layout::Transparent {
+                writeln_de!(self.buffer, "{arg}.{});", MemberName(self.proj, name))
+            } else {
+                writeln_de!(self.buffer, "{arg});");
+            }
+        }
+
+        end(self, fmtr_name);
     }
 
     fn emit_tmpvar_ident(&mut self, expr: Expr, state: &mut State) {
@@ -3872,7 +3872,24 @@ impl<'a> Codegen<'a> {
         });
         self.funcs.insert(State::new(formatter_write_str));
 
-        BuiltinDbgArgs { dbg_fn, dbg_tr, formatter_write_str: fn_name, fallback_dbg_ext }
+        let debug_list = *self.proj.scopes.lang_types.get(&LangType::DebugList).unwrap();
+        let dl_scope = &self.proj.scopes[self.proj.scopes.get(debug_list).body_scope];
+
+        let begin = dl_scope.find_fn(self.proj.strings.get("begin").unwrap()).unwrap().id;
+        let end = dl_scope.find_fn(self.proj.strings.get("end").unwrap()).unwrap().id;
+        let named = dl_scope.find_fn(self.proj.strings.get("named").unwrap()).unwrap().id;
+        let value = dl_scope.find_fn(self.proj.strings.get("value").unwrap()).unwrap().id;
+
+        BuiltinDbgArgs {
+            dbg_fn,
+            dbg_tr,
+            formatter_write_str: fn_name,
+            fallback_dbg_ext,
+            begin: GenericFn::new(begin, Default::default()),
+            end: GenericFn::new(end, Default::default()),
+            named,
+            value,
+        }
     }
 
     fn can_emit_bitfield_call(
@@ -4030,6 +4047,11 @@ struct BuiltinDbgArgs {
     dbg_fn: StrId,
     formatter_write_str: String,
     fallback_dbg_ext: Option<ExtensionId>,
+
+    begin: GenericFn,
+    end: GenericFn,
+    named: FunctionId,
+    value: FunctionId,
 }
 
 fn vtable_methods(scopes: &Scopes, types: &Types, tr: TraitId) -> Vec<FunctionId> {
