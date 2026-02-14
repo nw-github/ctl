@@ -35,22 +35,23 @@ pub struct str {
     pub fn char_indices(this): CharIndices => CharIndices(chars: this.chars());
     pub fn utf16(this): Utf16 => Utf16(chars: this.chars(), trail: null);
 
-    pub fn strip_prefix(this, prefix: str): ?str {
-        guard prefix.len() <= this.len() and this[..prefix.len()] == prefix else {
-            return null;
-        }
+    pub fn starts_with(my this, s: str): bool => this.len() >= s.len() and this[..s.len()] == s;
 
-        this[prefix.len()..]
+    pub fn strip_prefix(my this, prefix: str): ?str {
+        if this.starts_with(prefix) {
+            this[prefix.len()..]
+        }
     }
 
-    pub fn substr<R: RangeBounds<uint>>(this, range: R): ?str {
-        let span = this.span.subspan(range)?;
-        if span.first() is ?ch and !utf8::is_char_boundary(*ch) {
-            return null;
-        } else if span.last() is ?ch and !utf8::is_char_boundary(*ch) {
-            return null;
+    pub fn substr<R: RangeBounds<uint>>(my this, range: R): ?str {
+        let (start, end) = std::span::range_bounds(range, this.span.len());
+        if start <= end
+            and end <= this.span.len()
+            and this.span.get(start).is_none_or(|byte| utf8::is_char_boundary(**byte))
+            and this.span.get(end.checked_add(1)?).is_none_or(|byte| utf8::is_char_boundary(**byte))
+        {
+            unsafe str(span: this.span.subspan_unchecked(start..end))
         }
-        str(span:)
     }
 
     pub fn find(this, rhs: str): ?uint => this.span.find(rhs.span);

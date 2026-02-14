@@ -234,7 +234,7 @@ fn raw_subscript_checked<T, I: Integral>(ptr: ^mut T, len: uint, idx: I): ^mut T
 }
 
 $[inline(always)]
-fn range_bounds<R: RangeBounds<uint>>(range: R, len: uint): (uint, uint) {
+lib fn range_bounds<R: RangeBounds<uint>>(range: R, len: uint): (uint, uint) {
     let start = match range.begin() {
         :Inclusive(start) => start,
         :Exclusive(start) => start + 1,

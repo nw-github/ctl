@@ -20,6 +20,9 @@ pub union Option<T> {
     pub fn is_some(this): bool => this is ?_;
     pub fn is_null(this): bool => this is null;
 
+    pub fn is_some_and<F: Fn(*T) => bool>(this, f: F): bool => this is ?val and f(val);
+    pub fn is_none_or<F: Fn(*T) => bool>(this, f: F): bool => this is ?val then f(val) else true;
+
     pub fn map<U, F: Fn(T) => U>(my this, f: F): ?U => this is ?val then f(val);
     pub fn and_then<U, F: Fn(T) => ?U>(my this, f: F): ?U => this is ?val then f(val) else null;
     pub fn filter<F: Fn(T) => bool>(my this, f: F): ?T => this is ?val and f(val) then val;
@@ -29,6 +32,14 @@ pub union Option<T> {
             inner
         } else {
             unsafe std::hint::unreachable_unchecked()
+        }
+    }
+
+    pub fn expect(my this, message: str): T {
+        if this is ?inner {
+            inner
+        } else {
+            panic(message);
         }
     }
 
