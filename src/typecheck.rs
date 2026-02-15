@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use crate::{
     FeatureSet, Warning,
     ast::{
-        Attribute, Attributes, BinaryOp, FnAbi, UnaryOp, Visibility,
+        Attribute, Attributes, BinaryOp, DefaultCapturePolicy, FnAbi, UnaryOp, Visibility,
         checked::{
             ArrayPattern, Block, Expr as CExpr, ExprArena, ExprData as CExprData,
             FormatOpts as CFormatSpec, Pattern as CPattern, PatternData, RestPattern,
@@ -2415,6 +2415,7 @@ impl TypeChecker<'_> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn check_closure(
         &mut self,
         span: Span,
@@ -2423,6 +2424,7 @@ impl TypeChecker<'_> {
         params: &[(Located<Pattern>, Option<TypeHint>)],
         ret: Option<TypeId>,
         body: Expr,
+        policy: DefaultCapturePolicy,
     ) -> CExpr {
         let Some(&fn_tr) = self.proj.scopes.lang_traits.get(&LangTrait::OpFn) else {
             return self.error(Error::no_lang_item(LangTrait::OpFn, span));
@@ -2578,6 +2580,8 @@ impl TypeChecker<'_> {
             names.push(name);
             tuple_ty_args.push(ty);
         }
+
+        self.proj.scopes[self.current].kind = ScopeKind::Closure(ret, policy);
 
         let span = body.span;
         let (_, body) =
@@ -3770,8 +3774,9 @@ impl TypeChecker<'_> {
                 let ret = ret
                     .map(|ret| self.resolve_typehint(ret))
                     .or_else(|| target.and_then(|t| self.infer_closure_type(t, None)));
-                self.enter(ScopeKind::Closure(ret, policy.unwrap_or_default()), |this| {
-                    this.check_closure(span, target, captures, params, ret, body)
+                self.enter(ScopeKind::None, |this| {
+                    let policy = policy.unwrap_or_default();
+                    this.check_closure(span, target, captures, params, ret, body, policy)
                 })
             }
             &PExprData::Unsafe(expr) => {
