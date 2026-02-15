@@ -13,7 +13,7 @@ extension u8 {
     pub fn is_ascii_hexdigit(my this): bool => (this as char).is_ascii_hexdigit();
 
     pub fn make_ascii_upper(mut this) => *this = this.to_ascii_upper();
-    pub fn make_ascii_lower(mut this) => *this = this.to_ascii_upper();
+    pub fn make_ascii_lower(mut this) => *this = this.to_ascii_lower();
 
     pub fn to_ascii_upper(my this): u8 => this ^ (0b10_0000 * this.is_ascii_upper() as u8);
     pub fn to_ascii_lower(my this): u8 => this ^ (0b10_0000 * this.is_ascii_lower() as u8);
