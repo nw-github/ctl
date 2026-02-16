@@ -24,6 +24,8 @@ pub struct Rng {
         }
     }
 
+    pub fn bool(mut this): bool => this.gen_u64() & 1 == 0;
+
     pub fn int<Int: std::reflect::Integral>(mut this): Int {
         mut val = Uninit::<Int>::uninit();
         this.fill_uninit(val.as_bytes_mut());
