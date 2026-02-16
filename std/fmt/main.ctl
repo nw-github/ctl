@@ -211,6 +211,8 @@ pub struct StringBuilder {
 
     pub fn new(): This => StringBuilder();
 
+    pub fn is_empty(this): bool => this.buffer.is_empty();
+
     impl Write {
         fn write_str(mut this, data: str) {
             let len = data.len();

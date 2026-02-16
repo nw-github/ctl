@@ -1,11 +1,12 @@
 use super::{Formatter, Format, Pad, Options};
 
 extension Formatter {
-    fn use_indentation(this): bool => this.options().alt;
+    fn use_indentation(this): bool => this.opts.alt;
 
     fn indent(mut this) {
         if this.use_indentation() {
-            Pad(fill: ' ', width: this.indent * 4).fmt(this);
+            let size = this.opts.prec != 0 then this.opts.prec else 4;
+            Pad(fill: ' ', width: this.indent.checked_mul(size).unwrap_or(4)).fmt(this);
         }
     }
 
@@ -27,8 +28,8 @@ pub struct List {
     items: bool = false,
 
     fn begin(fmt: *mut Formatter, begin: str): This {
-        mut fmt = fmt.with_options(Options(alt: fmt.opts.alt));
-        begin.fmt(&mut fmt);
+        mut fmt = fmt.with_options(Options(alt: fmt.opts.alt, prec: fmt.opts.prec));
+        fmt.write_str(begin);
         fmt.indent++;
         This(fmt:)
     }
@@ -39,8 +40,10 @@ pub struct List {
         }
 
         this.fmt.indent--;
-        this.fmt.indent();
-        end.fmt(&mut this.fmt);
+        if this.items {
+            this.fmt.indent();
+        }
+        this.fmt.write_str(end);
     }
 
     pub fn item<R, F: Fn() => R>(mut this, f: F): R {
