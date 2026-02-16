@@ -271,6 +271,7 @@ impl Union {
 pub enum TraitImpl {
     Checked(CheckedImpl),
     Unchecked(TypeId, UncheckedImpl),
+    Derived(ScopeId, UserTypeId, Path),
     #[default]
     None,
 }

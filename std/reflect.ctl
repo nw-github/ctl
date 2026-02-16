@@ -26,6 +26,9 @@ pub sealed trait SafeFnPtr<Args: Tuple, R> {}
 $[lang(dyn_ptr)]
 pub sealed trait DynPtr {}
 
+$[lang(copy)]
+pub sealed(lib) trait Copy {}
+
 /// A unique numeric identifier for each type. This value is not stable and may change between
 /// compilations of even identical source code, and thus should only be used for comparisons within
 /// the same compilation unit and never serialized or read directly.

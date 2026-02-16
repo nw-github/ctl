@@ -1729,6 +1729,15 @@ impl<'a> Parser<'a> {
             .unwrap_or_default()
     }
 
+    fn derives(&mut self) -> Vec<Path> {
+        if let Some(span) = self.next_if(Token::Colon) {
+            self.csv_one(Token::LCurly, span, |this| this.type_or_trait_path(true)).data
+        } else {
+            self.expect(Token::LCurly);
+            vec![]
+        }
+    }
+
     fn trait_impls(&mut self) -> Vec<Path> {
         let mut impls = Vec::new();
         if self.next_if(Token::Colon).is_some() {
@@ -1911,8 +1920,7 @@ impl<'a> Parser<'a> {
     fn structure(&mut self, vis: Visibility, span: Span, union: bool) -> Located<Struct> {
         let name = self.expect_ident("expected name");
         let type_params = self.type_params();
-
-        self.expect(Token::LCurly);
+        let derives = self.derives();
 
         let mut functions = Vec::new();
         let mut operators = Vec::new();
@@ -1953,7 +1961,10 @@ impl<'a> Parser<'a> {
             }
         });
 
-        Located::new(span, Struct { vis, name, type_params, members, impls, functions, operators })
+        Located::new(
+            span,
+            Struct { vis, name, type_params, members, impls, functions, operators, derives },
+        )
     }
 
     fn union(&mut self, vis: Visibility, span: Span) -> Located<StmtData> {
@@ -1964,13 +1975,13 @@ impl<'a> Parser<'a> {
         });
         let name = self.expect_ident("expected name");
         let type_params = self.type_params();
+        let derives = self.derives();
         let mut functions = Vec::new();
         let mut operators = Vec::new();
         let mut members = Vec::new();
         let mut impls = Vec::new();
         let mut variants = Vec::new();
 
-        self.expect(Token::LCurly);
         let span = self.next_until(Token::RCurly, span, |this| {
             let attrs = this.attributes();
             let (tk_public, vis) = this.visiblity();
@@ -2038,7 +2049,16 @@ impl<'a> Parser<'a> {
                     Located::new(tag.span(), self.arena.hints.alloc(TypeHintData::Path(tag)))
                 }),
                 variants,
-                base: Struct { vis, name, type_params, members, functions, impls, operators },
+                base: Struct {
+                    vis,
+                    name,
+                    type_params,
+                    members,
+                    functions,
+                    impls,
+                    operators,
+                    derives,
+                },
             },
         )
     }

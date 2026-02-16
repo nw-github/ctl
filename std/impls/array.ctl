@@ -46,6 +46,10 @@ extension<A: Array<T>, T> A {
     }
 }
 
+extension<A: Array<T>, T: Copy> A {
+    impl Copy { }
+}
+
 extension<A: Array<T>, T: std::hash::Hash> A {
     impl std::hash::Hash {
         $[inline(always)]

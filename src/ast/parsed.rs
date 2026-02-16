@@ -528,6 +528,7 @@ pub struct Struct {
     pub impls: Vec<Located<ImplBlock>>,
     pub functions: Vec<Located<Fn>>,
     pub operators: Vec<Located<OperatorFn>>,
+    pub derives: Vec<Path>,
 }
 
 #[derive(Clone)]

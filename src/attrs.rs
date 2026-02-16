@@ -428,6 +428,7 @@ pub enum LangTrait {
     Tuple,
     FnPtr,
     DynPtr,
+    Copy,
 
     OpCmp,
     OpEq,
@@ -475,6 +476,7 @@ impl LangTrait {
             "fmt_pointer" => Some(Self::Pointer),
             "fmt_write" => Some(Self::Write),
             "iter" => Some(Self::Iterator),
+            "copy" => Some(Self::Copy),
             "op_cmp" => Some(Self::OpCmp),
             "op_eq" => Some(Self::OpEq),
             "op_add" => Some(Self::OpAdd),

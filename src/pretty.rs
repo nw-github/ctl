@@ -730,7 +730,7 @@ impl Pretty<'_> {
         &self,
         type_name: &str,
         mut headers: Vec<HeaderVar>,
-        Struct { name, type_params, members, impls, functions, vis, operators }: &Struct,
+        Struct { name, type_params, members, impls, functions, vis, operators, derives }: &Struct,
         variants: Option<&[Variant]>,
         indent: usize,
     ) {
@@ -743,6 +743,14 @@ impl Pretty<'_> {
         let plus_2 = INDENT.repeat(indent + 2);
 
         self.print_type_params(type_params, indent + 1, None);
+
+        if !derives.is_empty() {
+            eprint!("{plus_1}{}", "Derives".yellow());
+            for (i, path) in derives.iter().enumerate() {
+                eprint!("{}{}", [", ", ": "][(i == 0) as usize], self.path(path));
+            }
+            eprintln!();
+        }
 
         if let Some(variants) = variants.filter(|v| !v.is_empty()) {
             eprintln!("{plus_1}{}: ", "Variants".yellow());
@@ -774,12 +782,14 @@ impl Pretty<'_> {
             }
         }
 
-        eprintln!("{plus_1}{}:", "Functions".yellow());
-        for f in functions {
-            self.print_fn(&f.data, indent + 2);
-        }
-        for f in operators {
-            self.print_op_fn(&f.data, indent + 2);
+        if !functions.is_empty() || !operators.is_empty() {
+            eprintln!("{plus_1}{}:", "Functions".yellow());
+            for f in functions {
+                self.print_fn(&f.data, indent + 2);
+            }
+            for f in operators {
+                self.print_op_fn(&f.data, indent + 2);
+            }
         }
 
         self.print_impls(indent + 1, impls);

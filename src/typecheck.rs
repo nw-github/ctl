@@ -896,7 +896,7 @@ impl<'a> TypeChecker<'a> {
 
         self.proj.scopes[scope].kind = ScopeKind::UserType(id);
         self.proj.scopes.get_mut(init.id).constructor = Some(id);
-        self.proj.scopes.get_mut(id).impls = self.declare_impls(id, impls);
+        self.proj.scopes.get_mut(id).impls = self.declare_impls(id, impls, &base.derives);
         fns.push(init);
 
         DStmt::UserType { id, fns }
@@ -1018,7 +1018,7 @@ impl<'a> TypeChecker<'a> {
         });
         let scope = ut.body_scope;
         let id = self.insert_user_type(ut);
-        self.proj.scopes.get_mut(id).impls = self.declare_impls(id, impls);
+        self.proj.scopes.get_mut(id).impls = self.declare_impls(id, impls, &base.derives);
 
         self.proj.scopes[scope].kind = ScopeKind::UserType(id);
         for c in fns.iter().take(member_cons_len) {
@@ -1064,7 +1064,7 @@ impl<'a> TypeChecker<'a> {
 
         let scope = ut.body_scope;
         let id = self.insert_user_type(ut);
-        self.proj.scopes.get_mut(id).impls = self.declare_impls(id, impls);
+        self.proj.scopes.get_mut(id).impls = self.declare_impls(id, impls, &base.derives);
 
         let prev = self.proj.scopes[self.current]
             .vns
@@ -1245,7 +1245,7 @@ impl<'a> TypeChecker<'a> {
                 if let Some(name) = self.proj.scopes.get(id).attrs.lang {
                     self.proj.scopes.lang_types.insert(name, id);
                 }
-                self.proj.scopes.get_mut(id).impls = self.declare_impls(id, impls);
+                self.proj.scopes.get_mut(id).impls = self.declare_impls(id, impls, &[]);
 
                 self.proj.scopes[scope].kind = ScopeKind::UserType(id);
                 DStmt::Extension { id, fns }
@@ -1585,6 +1585,7 @@ impl<'a> TypeChecker<'a> {
         &mut self,
         id: UserTypeId,
         impls: Vec<(ImplId, UncheckedImpl)>,
+        derives: &[Path],
     ) -> Vec<ImplId> {
         let ty = if let UserTypeKind::Extension(ty) = self.proj.scopes.get(id).kind {
             ty.expect("extension declared but did not set type")
@@ -1595,13 +1596,20 @@ impl<'a> TypeChecker<'a> {
                 id,
             )))
         };
-        impls
+        let mut impls: Vec<_> = impls
             .into_iter()
             .map(|(id, unchecked)| {
                 *self.proj.impls.get_mut(id) = TraitImpl::Unchecked(ty, unchecked);
                 id
             })
-            .collect()
+            .collect();
+
+        let ut_data = self.proj.scopes.get(id);
+        impls.extend(derives.iter().map(|path| {
+            self.proj.impls.alloc(TraitImpl::Derived(ut_data.body_scope, id, path.clone()))
+        }));
+
+        impls
     }
 
     fn declare_type_hint(&mut self, hint: TypeHint) -> TypeId {
@@ -1707,7 +1715,7 @@ impl TypeChecker<'_> {
                         id,
                     )));
                     this.resolve_dependencies(id, this_ty, true);
-                    this.check_impl_blocks(this_ty, id);
+                    this.check_impls(this_ty, id);
                 });
             }
             DStmt::Trait { id, fns } => {
@@ -1725,7 +1733,7 @@ impl TypeChecker<'_> {
                         this.check_fn(f);
                     }
 
-                    this.check_impl_blocks(ty, id);
+                    this.check_impls(ty, id);
                 });
             }
             DStmt::Alias { id } => {
@@ -2160,25 +2168,71 @@ impl TypeChecker<'_> {
         });
     }
 
-    fn check_impl_blocks(&mut self, this_ty: TypeId, id: UserTypeId) {
+    fn check_impls(&mut self, this_ty: TypeId, id: UserTypeId) {
         let mut seen = HashSet::new();
-        for id in self.proj.scopes.get(id).impls.clone() {
-            let Some(imp) = self.proj.impls.get(id).as_checked() else {
+        for imp_id in self.proj.scopes.get(id).impls.clone() {
+            let Some(imp) = self.proj.impls.get(imp_id).as_checked().cloned() else {
                 continue;
             };
-            let scope = imp.scope.unwrap();
-            let imp = imp.clone();
-            self.enter_id(scope, |this| {
-                // TODOX: more sophisticated conflict check and access check
-                if !seen.insert(imp.tr.clone()) {
-                    this.proj.diag.report(Error::new(
-                        format!("duplicate implementation of trait {}", this.proj.fmt_tr(&imp.tr)),
-                        imp.span,
-                    ))
+
+            // TODOX: more sophisticated conflict check and access check
+            if !seen.insert(imp.tr.clone()) {
+                self.proj.diag.report(Error::new(
+                    format!("duplicate implementation of trait {}", self.proj.fmt_tr(&imp.tr)),
+                    imp.span,
+                ))
+            } else if self.proj.scopes.get(imp.tr.id).attrs.lang == Some(LangTrait::Copy) {
+                // This obviously doesn't work for extensions but an extension implementing the
+                // Copy trait is already invalid and will be rejected because Copy is sealed,
+                // except for the extension for array which is always valid
+
+                let mut errors = vec![];
+                let mut check_type = |this: &mut Self, mut member_ty: TypeId, span: Span| {
+                    let original = member_ty;
+                    while let Type::Array(inner, _) = this.proj.types[member_ty] {
+                        member_ty = inner;
+                    }
+
+                    if let Type::User(ut) = &this.proj.types[member_ty]
+                        && !this.proj.scopes.get(id).type_params.contains(&ut.id)
+                        && !this.implements_trait(member_ty, &imp.tr)
+                    {
+                        errors.push((
+                            format!("type {} is not copyable", this.proj.fmt_ty(original)),
+                            span,
+                        ));
+                    }
+                };
+
+                for i in 0..self.proj.scopes.get(id).members.len() {
+                    let member = &self.proj.scopes.get(id).members[i];
+                    check_type(self, member.ty, member.span);
                 }
 
-                this.check_impl_block(this_ty, &imp);
-            })
+                if let Some(union) = self.proj.scopes.get(id).kind.as_union().cloned() {
+                    for variant in union.variants.values() {
+                        if let Some(ty) = variant.ty {
+                            check_type(self, ty, variant.span);
+                        }
+                    }
+                }
+
+                if !errors.is_empty() {
+                    self.error(Error {
+                        message: format!(
+                            "cannot derive trait '{}' for this type",
+                            self.proj.fmt_tr(&imp.tr)
+                        ),
+                        span: imp.span,
+                        severity: crate::ErrorSeverity::Error,
+                        context: Some(errors),
+                    })
+                }
+            }
+
+            if let Some(scope) = imp.scope {
+                self.enter_id(scope, |this| this.check_impl_block(this_ty, &imp));
+            }
         }
     }
 
@@ -5301,16 +5355,75 @@ impl TypeChecker<'_> {
             }))
         }
 
+        fn resolve_derive(
+            this: &mut TypeChecker,
+            imp_id: ImplId,
+            scope: ScopeId,
+            id: UserTypeId,
+            path: Path,
+        ) -> Option<TraitImpl> {
+            let tr = this.enter_id_and_resolve(scope, |this| this.resolve_trait_path(&path))?;
+            if this.proj.scopes.get(tr.id).attrs.lang != Some(LangTrait::Copy) {
+                return this.error(Error::new(
+                    format!(
+                        "cannot synthesize implementation of trait '{}'",
+                        this.proj.fmt_tr(&tr)
+                    ),
+                    path.span(),
+                ));
+            }
+
+            let mut type_params = vec![];
+            let mut ty_args = TypeArgs::default();
+            for i in 0..this.proj.scopes.get(id).type_params.len() {
+                let new_id = UserTypeId::insert_in(
+                    &mut this.proj.scopes,
+                    UserType::type_param(Default::default()),
+                    ScopeId::ROOT,
+                )
+                .id;
+                let ty = this.proj.types.insert(Type::User(GenericUserType::non_generic(new_id)));
+
+                let bound = this.proj.impls.alloc(TraitImpl::Checked(CheckedImpl {
+                    scope: None,
+                    assoc_types: Default::default(),
+                    type_params: vec![],
+                    tr: tr.clone(),
+                    ty,
+                    span: Span::nowhere(),
+                    super_trait: false,
+                }));
+                this.proj.scopes.get_mut(new_id).impls = vec![bound];
+                this.proj.scopes.get_mut(tr.id).implementors.push(bound);
+                type_params.push(new_id);
+                ty_args.insert(this.proj.scopes.get(id).type_params[i], ty);
+            }
+
+            this.proj.scopes.get_mut(tr.id).implementors.push(imp_id);
+            Some(TraitImpl::Checked(CheckedImpl {
+                scope: None,
+                assoc_types: Default::default(),
+                type_params,
+                tr,
+                ty: this.proj.types.insert(Type::User(GenericUserType::new(id, ty_args))),
+                span: path.span(),
+                super_trait: false,
+            }))
+        }
+
         self.impl_resolve_phase = true;
         for i in self.checked_impls..self.proj.impls.len() {
-            let id = ImplId::new(i);
-            let imp = match std::mem::replace(self.proj.impls.get_mut(id), TraitImpl::None) {
+            let imp_id = ImplId::new(i);
+            let imp = match std::mem::replace(self.proj.impls.get_mut(imp_id), TraitImpl::None) {
                 TraitImpl::Unchecked(ty, imp) => {
-                    resolve_impl(self, id, ty, imp).unwrap_or_default()
+                    resolve_impl(self, imp_id, ty, imp).unwrap_or_default()
+                }
+                TraitImpl::Derived(scope, id, path) => {
+                    resolve_derive(self, imp_id, scope, id, path).unwrap_or_default()
                 }
                 imp => imp,
             };
-            *self.proj.impls.get_mut(id) = imp;
+            *self.proj.impls.get_mut(imp_id) = imp;
         }
 
         self.checked_impls = self.proj.impls.len();
@@ -7774,31 +7887,34 @@ pub trait LookupTraitFn {
     }
 
     fn compiler_implemented_tr(&mut self, id: TypeId, tr: TraitId) -> Option<GenericTrait> {
+        let default_if = |cond: bool| cond.then(|| GenericTrait::new(tr, TypeArgs::default()));
+
         let proj = self.proj();
         let scopes = &proj.scopes;
-
-        let default_if = |cond: bool| cond.then(|| GenericTrait::new(tr, TypeArgs::default()));
-        let is_same_tr = |lang: LangTrait| scopes.lang_traits.get(&lang) == Some(&tr);
-
         let ty = &proj.types[id];
-        if is_same_tr(LangTrait::Tuple) {
-            return default_if(ty.as_user().is_some_and(|ut| scopes.get(ut.id).kind.is_tuple()));
-        } else if is_same_tr(LangTrait::Numeric) {
-            return default_if(ty.is_numeric());
-        } else if is_same_tr(LangTrait::Integral) {
-            return default_if(ty.as_integral(false).is_some());
-        } else if is_same_tr(LangTrait::Signed) {
-            return default_if(ty.as_integral(false).is_some_and(|v| v.signed));
-        } else if is_same_tr(LangTrait::Unsigned) {
-            return default_if(ty.as_integral(false).is_some_and(|v| !v.signed));
-        } else if is_same_tr(LangTrait::Array) {
-            if let Type::Array(id, _) = ty {
-                return Some(GenericTrait::from_type_args(scopes, tr, [*id]));
+        match scopes.get(tr).attrs.lang? {
+            LangTrait::Tuple => {
+                return default_if(
+                    ty.as_user().is_some_and(|ut| scopes.get(ut.id).kind.is_tuple()),
+                );
             }
-        } else if is_same_tr(LangTrait::DynPtr) {
-            return default_if(matches!(ty, Type::DynPtr(_) | Type::DynMutPtr(_)));
-        } else if is_same_tr(LangTrait::FnPtr) {
-            match ty {
+            LangTrait::Numeric => return default_if(ty.is_numeric()),
+            LangTrait::Integral => return default_if(ty.as_integral(false).is_some()),
+            LangTrait::Signed => {
+                return default_if(ty.as_integral(false).is_some_and(|v| v.signed));
+            }
+            LangTrait::Unsigned => {
+                return default_if(ty.as_integral(false).is_some_and(|v| !v.signed));
+            }
+            LangTrait::Array => {
+                if let Type::Array(id, _) = ty {
+                    return Some(GenericTrait::from_type_args(scopes, tr, [*id]));
+                }
+            }
+            LangTrait::DynPtr => {
+                return default_if(matches!(ty, Type::DynPtr(_) | Type::DynMutPtr(_)));
+            }
+            LangTrait::FnPtr => match ty {
                 Type::Fn(f) => {
                     let data = scopes.get(f.id);
                     if data.is_unsafe {
@@ -7828,7 +7944,11 @@ pub trait LookupTraitFn {
                     ));
                 }
                 _ => {}
+            },
+            LangTrait::Copy => {
+                return default_if(!ty.is_user() && !ty.is_array());
             }
+            _ => {}
         }
 
         None

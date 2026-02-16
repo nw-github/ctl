@@ -33,6 +33,7 @@ mod prelude {
     pub use super::fmt::{write, writeln};
     pub use super::ops::Fn;
     pub use super::ffi::types::*;
+    pub use super::reflect::Copy;
 
     $[feature(alloc)]
     pub use super::alloc::collections::*;
