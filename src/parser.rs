@@ -461,10 +461,6 @@ impl<'a> Parser<'a> {
         };
 
         self.next_if(Token::Semicolon);
-        if self.needs_sync {
-            self.synchronize();
-        }
-
         stmt
     }
 
@@ -1934,12 +1930,10 @@ impl<'a> Parser<'a> {
                     Left(func) => functions.push(func),
                     Right(func) => operators.push(func),
                 }
-            } else {
+            } else if let Some(name) = this.expect_ident_2("expected name") {
                 // TODO: apply the attributes to the next member
                 this.invalid_here(tk_public.filter(|_| union));
                 this.invalid_here(tk_unsafe);
-
-                let name = this.expect_ident("expected name");
                 this.expect(Token::Colon);
                 let ty = this.type_hint();
                 let value = this.next_if(Token::Assign).map(|_| this.expression());
@@ -1947,6 +1941,7 @@ impl<'a> Parser<'a> {
                 if !this.matches(Token::RCurly) {
                     this.expect(Token::Comma);
                 }
+
                 members.push(Member { vis, ty, name, default: value });
             }
         });
@@ -1986,21 +1981,19 @@ impl<'a> Parser<'a> {
                     Right(func) => operators.push(func),
                 }
             } else if this.next_if(Token::Shared).is_some() {
+                if let Some(name) = this.expect_ident_2("expected name") {
+                    this.invalid_here(tk_public);
+                    this.invalid_here(tk_unsafe);
+                    this.expect(Token::Colon);
+                    let ty = this.type_hint();
+                    let value = this.next_if(Token::Assign).map(|_| this.expression());
+                    this.expect(Token::Comma);
+
+                    members.push(Member { vis: Visibility::Public, name, ty, default: value });
+                }
+            } else if let Some(name) = this.expect_ident_2("expected variant name") {
                 this.invalid_here(tk_public);
                 this.invalid_here(tk_unsafe);
-
-                let name = this.expect_ident("expected name");
-                this.expect(Token::Colon);
-                let ty = this.type_hint();
-                let value = this.next_if(Token::Assign).map(|_| this.expression());
-                this.expect(Token::Comma);
-
-                members.push(Member { vis: Visibility::Public, name, ty, default: value });
-            } else {
-                this.invalid_here(tk_public);
-                this.invalid_here(tk_unsafe);
-
-                let name = this.expect_ident("expected variant name");
                 let data = if let Some(start) = this.next_if(Token::LParen) {
                     let mut hint_data = vec![];
                     let mut next = 0;
@@ -2022,6 +2015,7 @@ impl<'a> Parser<'a> {
                 if !this.matches(Token::RCurly) {
                     this.expect(Token::Comma);
                 }
+
                 variants.push(Variant { name, data, tag });
             }
         });
@@ -2676,19 +2670,21 @@ impl<'a> Parser<'a> {
         self.next_if_map(|_, t| t.data.as_ident().map(|&i| Located::new(t.span, i)))
     }
 
-    fn next_until(&mut self, token: Token, mut span: Span, mut f: impl FnMut(&mut Self)) -> Span {
+    fn next_until(&mut self, token: Token, span: Span, mut f: impl FnMut(&mut Self)) -> Span {
         loop {
             let peek = self.peek();
-            span.extend_to(peek.span);
             if peek.data == Token::Eof {
                 self.error_no_sync(Error::expected_found(token, Token::Eof, peek.span));
-                return span;
+                return span.extended_to(peek.span);
             } else if peek.data == token {
                 self.next();
-                return span;
+                return span.extended_to(peek.span);
             }
 
             f(self);
+            if token == Token::RCurly && self.needs_sync {
+                self.synchronize();
+            }
         }
     }
 
@@ -2727,6 +2723,17 @@ impl<'a> Parser<'a> {
         } else {
             self.error(Error::new(msg, token.span));
             Located::new(token.span, Strings::EMPTY)
+        }
+    }
+
+    fn expect_ident_2(&mut self, msg: &str) -> Option<Located<StrId>> {
+        let token = self.peek();
+        if let Token::Ident(ident) = token.data {
+            self.next();
+            Some(Located::new(token.span, ident))
+        } else {
+            self.error(Error::new(msg, token.span));
+            None
         }
     }
 }
