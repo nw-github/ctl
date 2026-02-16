@@ -3,6 +3,7 @@ use std::intrin;
 use std::ops::Eq;
 
 extension<T> ^T {
+    $[intrinsic(numeric_cast)]
     pub fn cast<U>(my this): ^U => this as ^U;
     $[intrinsic(numeric_cast)]
     pub fn addr(my this): uint => this.addr();
@@ -68,6 +69,7 @@ extension<T> ^T {
 }
 
 extension<T> ^mut T {
+    $[intrinsic(numeric_cast)]
     pub fn cast<U>(my this): ^mut U => this as ^mut U;
     $[intrinsic(numeric_cast)]
     pub fn addr(my this): uint => this.addr();
@@ -132,4 +134,26 @@ extension<T> ^mut T {
         $[intrinsic(binary_op)]
         fn ne(this, rhs: *^mut T): bool => this != rhs;
     }
+}
+
+extension ?^void {
+    $[intrinsic(numeric_cast)]
+    pub fn addr(my this): uint => this.addr();
+
+    $[intrinsic(numeric_cast)]
+    pub fn cast<U>(my this): ?^U => this.cast();
+
+    $[intrinsic(numeric_cast)]
+    pub unsafe fn to_safe_ptr<T>(my this): *T => unsafe this.to_safe_ptr();
+}
+
+extension ?^mut void {
+    $[intrinsic(numeric_cast)]
+    pub fn addr(my this): uint => this.addr();
+
+    $[intrinsic(numeric_cast)]
+    pub fn cast<U>(my this): ?^mut U => this.cast();
+
+    $[intrinsic(numeric_cast)]
+    pub unsafe fn to_safe_ptr<T>(my this): *mut T => unsafe this.to_safe_ptr();
 }

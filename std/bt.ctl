@@ -311,12 +311,12 @@ pub unsafe fn backtrace<F: Fn(uint) => std::utils::ControlFlow>(f: F, kw start_p
 
         mut state: State = (ignore_until: start_pc, callback: f);
         _Unwind_Backtrace(user: ?(&raw mut state).cast(), |ctx, user| {
-            let state: *mut State = unsafe std::mem::bit_cast(user);
             let pc = unsafe _Unwind_GetIP(ctx);
             if pc == 0 {
                 return _URC_NO_REASON;
             }
 
+            let state = unsafe user.to_safe_ptr::<State>();
             if state.ignore_until is ?start_pc {
                 if start_pc != pc {
                     return _URC_NO_REASON;

@@ -67,7 +67,7 @@ fn install_fault_handler() {
             if sig != SIGABRT {
                 let name = SIGNALS.iter().find_map(|=sig, (v, name)| v == sig then *name) ?? "??";
                 let fault_addr = info is ?info then (*info)._sifields._sigfault.si_addr else null;
-                let fault_addr: uint = std::mem::bit_cast(fault_addr);
+                let fault_addr = fault_addr.addr();
                 eprintln_unlocked("Received signal {sig} ({name}), fault address: {fault_addr:#x}");
 
                 let pid = fork();

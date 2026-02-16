@@ -128,3 +128,15 @@ pub struct Uninit<T> {
         unsafe std::mem::bit_cast(this.as_bytes_mut()[r])
     }
 }
+
+extension<T> [Uninit<T>..] {
+    pub unsafe fn assume_init_subspan<R: RangeBounds<uint>>(my this, r: R): [T..] {
+        unsafe std::mem::bit_cast(this[r])
+    }
+}
+
+extension<T> [mut Uninit<T>..] {
+    pub unsafe fn assume_init_subspan<R: RangeBounds<uint>>(my this, r: R): [mut T..] {
+        unsafe std::mem::bit_cast(this[r])
+    }
+}

@@ -1,8 +1,6 @@
 use std::mem::Layout;
 use std::deps::{libgc, libc};
 
-fn ptr_cast<T, U>(ptr: ?^mut T): ?^mut U => unsafe std::mem::bit_cast(ptr);
-
 pub unsafe trait Allocator {
     fn alloc(this, layout: Layout): ?^mut u8;
     unsafe fn resize(this, ptr: ^mut u8, layout: Layout): ?^mut u8;
@@ -14,11 +12,11 @@ pub struct DefaultAllocator {
     unsafe impl Allocator {
         fn alloc(this, layout: Layout): ?^mut u8 {
             // TODO: alignment
-            ptr_cast(unsafe libgc::GC_malloc(layout.size()))
+            unsafe libgc::GC_malloc(layout.size()).cast()
         }
 
         unsafe fn resize(this, ptr: ^mut u8, layout: Layout): ?^mut u8 {
-            ptr_cast(unsafe libgc::GC_realloc(ptr.cast(), layout.size()))
+            unsafe libgc::GC_realloc(ptr.cast(), layout.size()).cast()
         }
 
         unsafe fn free(this, _ptr: ^mut u8, _layout: Layout) {}
@@ -30,11 +28,11 @@ pub struct DefaultAllocator {
     unsafe impl Allocator {
         fn alloc(this, layout: Layout): ?^mut u8 {
             // TODO: alignment
-            ptr_cast(unsafe libc::malloc(layout.size()))
+            unsafe libc::malloc(layout.size()).cast()
         }
 
         unsafe fn resize(this, ptr: ^mut u8, layout: Layout): ?^mut u8 {
-            ptr_cast(unsafe libc::realloc(ptr.cast(), layout.size()))
+            unsafe libc::realloc(ptr.cast(), layout.size()).cast()
         }
 
         unsafe fn free(this, ptr: ^mut u8, _layout: Layout) {
