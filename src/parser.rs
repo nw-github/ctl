@@ -2683,6 +2683,9 @@ impl<'a> Parser<'a> {
 
             f(self);
             if token == Token::RCurly && self.needs_sync {
+                // Skip at least one token so we make progress and don't get stuck in an infinite
+                // loop
+                self.next();
                 self.synchronize();
             }
         }
