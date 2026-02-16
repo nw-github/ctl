@@ -1144,7 +1144,24 @@ impl<'a> Parser<'a> {
             }
         };
 
+        let capture_expr = |this: &mut Self,
+                            ident: Located<StrId>,
+                            mutable: bool,
+                            is_unsafe: Option<Span>,
+                            addr: Option<UnaryOp>,
+                            captures: &mut Vec<Capture>| {
+            let mut expr = this.arena.expr(ident.span, ExprData::Path(Path::from(ident)));
+            if let Some(op) = addr {
+                expr = this.arena.expr(ident.span, ExprData::Unary { op, expr });
+            }
+            if let Some(span) = is_unsafe {
+                expr = this.arena.expr(span, ExprData::Unsafe(expr));
+            }
+            captures.push(Capture { mutable, ident, expr });
+        };
+
         let by_value_helper = |this: &mut Self, start: Span, captures: &mut Vec<Capture>| {
+            let is_unsafe = this.next_if(Token::Unsafe);
             let mutable = this.next_if(Token::Mut);
             let ident = this.next_if_map(|_, next| match next.data {
                 Token::Ident(i) => Some(Located::new(next.span, i)),
@@ -1156,15 +1173,16 @@ impl<'a> Parser<'a> {
             if let Some(ident) = ident
                 && this.next_if(Token::Assign).is_some()
             {
-                captures.push(Capture::New { mutable, ident, expr: this.expression() });
+                captures.push(Capture { mutable, ident, expr: this.expression() });
                 return;
             }
 
             match (mutable, ident) {
                 (true, None) => set_policy(this, DefaultCapturePolicy::ByValMut, span),
                 (false, None) => set_policy(this, DefaultCapturePolicy::ByVal, span),
-                (true, Some(ident)) => captures.push(Capture::ByValMut(ident)),
-                (false, Some(ident)) => captures.push(Capture::ByVal(ident)),
+                (mutable, Some(ident)) => {
+                    capture_expr(this, ident, mutable, is_unsafe, None, captures)
+                }
             }
         };
 
@@ -1182,6 +1200,7 @@ impl<'a> Parser<'a> {
         self.csv(vec![], Token::BitOr, head, |this| match this.peek().data {
             Token::Ampersand => {
                 let start = this.next();
+                let is_unsafe = this.next_if(Token::Unsafe);
                 let mutable = this.next_if(Token::Mut);
                 let ident = this.next_if_map(|_, next| match next.data {
                     Token::Ident(i) => Some(Located::new(next.span, i)),
@@ -1194,8 +1213,22 @@ impl<'a> Parser<'a> {
                 match (mutable.is_some(), ident) {
                     (true, None) => set_policy(this, DefaultCapturePolicy::ByMutPtr, span),
                     (false, None) => set_policy(this, DefaultCapturePolicy::ByPtr, span),
-                    (true, Some(ident)) => captures.push(Capture::ByMutPtr(ident)),
-                    (false, Some(ident)) => captures.push(Capture::ByPtr(ident)),
+                    (true, Some(ident)) => capture_expr(
+                        this,
+                        ident,
+                        false,
+                        is_unsafe,
+                        Some(UnaryOp::AddrMut),
+                        &mut captures,
+                    ),
+                    (false, Some(ident)) => capture_expr(
+                        this,
+                        ident,
+                        false,
+                        is_unsafe,
+                        Some(UnaryOp::Addr),
+                        &mut captures,
+                    ),
                 }
             }
             Token::Assign => {

@@ -3,8 +3,8 @@ use colored::Colorize;
 use crate::{
     Located,
     ast::parsed::{
-        Capture, Expr, ExprArena, ExprData, Fn, ImplBlock, IntPattern, OperatorFn, Param, Path,
-        Pattern, Stmt, StmtData, Struct, TypeHint, Variant,
+        Expr, ExprArena, ExprData, Fn, ImplBlock, IntPattern, OperatorFn, Param, Path, Pattern,
+        Stmt, StmtData, Struct, TypeHint, Variant,
     },
     format::{FmtHint, FmtPath, FmtPatt, FmtUsePath},
     intern::{StrId, Strings},
@@ -461,36 +461,20 @@ impl Pretty<'_> {
             }
             ExprData::Error => {}
             ExprData::Closure { policy, captures, params, ret, body } => {
-                self.print_header(&tabs, "Expr::Closure", &[]);
+                self.print_header(&tabs, "Expr::Closure", &[dbgvar!(policy)]);
                 let tabs = INDENT.repeat(indent + 1);
-                eprintln!("{tabs}{}: {policy:?}", "Policy".yellow());
-
                 if !captures.is_empty() {
                     eprintln!("{tabs}{}:", "Captures".yellow());
                 }
                 for capture in captures {
                     let tabs = INDENT.repeat(indent + 2);
-                    match &capture {
-                        Capture::ByVal(id) => {
-                            eprintln!("{tabs}ByVal: {}", self.strings.resolve(&id.data))
-                        }
-                        Capture::ByValMut(id) => {
-                            eprintln!("{tabs}ByValMut: {}", self.strings.resolve(&id.data))
-                        }
-                        Capture::ByPtr(id) => {
-                            eprintln!("{tabs}ByPtr: {}", self.strings.resolve(&id.data))
-                        }
-                        Capture::ByMutPtr(id) => {
-                            eprintln!("{tabs}ByMutPtr: {}", self.strings.resolve(&id.data))
-                        }
-                        Capture::New { mutable, ident, expr } => {
-                            eprintln!(
-                                "{tabs}New: {} (mutable = {mutable})",
-                                self.strings.resolve(&ident.data)
-                            );
-                            self.print_expr(expr, indent + 3);
-                        }
-                    }
+                    let mutable = &capture.mutable;
+                    self.print_header(
+                        &tabs,
+                        self.strings.resolve(&capture.ident.data),
+                        &[bool!(mutable)],
+                    );
+                    self.print_expr(&capture.expr, indent + 3);
                 }
 
                 if let Some(ret) = ret {

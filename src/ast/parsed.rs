@@ -542,28 +542,10 @@ pub struct ImplBlock {
 
 #[derive(Clone, Copy)]
 #[allow(clippy::enum_variant_names)]
-pub enum Capture {
-    ByVal(Located<StrId>),
-    ByValMut(Located<StrId>),
-    ByPtr(Located<StrId>),
-    ByMutPtr(Located<StrId>),
-    New { mutable: bool, ident: Located<StrId>, expr: Expr },
-}
-
-impl Capture {
-    pub fn ident(self) -> Located<StrId> {
-        match self {
-            Capture::ByVal(id) => id,
-            Capture::ByValMut(id) => id,
-            Capture::ByPtr(id) => id,
-            Capture::ByMutPtr(id) => id,
-            Capture::New { ident, .. } => ident,
-        }
-    }
-
-    pub fn span(self) -> Span {
-        self.ident().span
-    }
+pub struct Capture {
+    pub mutable: bool,
+    pub ident: Located<StrId>,
+    pub expr: Expr,
 }
 
 pub type TypeParams = Vec<(Located<StrId>, Vec<Path>)>;

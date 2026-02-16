@@ -521,7 +521,7 @@ impl<'a> TypeChecker<'a> {
         Visibility::Public
     }
 
-    fn check_local(&mut self, id: VariableId, span: Span, mut in_closure: bool) {
+    fn check_local(&mut self, id: VariableId, span: Span) {
         let var = self.proj.scopes.get(id);
         if self.current_function() != self.proj.scopes.function_of(var.scope) {
             self.proj.diag.report(Error::new("cannot reference local of enclosing function", span));
@@ -548,12 +548,7 @@ impl<'a> TypeChecker<'a> {
             }
 
             if let ScopeKind::Closure(_, policy) = scope.kind {
-                if !in_closure {
-                    closure_policy = Some(policy);
-                } else {
-                    // Skip the first closure if we are checking closure captures
-                    in_closure = false;
-                }
+                closure_policy = Some(policy);
             }
         }
     }
@@ -2460,78 +2455,12 @@ impl TypeChecker<'_> {
             }
         }
 
-        for capture in captures {
-            if let &Capture::New { mutable, ident: name, expr } = capture {
-                let expr = self.check_expr(expr, None);
-                self.insert::<VariableId>(
-                    Variable {
-                        name,
-                        ty: expr.ty,
-                        mutable,
-                        unused: true,
-                        param: false,
-                        has_hint: false,
-                        kind: VariableKind::Capture,
-                        ..Default::default()
-                    },
-                    true,
-                );
-                instance.insert(name.data, expr);
-                members.insert(
-                    name.data,
-                    CheckedMember::new(Visibility::Internal, expr.ty, Span::nowhere()),
-                );
-                continue;
-            }
-
-            let name = capture.ident();
-            let path = Path::from(name);
-            let ResolvedValue::Var(o_var_id) = self.resolve_value_path(&path, None) else {
-                self.proj.diag.report(Error::no_symbol(self.proj.str(name.data), name.span));
-                continue;
-            };
-
-            if !self.proj.scopes.get(o_var_id).kind.is_local() {
-                self.proj.diag.report(Error::new(
-                    format!("invalid capture of non-local variable '{}'", self.proj.str(name.data)),
-                    name.span,
-                ));
-                continue;
-            }
-
-            self.check_local(o_var_id, name.span, true);
-            self.proj.scopes.get_mut(o_var_id).unused = false;
-
-            let var = self.proj.scopes.get(o_var_id);
-            let (ty, mutable) = match capture {
-                Capture::ByVal(_) => (var.ty, false),
-                Capture::ByValMut(_) => (var.ty, true),
-                Capture::ByPtr(_) => (self.proj.types.insert(Type::Ptr(var.ty)), false),
-                Capture::ByMutPtr(_) => {
-                    if !var.mutable {
-                        self.proj.diag.report(Error::no_mut_ptr(name.span));
-                    }
-
-                    (self.proj.types.insert(Type::MutPtr(var.ty)), false)
-                }
-                _ => unreachable!(),
-            };
-
-            if matches!(capture, Capture::ByVal(_) | Capture::ByValMut(_)) {
-                instance.insert(name.data, self.arena.typed(ty, CExprData::Var(o_var_id)));
-            } else {
-                let inner = self.arena.typed(var.ty, CExprData::Var(o_var_id));
-                // We use AddrMut, but all UnaryOp::Addr* get compiled the same way
-                instance.insert(
-                    name.data,
-                    self.arena.typed(ty, CExprData::Unary(UnaryOp::AddrMut, inner)),
-                );
-            }
-
+        for &Capture { mutable, ident: name, expr } in captures {
+            let expr = self.check_expr(expr, None);
             self.insert::<VariableId>(
                 Variable {
                     name,
-                    ty,
+                    ty: expr.ty,
                     mutable,
                     unused: true,
                     param: false,
@@ -2541,8 +2470,11 @@ impl TypeChecker<'_> {
                 },
                 true,
             );
-            members
-                .insert(name.data, CheckedMember::new(Visibility::Internal, ty, Span::nowhere()));
+            instance.insert(name.data, expr);
+            members.insert(
+                name.data,
+                CheckedMember::new(Visibility::Internal, expr.ty, Span::nowhere()),
+            );
         }
 
         let mut names = vec![];
@@ -3316,7 +3248,7 @@ impl TypeChecker<'_> {
             PExprData::Path(path) => match self.resolve_value_path(path, target) {
                 ResolvedValue::Var(id) => {
                     if self.proj.scopes.get(id).kind.is_local() {
-                        self.check_local(id, span, false);
+                        self.check_local(id, span);
                     } else if let Some((cur, deps)) = &mut self.current_static {
                         deps.insert(id);
                         let recursive = match self.proj.static_deps.get(&id) {
