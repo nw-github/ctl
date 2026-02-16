@@ -2064,7 +2064,7 @@ impl TypeChecker<'_> {
             }
 
             // XXX: See Codegen::get_tuple
-            this.proj.scopes.create_tuple_user_type(names, &this.proj.types);
+            _ = this.create_tuple_user_type(names);
 
             let func = this.proj.scopes.get(id);
             if func.attrs.panic_handler {
@@ -2579,7 +2579,7 @@ impl TypeChecker<'_> {
         let ret = self.proj.scopes[self.current].kind.as_closure().unwrap().0.unwrap_or(body.ty);
         let body = self.type_check_checked(body, ret, span);
         let is_args_empty = tuple_ty_args.is_empty();
-        let args_tuple = self.proj.scopes.get_tuple(names, tuple_ty_args, &self.proj.types);
+        let args_tuple = self.instantiate_tuple(names, tuple_ty_args);
         self.enter(ScopeKind::None, |this| {
             let no_captures = members.is_empty();
             let impl_id = this.proj.impls.alloc(TraitImpl::None);
@@ -3034,10 +3034,8 @@ impl TypeChecker<'_> {
                     }
                 }
 
-                self.arena.typed(
-                    self.proj.scopes.get_tuple(names, types, &self.proj.types),
-                    CExprData::Instance(result_elems),
-                )
+                let ty = self.instantiate_tuple(names, types);
+                self.arena.typed(ty, CExprData::Instance(result_elems))
             }
             PExprData::Vec(elements) => {
                 let mut checked = Vec::with_capacity(elements.len());
@@ -5022,7 +5020,7 @@ impl TypeChecker<'_> {
                     names.push(name.data);
                     types.push(self.resolve_typehint(ty));
                 }
-                self.proj.scopes.get_tuple(names, types, &self.proj.types)
+                self.instantiate_tuple(names, types)
             }
             &TypeHintData::Fn { abi, is_unsafe, ref params, ret } => {
                 let fnptr = FnPtr {
@@ -5373,42 +5371,9 @@ impl TypeChecker<'_> {
                 ));
             }
 
-            let mut type_params = vec![];
-            let mut ty_args = TypeArgs::default();
-            for i in 0..this.proj.scopes.get(id).type_params.len() {
-                let new_id = UserTypeId::insert_in(
-                    &mut this.proj.scopes,
-                    UserType::type_param(Default::default()),
-                    ScopeId::ROOT,
-                )
-                .id;
-                let ty = this.proj.types.insert(Type::User(GenericUserType::non_generic(new_id)));
-
-                let bound = this.proj.impls.alloc(TraitImpl::Checked(CheckedImpl {
-                    scope: None,
-                    assoc_types: Default::default(),
-                    type_params: vec![],
-                    tr: tr.clone(),
-                    ty,
-                    span: Span::nowhere(),
-                    super_trait: false,
-                }));
-                this.proj.scopes.get_mut(new_id).impls = vec![bound];
-                this.proj.scopes.get_mut(tr.id).implementors.push(bound);
-                type_params.push(new_id);
-                ty_args.insert(this.proj.scopes.get(id).type_params[i], ty);
-            }
-
+            let imp = this.synthesize_copy_impl(id, tr.id, path.span());
             this.proj.scopes.get_mut(tr.id).implementors.push(imp_id);
-            Some(TraitImpl::Checked(CheckedImpl {
-                scope: None,
-                assoc_types: Default::default(),
-                type_params,
-                tr,
-                ty: this.proj.types.insert(Type::User(GenericUserType::new(id, ty_args))),
-                span: path.span(),
-                super_trait: false,
-            }))
+            Some(imp)
         }
 
         self.impl_resolve_phase = true;
@@ -7720,14 +7685,127 @@ impl TypeChecker<'_> {
     }
 }
 
+impl TypeChecker<'_> {
+    fn create_tuple_user_type(&mut self, names: Vec<StrId>) -> UserTypeId {
+        if let Some(id) = self.proj.scopes.tuples.get(&names) {
+            return *id;
+        }
+
+        let this = &mut self.proj.scopes;
+        let types = &self.proj.types;
+        let type_params: Vec<_> = (0..names.len())
+            .map(|_| {
+                UserTypeId::insert_in(this, UserType::type_param(Default::default()), ScopeId::ROOT)
+                    .id
+            })
+            .collect();
+
+        let res = UserTypeId::insert_in(
+            this,
+            UserType {
+                vis: Visibility::Internal,
+                members: type_params
+                    .iter()
+                    .enumerate()
+                    .map(|(i, id)| {
+                        let ty = Type::User(GenericUserType::from_id(this, types, *id));
+                        (
+                            names[i],
+                            CheckedMember::new(
+                                Visibility::Public,
+                                types.insert(ty),
+                                Span::default(),
+                            ),
+                        )
+                    })
+                    .collect(),
+                name: Located::nowhere(Strings::TUPLE_NAME),
+                body_scope: ScopeId::ROOT,
+                kind: UserTypeKind::Tuple,
+                type_params,
+                attrs: Default::default(),
+                impls: Default::default(),
+                members_resolved: true,
+                recursive: false,
+                interior_mutable: false,
+                full_span: Span::nowhere(),
+            },
+            ScopeId::ROOT,
+        );
+
+        this.tuples.insert(names, res.id);
+        if let Some(&tr) = self.proj.scopes.lang_traits.get(&LangTrait::Copy) {
+            let imp = self.synthesize_copy_impl(res.id, tr, Span::nowhere());
+            let imp = self.proj.impls.alloc(imp);
+            self.proj.scopes.get_mut(tr).implementors.push(imp);
+            self.proj.scopes.get_mut(res.id).impls = vec![imp];
+        }
+
+        res.id
+    }
+
+    fn instantiate_tuple(
+        &mut self,
+        names: Vec<StrId>,
+        ty_args: impl IntoIterator<Item = TypeId>,
+    ) -> TypeId {
+        let id = self.create_tuple_user_type(names);
+        self.proj.types.insert(Type::User(GenericUserType::from_type_args(
+            &self.proj.scopes,
+            id,
+            ty_args,
+        )))
+    }
+
+    fn synthesize_copy_impl(&mut self, id: UserTypeId, tr: TraitId, span: Span) -> TraitImpl {
+        let tr = GenericTrait::non_generic(tr);
+        let mut type_params = vec![];
+        let mut ty_args = TypeArgs::default();
+        for i in 0..self.proj.scopes.get(id).type_params.len() {
+            let new_id = UserTypeId::insert_in(
+                &mut self.proj.scopes,
+                UserType::type_param(Default::default()),
+                ScopeId::ROOT,
+            )
+            .id;
+            let ty = self.proj.types.insert(Type::User(GenericUserType::non_generic(new_id)));
+
+            let bound = self.proj.impls.alloc(TraitImpl::Checked(CheckedImpl {
+                scope: None,
+                assoc_types: Default::default(),
+                type_params: vec![],
+                tr: tr.clone(),
+                ty,
+                span: Span::nowhere(),
+                super_trait: false,
+            }));
+            self.proj.scopes.get_mut(new_id).impls = vec![bound];
+            self.proj.scopes.get_mut(tr.id).implementors.push(bound);
+            type_params.push(new_id);
+            ty_args.insert(self.proj.scopes.get(id).type_params[i], ty);
+        }
+
+        TraitImpl::Checked(CheckedImpl {
+            scope: None,
+            assoc_types: Default::default(),
+            type_params,
+            tr,
+            ty: self.proj.types.insert(Type::User(GenericUserType::new(id, ty_args))),
+            span,
+            super_trait: false,
+        })
+    }
+}
+
 impl LookupTraitFn for TypeChecker<'_> {
     fn proj(&self) -> &Project {
         &self.proj
     }
 
     fn get_tuple(&mut self, ty_args: Vec<TypeId>) -> TypeId {
-        let names = (0..ty_args.len()).map(|i| self.proj.strings.get_or_intern(format!("{i}")));
-        self.proj.scopes.get_tuple(names.collect(), ty_args, &self.proj.types)
+        let names =
+            (0..ty_args.len()).map(|i| self.proj.strings.get_or_intern(format!("{i}"))).collect();
+        self.instantiate_tuple(names, ty_args)
     }
 }
 

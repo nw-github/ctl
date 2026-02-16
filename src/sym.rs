@@ -12,7 +12,7 @@ use crate::{
     intern::{StrId, Strings},
     lexer::{Located, Span},
     project::{ImplId, Project},
-    typeid::{GenericTrait, GenericUserType, Type, TypeId, Types},
+    typeid::{GenericTrait, TypeId, Types},
 };
 pub use attrs::*;
 
@@ -582,7 +582,7 @@ pub struct Scopes {
     aliases: Vec<Scoped<Alias>>,
     traits: Vec<Scoped<Trait>>,
     vars: Vec<Scoped<Variable>>,
-    tuples: HashMap<Vec<StrId>, UserTypeId>,
+    pub tuples: HashMap<Vec<StrId>, UserTypeId>,
     pub lang_types: HashMap<LangType, UserTypeId>,
     pub lang_traits: HashMap<LangTrait, TraitId>,
 }
@@ -650,69 +650,6 @@ impl Scopes {
 
     pub fn get_mut<T: ItemId>(&mut self, id: T) -> &mut Scoped<T::Value> {
         id.get_mut(self)
-    }
-
-    pub fn create_tuple_user_type(&mut self, names: Vec<StrId>, types: &Types) -> UserTypeId {
-        if let Some(id) = self.tuples.get(&names) {
-            *id
-        } else {
-            let type_params: Vec<_> = (0..names.len())
-                .map(|_| {
-                    UserTypeId::insert_in(
-                        self,
-                        UserType::type_param(Default::default()),
-                        ScopeId::ROOT,
-                    )
-                    .id
-                })
-                .collect();
-
-            let res = UserTypeId::insert_in(
-                self,
-                UserType {
-                    vis: Visibility::Internal,
-                    members: type_params
-                        .iter()
-                        .enumerate()
-                        .map(|(i, id)| {
-                            let ty = Type::User(GenericUserType::from_id(self, types, *id));
-                            (
-                                names[i],
-                                CheckedMember::new(
-                                    Visibility::Public,
-                                    types.insert(ty),
-                                    Span::default(),
-                                ),
-                            )
-                        })
-                        .collect(),
-                    name: Located::nowhere(Strings::TUPLE_NAME),
-                    body_scope: ScopeId::ROOT,
-                    kind: UserTypeKind::Tuple,
-                    type_params,
-                    attrs: Default::default(),
-                    impls: Default::default(),
-                    members_resolved: true,
-                    recursive: false,
-                    interior_mutable: false,
-                    full_span: Span::nowhere(),
-                },
-                ScopeId::ROOT,
-            );
-
-            self.tuples.insert(names, res.id);
-            res.id
-        }
-    }
-
-    pub fn get_tuple(
-        &mut self,
-        names: Vec<StrId>,
-        ty_args: impl IntoIterator<Item = TypeId>,
-        types: &Types,
-    ) -> TypeId {
-        let id = self.create_tuple_user_type(names, types);
-        types.insert(Type::User(GenericUserType::from_type_args(self, id, ty_args)))
     }
 
     pub fn find_tuple(&self, names: &[StrId]) -> Option<UserTypeId> {
