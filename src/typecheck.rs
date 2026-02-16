@@ -5490,7 +5490,7 @@ impl TypeChecker<'_> {
     }
 
     fn lookup_unk_trait_fn(&mut self, inst: TypeId, id: TraitId, name: StrId) -> Option<MemberFn> {
-        let (imp, my_ut) = self.find_trait_impl(inst, id)?;
+        let (imp, imp_ty_args) = self.fixme_find_trait_impl(inst, id)?;
         let (fn_id, trait_fn) = if let Some(owner) = imp.scope
             && let Some(imp_fn) = self.proj.scopes[owner].find_fn(name)
         {
@@ -5508,16 +5508,7 @@ impl TypeChecker<'_> {
             func.ty_args.copy_args(&imp.tr.ty_args);
         }
 
-        {
-            let mut ty_args = TypeArgs::unknown(&imp.type_params[..]);
-            self.infer_type_args(&mut ty_args, imp.ty, inst);
-            if let Some(ut) = my_ut {
-                ty_args.copy_args(&ut.ty_args);
-            }
-
-            func.ty_args.copy_args(&ty_args);
-        }
-
+        func.ty_args.copy_args(&imp_ty_args);
         let trait_fn = trait_fn.then_some((inst, imp.tr));
         Some(MemberFn { func, trait_fn })
     }
@@ -7578,7 +7569,8 @@ impl TypeChecker<'_> {
             .into_iter()
             .flat_map(|id| {
                 let for_ty = self.resolve_ext_type(id);
-                self.applies_to(id, for_ty, ty)
+                let mut ut = GenericUserType::from_id_unknown(&self.proj().scopes, id);
+                self.applies_to(&mut ut.ty_args, for_ty, ty).then_some(ut)
             })
             .collect();
         self.cache.insert(ty, res.clone());
@@ -7752,7 +7744,7 @@ pub trait LookupTraitFn {
                 continue;
             }
 
-            if let Some((imp, _)) = self.find_trait_impl(val, tr.id) {
+            if let Some((imp, _)) = self.fixme_find_trait_impl(val, tr.id) {
                 for (&src, &target) in tr.ty_args.values().zip(imp.tr.ty_args.values()) {
                     self.infer_type_args(ty_args, src, target);
                 }
@@ -7777,40 +7769,8 @@ pub trait LookupTraitFn {
         ty: TypeId,
         bound: &GenericTrait,
     ) -> Option<(Option<ScopeId>, TypeArgs)> {
-        // println!("---- {}", self.proj().fmt_tr(bound));
-        // println!("Ty:     {}", self.proj().fmt_ty(ty));
-        'outer: for (imp, ut) in self.find_trait_impls(ty, bound.id) {
-            // ty     = Foo<T = int>
-            // bound  = Bar<I = int, J = str, K = int>
-            // imp.tr = Bar<I = T  , J = U  , K = int>
-            let mut ty_args = TypeArgs::unknown(&imp.type_params[..]);
-            // println!("  imp.ty: {}", self.proj().fmt_ty(imp.ty));
-            // println!("  imp.tr: {}", self.proj().fmt_tr(&imp.tr));
-            self.infer_type_args(&mut ty_args, imp.ty, ty);
-            for (type_param, &val) in imp.tr.ty_args.iter() {
-                self.infer_type_args(&mut ty_args, val, bound.ty_args[type_param]);
-            }
-
-            if let Some(ut) = ut {
-                ty_args.copy_args(&ut.ty_args);
-            }
-
-            if bound != &imp.tr.with_templates(&self.proj().types, &ty_args) {
-                continue;
-            }
-
-            for (&type_param, &val) in ty_args.iter() {
-                if val == TypeId::UNKNOWN || !self.satisfies_bounds(&ty_args, type_param, val) {
-                    continue 'outer;
-                }
-            }
-
-            // println!("--- Yep");
-            return Some((imp.scope, ty_args));
-        }
-
-        // println!("--- Nope");
-        None
+        self.find_trait_impl(ty, bound.id, Some(&bound.ty_args))
+            .map(|(imp, ty_args)| (imp.scope, ty_args))
     }
 
     fn compiler_implemented_tr(&mut self, id: TypeId, tr: TraitId) -> Option<GenericTrait> {
@@ -7876,12 +7836,12 @@ pub trait LookupTraitFn {
 
     /// Find impls of `tr` where `ty` is compatible with `imp.ty`
     /// TODOX: return ImplId
-    fn find_trait_impls(
+    fn find_trait_impl(
         &mut self,
         ty: TypeId,
         tr: TraitId,
-    ) -> Vec<(CheckedImpl, Option<GenericUserType>)> {
-        let mut res = vec![];
+        bound: Option<&TypeArgs>,
+    ) -> Option<(CheckedImpl, TypeArgs)> {
         if let Some(def) = self.compiler_implemented_tr(ty, tr) {
             let imp = CheckedImpl {
                 scope: None,
@@ -7892,84 +7852,80 @@ pub trait LookupTraitFn {
                 span: Span::nowhere(),
                 super_trait: false,
             };
-            res.push((imp, None));
+            return Some((imp, TypeArgs::default()));
         }
 
-        let implementors = self.proj().scopes.get(tr).implementors.clone();
-
         let mut fallback_debug = None;
-        for implementor in implementors {
+        for implementor in self.proj().scopes.get(tr).implementors.clone() {
             let Some(imp) = self.proj().impls.get(implementor).as_checked() else {
                 continue;
             };
 
-            // TODO: fast path for imp.ty == ty
-            if imp.ty == ty {
-                res.push((imp.clone(), None));
-                continue;
+            let imp = imp.clone();
+            let mut ty_args = TypeArgs::unknown(&imp.type_params[..]);
+            if let Some(bound) = bound {
+                for (tp, &val) in imp.tr.ty_args.iter() {
+                    self.infer_type_args(&mut ty_args, val, bound[tp]);
+                }
             }
 
-            let Some(ut) = imp
+            if imp.ty == ty {
+                // fast path for imp.ty == ty
+                self.infer_type_args(&mut ty_args, imp.ty, ty);
+            } else if !self.applies_to(&mut ty_args, imp.ty, ty) {
+                continue;
+            } else if imp
                 .scope
                 .and_then(|scope| self.proj().scopes[scope].parent)
                 .and_then(|scope| self.proj().scopes[scope].kind.as_user_type().copied())
-            else {
-                continue;
-            };
-
-            let imp = imp.clone();
-            if let Some(ut) = self.applies_to(ut, imp.ty, ty) {
+                .is_some_and(|id| {
+                    self.proj().scopes.get(id).attrs.lang == Some(LangType::FallbackDebug)
+                })
+            {
                 // XXX: HACK! Force the fallback debug impl to be the last one checked so any other
                 // Debug impl will override it
-                if self.proj().scopes.get(ut.id).attrs.lang == Some(LangType::FallbackDebug) {
-                    fallback_debug = Some((imp, Some(ut)));
-                } else {
-                    res.push((imp, Some(ut)));
-                }
+                fallback_debug = Some((imp, ty_args));
+                continue;
             }
+
+            if bound
+                .is_some_and(|b| b != &imp.tr.with_templates(&self.proj().types, &ty_args).ty_args)
+            {
+                continue;
+            }
+
+            return Some((imp, ty_args));
         }
 
-        if let Some(delay) = fallback_debug {
-            res.push(delay);
-        }
-
-        res
+        fallback_debug
     }
 
     // TODO: Assumes `ty` only has one impl
     // TODO: the two callers of this function do not properly handle the case where the impl is
     //       generic
-    fn find_trait_impl(
+    fn fixme_find_trait_impl(
         &mut self,
         ty: TypeId,
         tr: TraitId,
-    ) -> Option<(CheckedImpl, Option<GenericUserType>)> {
-        let (mut imp, ut) = self.find_trait_impls(ty, tr).into_iter().next()?;
-        if let Some(ut) = &ut {
-            imp.tr.fill_templates(&self.proj().types, &ut.ty_args);
-        }
-        Some((imp, ut))
+    ) -> Option<(CheckedImpl, TypeArgs)> {
+        let (mut imp, ty_args) = self.find_trait_impl(ty, tr, None)?;
+        imp.tr.fill_templates(&self.proj().types, &ty_args);
+        Some((imp, ty_args))
     }
 
-    fn applies_to(
-        &mut self,
-        owner: UserTypeId,
-        src_ty: TypeId,
-        ty: TypeId,
-    ) -> Option<GenericUserType> {
-        let mut ut = GenericUserType::from_id_unknown(&self.proj().scopes, owner);
-        self.infer_type_args(&mut ut.ty_args, src_ty, ty);
-        if src_ty.with_templates(&self.proj().types, &ut.ty_args) != ty {
-            return None;
+    fn applies_to(&mut self, ty_args: &mut TypeArgs, src_ty: TypeId, ty: TypeId) -> bool {
+        self.infer_type_args(ty_args, src_ty, ty);
+        if src_ty.with_templates(&self.proj().types, ty_args) != ty {
+            return false;
         }
 
-        for (&id, &arg) in ut.ty_args.iter() {
-            if arg == TypeId::UNKNOWN || !self.satisfies_bounds(&ut.ty_args, id, arg) {
-                return None;
+        for (&id, &arg) in ty_args.iter() {
+            if arg == TypeId::UNKNOWN || !self.satisfies_bounds(ty_args, id, arg) {
+                return false;
             }
         }
 
-        Some(ut)
+        true
     }
 }
 
