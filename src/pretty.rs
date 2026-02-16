@@ -117,13 +117,13 @@ impl Pretty<'_> {
                 super_traits,
                 functions,
                 is_unsafe,
-                is_sealed,
+                seal,
                 assoc_types,
             } => {
                 self.print_header(
                     &tabs,
                     "Stmt::Trait",
-                    &[str!(self, name, LOCATED), dbgvar!(vis), bool!(is_sealed), bool!(is_unsafe)],
+                    &[str!(self, name, LOCATED), dbgvar!(vis), dbgvar!(seal), bool!(is_unsafe)],
                 );
 
                 self.print_type_params(type_params, indent + 1, None);

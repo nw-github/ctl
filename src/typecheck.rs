@@ -1163,7 +1163,7 @@ impl<'a> TypeChecker<'a> {
             &PStmtData::Trait {
                 vis,
                 name,
-                is_sealed,
+                seal,
                 is_unsafe,
                 ref type_params,
                 ref super_traits,
@@ -1186,7 +1186,7 @@ impl<'a> TypeChecker<'a> {
                         super_traits: SuperTraits::Unchecked(super_traits.clone()),
                         assoc_types: this.declare_associated_types(assoc_types),
                         this: this_id,
-                        seal: if is_sealed { Visibility::Private } else { Visibility::Public },
+                        seal,
                         is_unsafe,
                         implementors: vec![],
                         full_span: stmt.data.span,

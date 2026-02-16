@@ -87,7 +87,7 @@ pub enum StmtData {
     UnsafeUnion(Struct),
     Trait {
         vis: Visibility,
-        is_sealed: bool,
+        seal: Visibility,
         is_unsafe: bool,
         name: Located<StrId>,
         type_params: TypeParams,

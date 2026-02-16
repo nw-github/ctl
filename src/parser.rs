@@ -238,16 +238,23 @@ impl<'a> Parser<'a> {
                 })
             }
             Token::Trait | Token::Sealed => {
-                let sealed = self.next().data == Token::Sealed;
-                if sealed {
+                let seal = if self.next().data == Token::Sealed {
+                    let library = self.next_if(Token::LParen).map(|_| {
+                        self.expect(Token::Lib);
+                        self.expect(Token::RParen);
+                        Visibility::Library
+                    });
                     self.expect(Token::Trait);
-                }
+                    library.unwrap_or(Visibility::Private)
+                } else {
+                    Visibility::Public
+                };
 
                 self.invalid_here(tk_extern);
 
                 Ok(Stmt {
                     attrs,
-                    data: self.r#trait(vis, earliest_span, tk_unsafe.is_some(), sealed),
+                    data: self.r#trait(vis, earliest_span, tk_unsafe.is_some(), seal),
                 })
             }
             Token::Extension => {
@@ -2037,7 +2044,7 @@ impl<'a> Parser<'a> {
         vis: Visibility,
         span: Span,
         is_unsafe: bool,
-        is_sealed: bool,
+        seal: Visibility,
     ) -> Located<StmtData> {
         let name = self.expect_ident("expected name");
         let type_params = self.type_params();
@@ -2077,7 +2084,7 @@ impl<'a> Parser<'a> {
             span,
             StmtData::Trait {
                 vis,
-                is_sealed,
+                seal,
                 is_unsafe,
                 name,
                 type_params,
