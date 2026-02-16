@@ -2520,6 +2520,7 @@ impl TypeChecker<'_> {
             self.with_safety(Safety::Safe, |this| this.check_expr_no_never_propagation(body, ret));
         let ret = self.proj.scopes[self.current].kind.as_closure().unwrap().0.unwrap_or(body.ty);
         let body = self.type_check_checked(body, ret, span);
+        let is_args_empty = tuple_ty_args.is_empty();
         let args_tuple = self.proj.scopes.get_tuple(names, tuple_ty_args, &self.proj.types);
         self.enter(ScopeKind::None, |this| {
             let no_captures = members.is_empty();
@@ -2595,6 +2596,7 @@ impl TypeChecker<'_> {
                             name: Located::nowhere(Strings::FN_TR_ARGS_NAME),
                             ty: args_tuple,
                             vis: Visibility::Internal,
+                            unused: is_args_empty,
                             ..Default::default()
                         },
                         false,

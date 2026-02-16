@@ -112,7 +112,7 @@ impl Strings {
         assert_eq!(Self::EXTENSION_NAME, rodeo.get_or_intern_static("{extension}"));
         assert_eq!(Self::ATTR_ALIGN, rodeo.get_or_intern_static("align"));
         assert_eq!(Self::ATTR_LAYOUT, rodeo.get_or_intern_static("layout"));
-        assert_eq!(Self::FN_TR_ARGS_NAME, rodeo.get_or_intern_static("args"));
+        assert_eq!(Self::FN_TR_ARGS_NAME, rodeo.get_or_intern_static("_args"));
         assert_eq!(Self::FN_CLOSURE_DO_INVOKE, rodeo.get_or_intern_static("do_invoke"));
         assert_eq!(Self::ATTR_EXPORT, rodeo.get_or_intern_static("export"));
         assert_eq!(Self::ATTR_CFG, rodeo.get_or_intern_static("cfg"));
