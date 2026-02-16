@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
-use tower_lsp::{LspService, Server, lsp_types::Range};
+use tower_lsp::{LspService, Server};
 
 #[derive(Parser)]
 struct Arguments {
@@ -302,7 +302,8 @@ fn display_diagnostics(diag: &Diagnostics) {
         diag: &Diagnostics,
         id: FileId,
         errors: impl IntoIterator<Item = &'a Error>,
-        mut format: impl FnMut(&str, Range),
+        mut format: impl FnMut(&str, u32, u32),
+        mut fmt_ctx: impl FnMut(&Path, &str, u32, u32),
     ) -> usize {
         let mut vec: Vec<_> = errors.into_iter().filter(|err| err.span.file == id).collect();
         vec.sort_by_key(|item| item.span.pos);
@@ -310,16 +311,29 @@ fn display_diagnostics(diag: &Diagnostics) {
         for err in vec {
             // TODO: do something with the errors
             _ = provider.get_source(diag.file_path(err.span.file), |data| {
-                format(
-                    &err.message,
-                    Diagnostics::get_span_range(data, err.span, OffsetMode::Utf32),
-                );
+                let range = Diagnostics::get_span_range(data, err.span, OffsetMode::Utf32);
+                format(&err.message, range.start.line + 1, range.start.character + 1);
             });
+
+            if let Some(context) = &err.context {
+                for (message, span) in context {
+                    let path = diag.file_path(span.file);
+                    _ = provider.get_source(path, |data| {
+                        let range = Diagnostics::get_span_range(data, *span, OffsetMode::Utf32);
+                        fmt_ctx(path, message, range.start.line + 1, range.start.character + 1);
+                    });
+                }
+            }
         }
         count
     }
 
     let cwd = std::env::current_dir().ok();
+    let print_ctx = |path: &Path, msg: &str, line: u32, col: u32| {
+        let path = cwd.as_ref().and_then(|cwd| path.strip_prefix(cwd).ok()).unwrap_or(path);
+        eprintln!("    {}:{line}:{col}: {msg}", path.display(),);
+    };
+
     let mut provider = CachingSourceProvider::new();
     let mut errors = 0;
     for (id, path) in diag.paths() {
@@ -329,15 +343,8 @@ fn display_diagnostics(diag: &Diagnostics) {
             diag,
             id,
             diag.diagnostics().iter().filter(|e| e.severity.is_error()),
-            |msg, range| {
-                eprintln!(
-                    "{}: {}:{}:{}: {msg}",
-                    "error".red(),
-                    path.display(),
-                    range.start.line + 1,
-                    range.start.character + 1
-                );
-            },
+            |msg, line, col| eprintln!("{}: {}:{line}:{col}: {msg}", "error".red(), path.display()),
+            &print_ctx,
         );
     }
 
@@ -349,15 +356,10 @@ fn display_diagnostics(diag: &Diagnostics) {
             diag,
             id,
             diag.diagnostics().iter().filter(|e| e.severity.is_warning()),
-            |msg, range| {
-                eprintln!(
-                    "{}: {}:{}:{}: {msg}",
-                    "warning".yellow(),
-                    path.display(),
-                    range.start.line + 1,
-                    range.start.character + 1
-                );
+            |msg, line, col| {
+                eprintln!("{}: {}:{line}:{col}: {msg}", "warning".yellow(), path.display())
             },
+            &print_ctx,
         );
     }
 

@@ -146,11 +146,28 @@ pub struct Error {
     pub message: String,
     pub span: Span,
     pub severity: ErrorSeverity,
+    pub context: Option<Vec<(String, Span)>>,
 }
 
 impl Error {
     pub fn new(message: impl Into<String>, span: impl Into<Span>) -> Self {
-        Self { message: message.into(), span: span.into(), severity: ErrorSeverity::Error }
+        Self {
+            message: message.into(),
+            span: span.into(),
+            severity: ErrorSeverity::Error,
+            context: None,
+        }
+    }
+
+    pub fn add_context(&mut self, message: impl Into<String>, span: impl Into<Span>) -> &mut Self {
+        let vec = self.context.get_or_insert_default();
+        vec.push((message.into(), span.into()));
+        self
+    }
+
+    pub fn with_context(mut self, message: impl Into<String>, span: impl Into<Span>) -> Self {
+        self.add_context(message, span);
+        self
     }
 
     pub fn invalid_operator(op: impl Display, ty: impl Display, span: Span) -> Self {
@@ -297,7 +314,12 @@ pub struct Warning;
 impl Warning {
     #[allow(clippy::new_ret_no_self)]
     fn new(message: impl Into<String>, span: impl Into<Span>) -> Error {
-        Error { message: message.into(), span: span.into(), severity: ErrorSeverity::Warning }
+        Error {
+            message: message.into(),
+            span: span.into(),
+            severity: ErrorSeverity::Warning,
+            context: None,
+        }
     }
 
     pub fn redundant_token(src: &str, span: Span) -> Error {

@@ -2064,9 +2064,11 @@ impl TypeChecker<'_> {
                     this.proj.diag.report(Error::new("panic handler must have a definition", func.name.span));
                 }
 
-                if let Some(_old) = this.proj.panic_handler.replace(id) {
-                    // TODO: report that it was previously defined at the span of _old
-                    this.proj.diag.report(Error::new("a panic handler already exists", func.name.span));
+                if let Some(old) = this.proj.panic_handler.replace(id) {
+                    this.proj.diag.report(
+                        Error::new("a panic handler already exists", func.name.span)
+                            .with_context("first defined here", this.proj.scopes.get(old).name.span)
+                    );
                 }
 
                 let panic = this.proj.scopes
@@ -2088,9 +2090,11 @@ impl TypeChecker<'_> {
                 }
 
                 // TODO: validate the signature of this method
-                if let Some(_old) = this.proj.test_runner.replace(id) {
-                    // TODO: report that it was previously defined at the span of _old
-                    this.proj.diag.report(Error::new("a test runner already exists", func.name.span));
+                if let Some(old) = this.proj.test_runner.replace(id) {
+                    this.proj.diag.report(
+                        Error::new("a test runner already exists", func.name.span)
+                            .with_context("first defined here", this.proj.scopes.get(old).name.span)
+                    );
                 }
             }
 

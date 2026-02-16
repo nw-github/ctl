@@ -511,6 +511,7 @@ impl LspBackend {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn make_diagnostic(
         &self,
         diag: &Diagnostics,
@@ -519,6 +520,7 @@ impl LspBackend {
         msg: &str,
         severity: DiagnosticSeverity,
         all: &mut HashMap<Url, Vec<Diagnostic>>,
+        related: &[(String, Span)],
     ) {
         let path = diag.file_path(span.file);
         let Some(range) = self.with_source(path, provider, |src| {
@@ -533,12 +535,25 @@ impl LspBackend {
         };
 
         let entry = all.entry(path).or_default();
+        let related = related.iter().flat_map(|(msg, span)| {
+            let path = diag.file_path(span.file);
+            let range = self.with_source(path, provider, |src| {
+                Diagnostics::get_span_range(src, *span, OffsetMode::Utf16)
+            })?;
+            let uri = Url::from_file_path(path).ok()?;
+            Some(DiagnosticRelatedInformation {
+                location: Location { uri, range },
+                message: msg.into(),
+            })
+        });
+
         entry.push(Diagnostic {
             range,
             severity: Some(severity),
             source: Some("ctlsp".into()),
             message: msg.into(),
             tags: (severity == DiagnosticSeverity::HINT).then(|| vec![DiagnosticTag::UNNECESSARY]),
+            related_information: Some(related.collect()),
             ..Diagnostic::default()
         });
     }
@@ -609,6 +624,7 @@ impl LspBackend {
                     crate::ErrorSeverity::Error => DiagnosticSeverity::ERROR,
                 },
                 &mut all,
+                err.context.as_deref().unwrap_or_default(),
             )
             .await;
         }
@@ -621,6 +637,7 @@ impl LspBackend {
                 "this region is disabled",
                 DiagnosticSeverity::HINT,
                 &mut all,
+                &[],
             )
             .await;
         }
@@ -1441,11 +1458,8 @@ fn visualize_type(id: UserTypeId, proj: &Project) -> String {
             *res += "\n";
         }
         for (name, member) in ut.members.iter() {
-            let header = if ut.kind.is_union() {
-                String::from("shared ")
-            } else {
-                member.vis.to_string()
-            };
+            let header =
+                if ut.kind.is_union() { String::from("shared ") } else { member.vis.to_string() };
 
             write_de!(
                 res,
