@@ -1,7 +1,6 @@
-use std::mem;
-use std::mem::Layout;
+use std::{mem, mem::{Layout, Uninit}};
 use std::range::RangeBounds;
-use std::reflect::*;
+use std::reflect::Integral;
 
 $[feature(alloc)]
 $[lang(vec)]
@@ -39,6 +38,15 @@ pub struct Vec<T> {
     }
 
     pub fn capacity(this): uint => this.cap;
+
+    pub fn spare_capacity(this): uint => this.cap - this.len;
+
+    pub fn spare_capacity_mut(mut this): [mut Uninit<T>..] {
+        unsafe SpanMut::new(
+            ptr: Uninit::from_raw_mut(this.ptr.add(this.len)),
+            len: this.cap - this.len,
+        )
+    }
 
     pub fn push(mut this, val: T) {
         if !this.can_insert(1) {
@@ -164,7 +172,7 @@ pub struct Vec<T> {
         }
 
         // TODO: some kind of "if const"
-        if std::mem::size_of::<T>() == 0 {
+        if mem::size_of::<T>() == 0 {
             this.cap = cap;
             return;
         }
@@ -182,7 +190,7 @@ pub struct Vec<T> {
             this.ptr = ptr.cast();
             this.cap = cap;
         } else {
-            let bytes = cap * std::mem::size_of::<T>();
+            let bytes = cap * mem::size_of::<T>();
             panic("out of memory trying to allocate {bytes} bytes");
         }
     }
