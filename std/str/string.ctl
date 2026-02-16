@@ -54,19 +54,54 @@ pub struct str {
         }
     }
 
-    pub fn find(this, rhs: str): ?uint => this.span.find(rhs.span);
+    pub fn find(my this, needle: str): ?uint => this.span.find(needle.span);
 
-    pub unsafe fn substr_unchecked<R: RangeBounds<uint>>(this, range: R): str {
+    pub unsafe fn substr_unchecked<R: RangeBounds<uint>>(my this, range: R): str {
         str(span: unsafe this.span.subspan_unchecked(range))
     }
 
-    pub fn trim_start(this): str {
+    pub fn trim_start_matches<F: Fn(char) => bool>(my this, f: F): str {
         for (i, ch) in this.char_indices() {
-            if !ch.is_ascii_whitespace() {
+            if !f(ch) {
                 return this[i..];
             }
         }
         this[this.len()..]
+    }
+
+    pub fn trim_end_matches<F: Fn(char) => bool>(my this, f: F): str {
+        for i in 0u..this.span.len() {
+            let pos  = this.span.len() - i - 1;
+            let lead = this.span[pos];
+            guard utf8::sequence_length(lead) is ?len else {
+                continue;
+            }
+
+            mut span = this.span[pos..];
+            unsafe if !f(utf8::next_char_unchecked(&mut span, lead)) {
+                return str::from_utf8_unchecked(this.span[..pos + len]);
+            }
+        }
+
+        this[..0u]
+    }
+
+    pub fn trim_matches<F: Fn(char) => bool>(my this, f: F): str {
+        this.trim_start_matches(&f).trim_end_matches(&f)
+    }
+
+    pub fn trim_ascii_start(my this): str => this.trim_start_matches(char::is_ascii_whitespace);
+
+    pub fn trim_ascii_end(my this): str => this.trim_end_matches(char::is_ascii_whitespace);
+
+    pub fn trim_ascii(my this): str => this.trim_matches(char::is_ascii_whitespace);
+
+    pub fn split(my this, patt: str): Spliterator => Spliterator(haystack: this, needle: patt);
+
+    pub fn split_once(my this, patt: str): ?(str, str) {
+        mut iter = this.split(patt);
+        let first = iter.next()?;
+        (first, iter.haystack?)
     }
 
     pub fn ==(this, rhs: *str): bool => this.as_bytes() == rhs.as_bytes();
@@ -77,18 +112,40 @@ pub struct str {
     }
 
     impl Debug {
-        fn dbg(this, f: *mut Formatter) => write(f, "\"{this}\"");
+        fn dbg(this, f: *mut Formatter) {
+            f.write_char('"');
+            for ch in this.chars() {
+                match ch {
+                    '\n' => f.write_str("\\n"),
+                    '\t' => f.write_str("\\t"),
+                    '\r' => f.write_str("\\r"),
+                    '\e' => f.write_str("\\e"),
+                    '\0' => f.write_str("\\0"),
+                    '\\' => f.write_str("\\\\"),
+                    '\"' => f.write_str("\\\""),
+                    _ => f.write_char(ch),
+                }
+            }
+            f.write_char('"');
+        }
     }
 
     impl Format {
         fn fmt(this, f: *mut Formatter) => f.pad(*this);
     }
 
-    pub fn []<I: Integral>(this, idx: I): *u8 => &this.span[idx];
-    pub fn []<R: RangeBounds<uint>>(this, range: R): str => this.substr(range).unwrap();
+    pub fn []<I: Integral>(my this, idx: I): *u8 => &this.span[idx];
+
+    pub fn []<R: RangeBounds<uint>>(my this, range: R): str {
+        if this.substr(range) is ?s {
+            s
+        } else {
+            panic("Invalid range {range:?} for string {this:?}");
+        }
+    }
 
     $[feature(alloc)]
-    pub fn repeat(this, n: uint): str {
+    pub fn repeat(my this, n: uint): str {
         let num = this.len();
         mut buf: [u8] = Vec::with_capacity(num * n);
         for i in 0u..n {
@@ -186,6 +243,26 @@ pub struct LossyChars {
         fn next(mut this): ?char {
             let lead = this.iter.next()?;
             utf8::next_char(&mut this.iter, *lead) ?? this.replacement
+        }
+    }
+}
+
+pub struct Spliterator {
+    haystack: ?str,
+    needle: str,
+
+    impl Iterator<str> {
+        fn next(mut this): ?str {
+            let haystack = this.haystack?;
+            if haystack.find(this.needle) is ?next {
+                unsafe {
+                    let part = haystack.substr_unchecked(..next);
+                    this.haystack = haystack.substr_unchecked(next + this.needle.len()..);
+                    part
+                }
+            } else {
+                this.haystack.take()
+            }
         }
     }
 }

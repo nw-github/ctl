@@ -28,6 +28,18 @@ extension<T> T {
     }
 }
 
+extension<Args: Tuple, R, F: Fn<Args, R>> *F {
+    impl Fn<Args, R> {
+        fn invoke(this, args: Args): R => (**this).invoke(args);
+    }
+}
+
+extension<Args: Tuple, R, F: Fn<Args, R>> *mut F {
+    impl Fn<Args, R> {
+        fn invoke(this, args: Args): R => (**this).invoke(args);
+    }
+}
+
 extension<Args: Tuple, R, F: SafeFnPtr<Args, R>> F {
     impl Fn<Args, R> {
         fn invoke(this, args: Args): R => std::intrin::invoke_with_tuple(this, args);
