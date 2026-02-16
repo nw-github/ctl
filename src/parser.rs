@@ -1957,9 +1957,13 @@ impl<'a> Parser<'a> {
     }
 
     fn union(&mut self, vis: Visibility, span: Span) -> Located<StmtData> {
+        let tag = self.next_if(Token::LParen).map(|_| {
+            let path = self.type_path();
+            self.expect(Token::RParen);
+            path
+        });
         let name = self.expect_ident("expected name");
         let type_params = self.type_params();
-        let tag = self.next_if(Token::Colon).map(|_| self.type_path());
         let mut functions = Vec::new();
         let mut operators = Vec::new();
         let mut members = Vec::new();

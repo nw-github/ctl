@@ -54,7 +54,7 @@ mod union_ {
         shared union_x: Foo,
     }
 
-    union Bar: Bar { A, B, }
+    union(Bar) Bar { A, B, }
 }
 
 fn main() {}

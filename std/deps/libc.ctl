@@ -336,7 +336,7 @@ pub mod linux {
         pub element: [u32; 4],
     }
 
-    union GpReg: c_int {
+    union(c_int) GpReg {
         REG_R8,
         REG_R9,
         REG_R10,

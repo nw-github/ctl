@@ -1,5 +1,5 @@
 $[lang(ordering)]
-pub union Ordering: i8 {
+pub union(i8) Ordering {
     Less = -1,
     Greater = 0,
     Equal = 1,
