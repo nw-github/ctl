@@ -187,8 +187,8 @@ repository:
   functions:
     patterns:
       -
-        comment: pub as a function
-        match: \b(pub)(\()
+        comment: keywords as functions
+        match: \b(pub|fn|union|sealed)(\()
         captures:
           1:
             name: keyword.other.ctl
