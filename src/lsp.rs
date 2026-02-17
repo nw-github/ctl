@@ -536,29 +536,31 @@ impl LspBackend {
 
         let related = related
             .iter()
-            .flat_map(|(msg, span)| {
-                let related_path = diag.file_path(span.file);
+            .flat_map(|(msg, related_span)| {
+                let related_path = diag.file_path(related_span.file);
                 let related_range = self.with_source(related_path, provider, |src| {
-                    Diagnostics::get_span_range(src, *span, OffsetMode::Utf16)
+                    Diagnostics::get_span_range(src, *related_span, OffsetMode::Utf16)
                 })?;
                 let uri = Url::from_file_path(related_path).ok()?;
-                let entry = all.entry(uri.clone()).or_default();
-                entry.push(Diagnostic {
-                    range: {
-                        let mut first_char_range = related_range;
-                        first_char_range.end.character = first_char_range.start.character + 1;
-                        first_char_range.end.line = first_char_range.start.line;
-                        first_char_range
-                    },
-                    severity: Some(DiagnosticSeverity::HINT),
-                    source: Some("ctlsp".into()),
-                    message: msg.into(),
-                    related_information: Some(vec![DiagnosticRelatedInformation {
-                        location: Location { uri: path.clone(), range },
-                        message: "original diagnostic".into(),
-                    }]),
-                    ..Default::default()
-                });
+                if *related_span != span {
+                    let entry = all.entry(uri.clone()).or_default();
+                    entry.push(Diagnostic {
+                        range: {
+                            let mut first_char_range = related_range;
+                            first_char_range.end.character = first_char_range.start.character + 1;
+                            first_char_range.end.line = first_char_range.start.line;
+                            first_char_range
+                        },
+                        severity: Some(DiagnosticSeverity::HINT),
+                        source: Some("ctlsp".into()),
+                        message: msg.into(),
+                        related_information: Some(vec![DiagnosticRelatedInformation {
+                            location: Location { uri: path.clone(), range },
+                            message: "original diagnostic".into(),
+                        }]),
+                        ..Default::default()
+                    });
+                }
 
                 Some(DiagnosticRelatedInformation {
                     location: Location { uri, range: related_range },

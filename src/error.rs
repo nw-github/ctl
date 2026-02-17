@@ -296,8 +296,13 @@ impl Error {
         )
     }
 
-    pub fn invalid_impl(func: &str, why: &str, span: Span) -> Self {
-        Self::new(format!("invalid implementation of function '{func}': {why}"), span)
+    pub fn invalid_impl(func: &str, span: Span, context: Vec<(String, Span)>) -> Self {
+        Self {
+            message: format!("invalid implementation of function '{func}'"),
+            span,
+            severity: ErrorSeverity::Error,
+            context: Some(context),
+        }
     }
 
     pub fn invalid_attr(name: impl Display, span: Span) -> Self {

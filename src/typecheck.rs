@@ -1849,23 +1849,50 @@ impl TypeChecker<'_> {
         has: FunctionId,
         wants: FunctionId,
         ty_args: &TypeArgs,
-        span: &mut Span,
-    ) -> Result<(), String> {
+    ) {
+        enum Zipped<T, U> {
+            Both(T, U),
+            Left(T),
+            Right(U),
+        }
+
+        fn zip_longest<A: Iterator, B: Iterator>(
+            mut a: A,
+            mut b: B,
+        ) -> impl Iterator<Item = Zipped<A::Item, B::Item>> {
+            std::iter::from_fn(move || match (a.next(), b.next()) {
+                (Some(a), Some(b)) => Some(Zipped::Both(a, b)),
+                (Some(a), None) => Some(Zipped::Left(a)),
+                (None, Some(b)) => Some(Zipped::Right(b)),
+                _ => None,
+            })
+        }
+
+        self.resolve_proto(wants);
+
         let hfn = self.proj.scopes.get(has);
         let wfn = self.proj.scopes.get(wants);
-        // if wfn.is_extern != hfn.is_extern {
-        //     return Err(format!(
-        //         "function '{}'{} must be declared extern",
-        //         if wfn.is_extern { "" } else { "not" },
-        //         strdata!(self, hfn.name.data)
-        //     ));
-        // }
+        let span = hfn.name.span;
+        let mut errors = vec![];
+        if wfn.abi != hfn.abi {
+            errors.push((
+                format!(
+                    "function '{} must be declared '{}'",
+                    strdata!(self, hfn.name.data),
+                    wfn.abi,
+                ),
+                span,
+            ));
+        }
 
         if wfn.is_unsafe != hfn.is_unsafe {
-            return Err(format!(
-                "function '{}'{} must be declared unsafe",
-                if wfn.is_unsafe { "" } else { "not" },
-                strdata!(self, hfn.name.data)
+            errors.push((
+                format!(
+                    "function '{}'{} must be declared unsafe",
+                    if wfn.is_unsafe { "" } else { "not" },
+                    strdata!(self, hfn.name.data)
+                ),
+                span,
             ));
         }
 
@@ -1897,66 +1924,88 @@ impl TypeChecker<'_> {
             }
         };
 
-        if let Err(err) = compare_types(hfn.ret, wfn.ret) {
-            return Err(format!("return type is incorrect: {err}"));
-        }
+        for res in zip_longest(hfn.type_params.iter().copied(), wfn.type_params.iter().copied()) {
+            match res {
+                Zipped::Both(s, t) => {
+                    let s = self.proj.scopes.get(s);
+                    let t = self.proj.scopes.get(t);
+                    let mut required: HashSet<_> = t
+                        .iter_impls(&self.proj, false)
+                        .map(|imp| imp.tr.with_templates(&self.proj.types, &ty_args))
+                        .collect();
+                    let name = self.proj.str(s.name.data);
+                    for has in s.iter_impls(&self.proj, false) {
+                        if !required.remove(&has.tr) {
+                            errors.push((
+                                format!(
+                                    "type parameter '{name}': unexpected trait bound '{}'",
+                                    self.proj.fmt_tr(&has.tr)
+                                ),
+                                has.span,
+                            ));
+                        }
+                    }
 
-        for (s, t) in hfn.params.iter().zip(wfn.params.iter().cloned()) {
-            if let Err(err) = compare_types(s.ty, t.ty) {
-                let label = strdata!(self, t.label);
-                return Err(format!("parameter '{label}' is incorrect: {err}"));
-            }
-        }
-
-        for (&s, &t) in hfn.type_params.iter().zip(wfn.type_params.iter()) {
-            let s = self.proj.scopes.get(s);
-            let t = self.proj.scopes.get(t);
-            let name = s.name.data;
-            // TODO: dont enfore impl order
-            for (s, t) in s.iter_impls(&self.proj, false).zip(t.iter_impls(&self.proj, false)) {
-                let wants = t.tr.with_templates(&self.proj.types, &ty_args);
-                if s.tr != wants {
-                    *span = s.span;
-                    return Err(format!(
-                        "expected trait {}, found {}",
-                        self.proj.fmt_tr(&wants),
-                        self.proj.fmt_tr(&s.tr),
-                    ));
+                    if !required.is_empty() {
+                        use std::fmt::Write;
+                        let mut fmt = String::new();
+                        for (i, bound) in required.iter().enumerate() {
+                            if i != 0 {
+                                _ = write!(fmt, ", ");
+                            }
+                            _ = write!(fmt, "{}", self.proj.fmt_tr(bound));
+                        }
+                        errors.push((
+                            format!("type parameter '{name}': missing trait bound(s) '{fmt}'"),
+                            s.name.span,
+                        ));
+                    }
+                }
+                Zipped::Left(s) => {
+                    let s = self.proj.scopes.get(s);
+                    let label = strdata!(self, s.name.data);
+                    errors.push((format!("unexpected type parameter '{label}'"), s.name.span));
+                }
+                Zipped::Right(t) => {
+                    let label = strdata!(self, self.proj.scopes.get(t).name.data);
+                    errors.push((format!("missing type parameter '{label}'"), span));
                 }
             }
+        }
 
-            if s.impls.len() != t.impls.len() {
-                return Err(format!("type parameter '{}' is incorrect", strdata!(self, name)));
+        for res in zip_longest(hfn.params.iter(), wfn.params.iter()) {
+            match res {
+                Zipped::Both(s, t) => {
+                    if let Err(err) = compare_types(s.ty, t.ty) {
+                        let label = strdata!(self, t.label);
+                        errors.push((format!("parameter '{label}': {err}"), span));
+                    }
+                }
+                Zipped::Left(s) => {
+                    let label = strdata!(self, s.label);
+                    errors.push((format!("unexpected parameter '{label}'"), span));
+                }
+                Zipped::Right(t) => {
+                    let label = strdata!(self, t.label);
+                    let ty = self.proj.fmt_ty(t.ty.with_templates(&self.proj.types, &ty_args));
+                    errors.push((format!("missing parameter '{label}' of type '{ty}'"), span));
+                }
             }
         }
 
-        if hfn.params.len() != wfn.params.len() {
-            return Err(format!(
-                "expected {} parameter(s), got {}",
-                wfn.params.len(),
-                hfn.params.len(),
-            ));
+        if let Err(err) = compare_types(hfn.ret, wfn.ret) {
+            errors.push((format!("return type is incorrect: {err}"), span));
         }
 
-        if hfn.type_params.len() != wfn.type_params.len() {
-            return Err(format!(
-                "expected {} type parameter(s), got {}",
-                wfn.type_params.len(),
-                hfn.type_params.len(),
-            ));
+        if !errors.is_empty() {
+            let data = strdata!(self, wfn.name.data);
+            self.proj.diag.report(Error::invalid_impl(data, span, errors));
         }
-
-        Ok(())
     }
 
-    fn check_impl_block(&mut self, this: TypeId, imp: &CheckedImpl) {
-        let mut tr = imp.tr.clone();
-        for (&type_param, &ty) in imp.tr.ty_args.iter() {
-            self.check_bounds(&imp.tr.ty_args, ty, type_param, imp.span);
-        }
-
+    fn check_impl_block(&mut self, this: TypeId, imp: CheckedImpl) {
+        let mut tr = imp.tr;
         let tr_data = self.proj.scopes.get(tr.id);
-        let this_id = tr_data.this;
         if !self.can_access_in_scope(tr_data.scope, tr_data.seal) {
             self.error(Error::new(
                 format!("cannot implement sealed trait '{}'", strdata!(self, tr_data.name.data)),
@@ -1968,27 +2017,6 @@ impl TypeChecker<'_> {
             self.check_hover(typ.span, LspItem::Type(id));
             self.check_bounds(&TypeArgs::default(), typ.data, id, typ.span);
             tr.ty_args.insert(id, typ.data);
-        }
-
-        self.resolve_super_traits(tr.id);
-        for mut dep in self.proj.scopes.get(tr.id).super_traits.iter_checked_owned() {
-            for ty_arg in dep.ty_args.values_mut() {
-                if self.proj.types[*ty_arg].as_user().is_some_and(|ut| ut.id == this_id) {
-                    *ty_arg = this;
-                }
-            }
-
-            dep.fill_templates(&self.proj.types, &tr.ty_args);
-            if !self.implements_trait(this, &dep) {
-                self.proj.diag.report(Error::new(
-                    format!(
-                        "trait '{}' requires implementation of trait '{}'",
-                        self.proj.fmt_tr(&tr),
-                        self.proj.fmt_tr(&dep),
-                    ),
-                    imp.span,
-                ));
-            }
         }
 
         let collect_fns = |scope: ScopeId| {
@@ -2013,13 +2041,7 @@ impl TypeChecker<'_> {
             };
 
             let rhs = required.swap_remove(pos);
-            self.resolve_proto(rhs);
-            let this = Some((tr.id, this));
-            let mut span = fn_name.span;
-            if let Err(why) = self.check_signature_match(this, lhs, rhs, &tr.ty_args, &mut span) {
-                let data = strdata!(self, fn_name.data);
-                self.error(Error::invalid_impl(data, &why, span))
-            }
+            self.check_signature_match(Some((tr.id, this)), lhs, rhs, &tr.ty_args);
         }
 
         for id in required {
@@ -2084,13 +2106,7 @@ impl TypeChecker<'_> {
                     .find(|(_, f)| f.attrs.intrinsic == Some(Intrinsic::Panic))
                     .map(|p| p.0);
                 if let Some(panic) = panic {
-                    let fn_name = func.name;
-                    this.resolve_proto(panic);
-                    let mut span = fn_name.span;
-                    if let Err(why) = this.check_signature_match(None, id, panic, &TypeArgs::default(), &mut span) {
-                        let data = strdata!(this, fn_name.data);
-                        this.proj.diag.report(Error::invalid_impl(data, &why, span))
-                    }
+                    this.check_signature_match(None, id, panic, &TypeArgs::default());
                 }
             } else if func.attrs.test_runner {
                 if body.is_none() {
@@ -2178,7 +2194,7 @@ impl TypeChecker<'_> {
             // TODOX: more sophisticated conflict check and access check
             if !seen.insert(imp.tr.clone()) {
                 self.proj.diag.report(Error::new(
-                    format!("duplicate implementation of trait {}", self.proj.fmt_tr(&imp.tr)),
+                    format!("duplicate implementation of trait '{}'", self.proj.fmt_tr(&imp.tr)),
                     imp.span,
                 ))
             } else if self.proj.scopes.get(imp.tr.id).attrs.lang == Some(LangTrait::Copy) {
@@ -2198,7 +2214,7 @@ impl TypeChecker<'_> {
                         && !this.implements_trait(member_ty, &imp.tr)
                     {
                         errors.push((
-                            format!("type {} is not copyable", this.proj.fmt_ty(original)),
+                            format!("type '{}' is not copyable", this.proj.fmt_ty(original)),
                             span,
                         ));
                     }
@@ -2230,8 +2246,36 @@ impl TypeChecker<'_> {
                 }
             }
 
+            let tr_data = self.proj.scopes.get(imp.tr.id);
+            let this_id = tr_data.this;
+
+            self.resolve_super_traits(imp.tr.id);
+            for mut dep in self.proj.scopes.get(imp.tr.id).super_traits.iter_checked_owned() {
+                for ty_arg in dep.ty_args.values_mut() {
+                    if self.proj.types[*ty_arg].as_user().is_some_and(|ut| ut.id == this_id) {
+                        *ty_arg = this_ty;
+                    }
+                }
+
+                dep.fill_templates(&self.proj.types, &imp.tr.ty_args);
+                if !self.implements_trait(this_ty, &dep) {
+                    self.proj.diag.report(Error::new(
+                        format!(
+                            "trait '{}' requires implementation of trait '{}'",
+                            self.proj.fmt_tr(&imp.tr),
+                            self.proj.fmt_tr(&dep),
+                        ),
+                        imp.span,
+                    ));
+                }
+            }
+
+            for (&type_param, &ty) in imp.tr.ty_args.iter() {
+                self.check_bounds(&imp.tr.ty_args, ty, type_param, imp.span);
+            }
+
             if let Some(scope) = imp.scope {
-                self.enter_id(scope, |this| this.check_impl_block(this_ty, &imp));
+                self.enter_id(scope, |this| this.check_impl_block(this_ty, imp));
             }
         }
     }
