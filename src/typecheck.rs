@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{fmt::Write, marker::PhantomData};
 
 use crate::{
     FeatureSet, Warning,
@@ -25,6 +25,7 @@ use crate::{
         BitSizeResult, FnPtr, GenericExtension, GenericFn, GenericTrait, GenericUserType, Type,
         TypeArgs, TypeId, Types,
     },
+    utils,
 };
 
 macro_rules! resolve_type {
@@ -2044,17 +2045,23 @@ impl TypeChecker<'_> {
             self.check_signature_match(Some((tr.id, this)), lhs, rhs, &tr.ty_args);
         }
 
-        for id in required {
-            if !self.proj.scopes.get(id).has_body {
-                self.error(Error::new(
-                    format!(
-                        "must implement '{}::{}'",
-                        self.proj.fmt_tr(&tr),
-                        strdata!(self, self.proj.scopes.get(id).name.data)
-                    ),
-                    imp.span,
-                ))
+        let mut val = String::new();
+        let iter = required.into_iter().filter(|id| !self.proj.scopes.get(*id).has_body);
+        let mut count = 0;
+        _ = utils::join(&mut val, ", ", iter, |val, id| {
+            count += 1;
+            val.write_str(self.proj.str(self.proj.scopes.get(id).name.data))
+        });
+
+        if count != 0 {
+            if count > 1 {
+                val = format!("{{{val}}}");
             }
+
+            self.error(Error::new(
+                format!("must implement function(s) {}::{val}", self.proj.fmt_tr(&tr)),
+                imp.span,
+            ))
         }
     }
 

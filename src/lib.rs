@@ -14,6 +14,7 @@ mod source;
 mod sym;
 mod typecheck;
 mod typeid;
+mod utils;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -305,8 +306,4 @@ fn safe_name(s: &str) -> String {
     }
 
     r
-}
-
-fn nearest_pow_of_two(bits: u32) -> usize {
-    2usize.pow((bits as f64).log2().ceil() as u32).max(8)
 }

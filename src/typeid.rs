@@ -4,7 +4,7 @@ use crate::{
     ast::{BinaryOp, FnAbi, UnaryOp, parsed::TypeHint},
     ds::{ComptimeInt, HashArena},
     intern::StrId,
-    nearest_pow_of_two,
+    utils,
     project::Project,
     sym::{
         ExtensionId, FunctionId, HasTypeParams, ItemId, Layout, ScopeId, Scopes, TraitId,
@@ -292,7 +292,7 @@ impl GenericUserType {
                     }
                 }
 
-                let size = nearest_pow_of_two(bits) / 8;
+                let size = utils::nearest_pow_of_two(bits) / 8;
                 layout.add(LayoutItem { kind: LayoutItemKind::BitData, size, align: layout.align });
             }
             _ => {
@@ -653,7 +653,7 @@ impl TypeId {
         let sz = match &types[self] {
             Type::Int(0) | Type::Uint(0) => 0,
             Type::Int(128) | Type::Uint(128) => return (16, core::mem::align_of::<u128>()),
-            Type::Int(bits) | Type::Uint(bits) => nearest_pow_of_two(*bits) / 8,
+            Type::Int(bits) | Type::Uint(bits) => utils::nearest_pow_of_two(*bits) / 8,
             Type::Ptr(_) | Type::MutPtr(_) | Type::RawPtr(_) | Type::RawMutPtr(_) => {
                 std::mem::size_of::<*const ()>()
             }

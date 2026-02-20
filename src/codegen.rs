@@ -5,7 +5,7 @@ use crate::{
     ast::{Alignment, BinaryOp, Sign, UnaryOp, checked::*, parsed::RangePattern},
     ds::{ComptimeInt, Dependencies, DependencyGraph, HashMap, HashSet, IndexMap},
     intern::{ByteStrId, StrId, Strings},
-    nearest_pow_of_two,
+    utils,
     project::Project,
     sym::*,
     typecheck::{LookupTraitFn, MemberFn},
@@ -234,7 +234,7 @@ impl TypeGen {
                     break 'out;
                 }
 
-                let nearest = nearest_pow_of_two(bits);
+                let nearest = utils::nearest_pow_of_two(bits);
                 if decls.1.conf.build.no_bit_int || nearest == bits as usize {
                     writeln_de!(decls, "typedef int{nearest}_t s{bits};");
                 } else {
@@ -242,7 +242,7 @@ impl TypeGen {
                 }
             }
             &Type::Uint(bits) if bits != 0 => {
-                let nearest = nearest_pow_of_two(bits);
+                let nearest = utils::nearest_pow_of_two(bits);
                 if decls.1.conf.build.no_bit_int || nearest == bits as usize {
                     writeln_de!(decls, "typedef uint{nearest}_t u{bits};");
                 } else {
