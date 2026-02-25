@@ -6284,28 +6284,40 @@ impl TypeChecker<'_> {
 
         let access = self.access_to_scope(self.proj.scopes.get(ut_id).scope);
         let mut irrefutable = true;
-        let mut checked = Vec::new();
+        let mut checked: Vec<(StrId, TypeId, CPattern)> = Vec::new();
 
-        for &Destructure { name, mutable: pm, ref pattern } in destructures {
-            let Some(member) = self.proj.scopes.get(ut_id).members.get(&name.data) else {
+        for &Destructure { field, mutable: pm, ref pattern } in destructures {
+            let Some(member) = self.proj.scopes.get(ut_id).members.get(&field.data) else {
                 self.proj.diag.report(Error::no_member(
                     self.proj.fmt_ty(scrutinee),
-                    strdata!(self, name.data),
-                    name.span,
+                    strdata!(self, field.data),
+                    field.span,
                 ));
                 continue;
             };
 
-            check_hover!(self, name.span, LspItem::Property(Some(stripped), ut_id, name.data));
+            if !self.proj.str(field.data).starts_with(|ch: char| ch.is_ascii_digit()) {
+                check_hover!(
+                    self,
+                    field.span,
+                    LspItem::Property(Some(stripped), ut_id, field.data)
+                );
+            }
             if !access.can_access(member.vis) {
                 self.proj.diag.report(Error::private_member(
                     self.proj.fmt_ty(scrutinee),
-                    strdata!(self, name.data),
-                    name.span,
+                    strdata!(self, field.data),
+                    field.span,
                 ));
             }
 
-            // TODO: duplicates
+            if checked.iter().any(|c| c.0 == field.data) {
+                self.proj.diag.report(Error::new(
+                    format!("duplicate binding of field {}", strdata!(self, field.data)),
+                    field.span,
+                ));
+            }
+
             let inner = member.ty.with_ut_templates(&self.proj.types, stripped);
             let scrutinee = scrutinee.matched_inner_type(&self.proj.types, inner);
             let patt = self.check_pattern(PatternParams {
@@ -6318,7 +6330,7 @@ impl TypeChecker<'_> {
             if !patt.irrefutable {
                 irrefutable = false;
             }
-            checked.push((name.data, inner, patt))
+            checked.push((field.data, inner, patt))
         }
 
         CPattern {
@@ -6490,7 +6502,7 @@ impl TypeChecker<'_> {
                     pattern.span,
                 );
                 let destructure = Destructure {
-                    name: Located::new(patt.span, Strings::TUPLE_ZERO),
+                    field: Located::new(patt.span, Strings::TUPLE_ZERO),
                     mutable: false,
                     pattern: (**patt).clone(),
                 };

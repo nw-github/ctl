@@ -291,7 +291,7 @@ impl From<Located<StrId>> for Path {
 
 #[derive(Clone)]
 pub struct Destructure {
-    pub name: Located<StrId>,
+    pub field: Located<StrId>,
     pub mutable: bool,
     pub pattern: Located<Pattern>,
 }

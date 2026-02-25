@@ -1525,29 +1525,29 @@ impl<'a> Parser<'a> {
         }
 
         let mut next = 0;
-        self.csv_one(Token::RParen, span, |this| {
+        self.csv(vec![], Token::RParen, span, |this| {
             let pattern = this.pattern(mut_var);
-            if let Some((ident, mutable)) = to_ident(&pattern)
+            if let Some((field, mutable)) = to_ident(&pattern)
                 && this.next_if(Token::Colon).is_some()
             {
                 Destructure {
-                    name: ident,
+                    field,
                     mutable: mutable || mut_var,
                     pattern: if matches!(this.peek().data, Token::Comma | Token::RParen) {
                         if mutable {
-                            Located::new(ident.span, Pattern::MutBinding(ident.data))
+                            Located::new(field.span, Pattern::MutBinding(field.data))
                         } else {
-                            Located::new(ident.span, Pattern::Path(Path::from(ident)))
+                            Located::new(field.span, Pattern::Path(Path::from(field)))
                         }
                     } else {
                         this.pattern(false)
                     },
                 }
             } else {
-                let name =
+                let field =
                     Located::new(pattern.span, this.strings.get_or_intern(format!("{next}")));
                 next += 1;
-                Destructure { name, mutable: false, pattern }
+                Destructure { field, mutable: false, pattern }
             }
         })
     }
