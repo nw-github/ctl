@@ -86,7 +86,7 @@ unittest "variant inference" {
     match Foo::A {
         :A => return,
         :B(_x) => panic("fail"),
-        :C{x: _} => panic("fail"),
+        :C(x: _) => panic("fail"),
     }
 
     panic("fail");

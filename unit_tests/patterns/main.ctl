@@ -79,11 +79,11 @@ struct Foo { a: int, b: int }
 
 unittest "basic struct" {
     let x = Foo(a: 10, b: 15);
-    let {a, b} = x;
+    let (a:, b:) = x;
     assert_eq(a, 10);
     assert_eq(b, 15);
     match x {
-        {mut a, b} => {
+        (mut a:, b:) => {
             a += 5;
             assert_eq(a, 15);
             assert_eq(b, 15);
@@ -105,7 +105,7 @@ unittest "optional struct" {
     let i = ?Foo(a: 10, b: 20);
     match i {
         null => panic("fail"),
-        ?{mut a, b} => {
+        ?(mut a:, b:) => {
             a += 5;
             assert_eq(a, 15);
             assert_eq(b, 20);
@@ -158,7 +158,7 @@ unittest "span with middle rest pattern" {
 unittest "span with nested destructure" {
     let span = [Foo(a: 10, b: 10), Foo(a: 10, b: 10)][..];
     match span {
-        [{a, b}, {a: a2, b: b2}] => {
+        [(a:, b:), (a: a2, b: b2)] => {
             *a = 1;
             *b = 2;
             *a2 = 3;
@@ -177,7 +177,7 @@ unittest "span ptr destructure" {
     mut fooa = Foo(a: 10, b: 10);
     mut foob = Foo(a: 10, b: 10);
     match [&mut fooa, &mut foob][..] {
-        [{a, b}, {a: a2, b: b2}] => {
+        [(a:, b:), (a: a2, b: b2)] => {
             *a = 1;
             *b = 2;
             *a2 = 3;
@@ -198,7 +198,7 @@ unittest "union with inner struct" {
     let i = Quux::B(Foo(a: 10, b: 20));
     match i {
         Quux::A => panic("fail!"),
-        Quux::B({a, b}) => {
+        Quux::B((a:, b:)) => {
             assert_eq(a, 10);
             assert_eq(b, 20);
         },

@@ -18,7 +18,7 @@ pub unsafe fn format32(f: f32, res: ^mut u8): uint {
             return sign as uint + 3;
         }
 
-        let {exponent, mantissa} = f2d(ieee_mantissa, ieee_exponent);
+        let (exponent:, mantissa:) = f2d(ieee_mantissa, ieee_exponent);
         let length = int::from(decimal_length9(mantissa));
         let k = int::from(exponent);
         let kk = length + k; // 10^(kk-1) <= v < 10^kk
@@ -91,7 +91,7 @@ pub unsafe fn format64(f: f64, res: ^mut u8): uint {
             return sign as uint + 3;
         }
 
-        let {exponent, mantissa} = d2d(ieee_mantissa, ieee_exponent);
+        let (exponent:, mantissa:) = d2d(ieee_mantissa, ieee_exponent);
         let length = int::from(decimal_length17(mantissa));
         let k = int::from(exponent);
         let kk = length + k; // 10^(kk-1) <= v < 10^kk

@@ -6262,7 +6262,7 @@ impl TypeChecker<'_> {
         }
     }
 
-    fn check_struct_pattern(
+    fn check_destructure(
         &mut self,
         scrutinee: TypeId,
         mutable: bool,
@@ -6327,112 +6327,6 @@ impl TypeChecker<'_> {
                 patterns: checked,
                 borrows: self.proj.types[scrutinee].is_any_ptr(),
             },
-        }
-    }
-
-    fn check_tuple_pattern(
-        &mut self,
-        scrutinee: TypeId,
-        mutable: bool,
-        subpatterns: &[Located<Pattern>],
-        span: Span,
-        typ: PatternType,
-    ) -> CPattern {
-        let stripped = scrutinee.strip_references(&self.proj.types);
-        let Some(ut) = self
-            .proj
-            .types
-            .get(stripped)
-            .as_user()
-            .filter(|ut| self.proj.scopes.get(ut.id).kind.is_tuple())
-            .cloned()
-        else {
-            bail!(
-                self,
-                Error::expected_found(
-                    self.proj.fmt_ty(scrutinee),
-                    format_args!("({})", ["_"].repeat(subpatterns.len()).join(", ")),
-                    span,
-                )
-            );
-        };
-
-        if ut.ty_args.len() != subpatterns.len() {
-            self.proj.diag.report(Error::expected_found(
-                self.proj.fmt_ty(scrutinee),
-                format_args!("({})", ["_"].repeat(subpatterns.len()).join(", ")),
-                span,
-            ));
-        }
-
-        let mut irrefutable = true;
-        let mut checked = Vec::new();
-        for (i, patt) in subpatterns.iter().enumerate() {
-            let member = intern!(self, "{i}");
-            let Some((inner, ty)) = self
-                .proj
-                .scopes
-                .get(ut.id)
-                .members
-                .get(&member)
-                .map(|m| m.ty.with_templates(&self.proj.types, &ut.ty_args))
-                .map(|ty| (ty, scrutinee.matched_inner_type(&self.proj.types, ty)))
-            else {
-                self.proj.diag.report(Error::no_member(
-                    self.proj.fmt_ty(scrutinee),
-                    strdata!(self, member),
-                    patt.span,
-                ));
-                continue;
-            };
-
-            let patt = self.check_pattern(PatternParams {
-                scrutinee: ty,
-                mutable,
-                pattern: patt,
-                typ,
-                has_hint: false,
-            });
-            if !patt.irrefutable {
-                irrefutable = false;
-            }
-            checked.push((member, inner, patt));
-        }
-
-        CPattern {
-            irrefutable,
-            data: PatternData::Destructure {
-                patterns: checked,
-                borrows: self.proj.types[scrutinee].is_any_ptr(),
-            },
-        }
-    }
-
-    fn check_tuple_union_pattern(
-        &mut self,
-        scrutinee: TypeId,
-        mutable: bool,
-        resolved: ResolvedValue,
-        subpatterns: &[Located<Pattern>],
-        span: Span,
-        typ: PatternType,
-    ) -> CPattern {
-        match self.get_union_variant(scrutinee, resolved, span) {
-            Ok((Some(scrutinee), variant)) => CPattern::refutable(PatternData::Variant {
-                pattern: Some(
-                    self.check_tuple_pattern(scrutinee, mutable, subpatterns, span, typ).into(),
-                ),
-                variant,
-                inner: TypeId::UNKNOWN,
-                borrows: self.proj.types[scrutinee].is_any_ptr(),
-            }),
-            Ok((None, _)) => self.error(Error::expected_found(
-                "empty variant pattern",
-                "tuple variant pattern",
-                span,
-            )),
-            Err(Some(err)) => self.error(err),
-            _ => Default::default(),
         }
     }
 
@@ -6540,16 +6434,12 @@ impl TypeChecker<'_> {
         let PatternParams { scrutinee, mutable, pattern, typ, has_hint } = params;
         let span = pattern.span;
         match &pattern.data {
-            Pattern::TupleLike { path, subpatterns } => {
-                let value = self.resolve_value_path(path, Some(scrutinee));
-                self.check_tuple_union_pattern(scrutinee, mutable, value, subpatterns, span, typ)
-            }
-            Pattern::StructLike { path, subpatterns } => {
+            Pattern::VariantDestructure { path, subpatterns } => {
                 let value = self.resolve_value_path(path, Some(scrutinee));
                 match self.get_union_variant(scrutinee, value, span) {
                     Ok((Some(scrutinee), variant)) => CPattern::refutable(PatternData::Variant {
                         pattern: Some(
-                            self.check_struct_pattern(scrutinee, mutable, subpatterns, span, typ)
+                            self.check_destructure(scrutinee, mutable, subpatterns, span, typ)
                                 .into(),
                         ),
                         variant,
@@ -6599,19 +6489,34 @@ impl TypeChecker<'_> {
                     self.proj.scopes.get(id).body_scope,
                     pattern.span,
                 );
-                self.check_tuple_union_pattern(
-                    scrutinee,
-                    false,
-                    value,
-                    std::slice::from_ref(patt),
-                    pattern.span,
-                    typ,
-                )
+                let destructure = Destructure {
+                    name: Located::new(patt.span, Strings::TUPLE_ZERO),
+                    mutable: false,
+                    pattern: (**patt).clone(),
+                };
+                match self.get_union_variant(scrutinee, value, span) {
+                    Ok((Some(scrutinee), variant)) => CPattern::refutable(PatternData::Variant {
+                        pattern: Some(
+                            self.check_destructure(scrutinee, mutable, &[destructure], span, typ)
+                                .into(),
+                        ),
+                        variant,
+                        inner: TypeId::UNKNOWN,
+                        borrows: self.proj.types[scrutinee].is_any_ptr(),
+                    }),
+                    Ok((None, _)) => self.error(Error::expected_found(
+                        "empty variant pattern",
+                        "tuple variant pattern",
+                        span,
+                    )),
+                    Err(Some(err)) => self.error(err),
+                    _ => Default::default(),
+                }
             }
             &Pattern::MutBinding(name) => CPattern::irrefutable(PatternData::Variable(
                 self.insert_pattern_var(typ, Located::new(span, name), scrutinee, true, has_hint),
             )),
-            Pattern::Struct(sub) => self.check_struct_pattern(scrutinee, mutable, sub, span, typ),
+            Pattern::Destructure(sub) => self.check_destructure(scrutinee, mutable, sub, span, typ),
             &Pattern::String(value) => {
                 let string = self.make_lang_type_by_name(LangType::String, [], span);
                 if scrutinee.strip_references(&self.proj.types) != string {
@@ -6685,7 +6590,6 @@ impl TypeChecker<'_> {
 
                 CPattern::refutable(PatternData::Int(ComptimeInt::from(val)))
             }
-            Pattern::Tuple(sub) => self.check_tuple_pattern(scrutinee, mutable, sub, span, typ),
             Pattern::Void => {
                 if scrutinee.strip_references(&self.proj.types) != TypeId::VOID {
                     bail!(self, type_mismatch_err!(self, scrutinee, TypeId::VOID, span));

@@ -320,8 +320,7 @@ pub struct RangePattern<T> {
 #[derive(Clone)]
 pub enum Pattern {
     // x is ::core::opt::Option::Some(mut y)
-    TupleLike { path: Path, subpatterns: Vec<Located<Pattern>> },
-    StructLike { path: Path, subpatterns: Vec<Destructure> },
+    VariantDestructure { path: Path, subpatterns: Vec<Destructure> },
     // x is ::core::opt::Option::None
     // x is y
     Path(Path),
@@ -329,9 +328,8 @@ pub enum Pattern {
     MutBinding(StrId),
     // x is ?mut y
     Option(Box<Located<Pattern>>),
-    // let {x, y} = z;
-    Struct(Vec<Destructure>),
-    Tuple(Vec<Located<Pattern>>),
+    // let (x:, y:) = z;
+    Destructure(Vec<Destructure>),
     Int(IntPattern),
     IntRange(RangePattern<IntPattern>),
     String(StrId),

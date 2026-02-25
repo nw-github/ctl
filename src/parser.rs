@@ -1511,29 +1511,45 @@ impl<'a> Parser<'a> {
         None
     }
 
-    fn struct_like(&mut self, span: Span, mut_var: bool) -> Located<Vec<Destructure>> {
-        self.csv_one(Token::RCurly, span, |this| {
-            let mutable = this.next_if(Token::Mut);
-            if let Some(token) = mutable.filter(|_| mut_var) {
-                this.diag.report(Warning::redundant_token(this.lexer.source(), token));
+    fn destructures(&mut self, span: Span, mut_var: bool) -> Located<Vec<Destructure>> {
+        fn to_ident(patt: &Located<Pattern>) -> Option<(Located<StrId>, bool)> {
+            if let Pattern::Path(path) = &patt.data
+                && let Some(ident) = path.as_identifier()
+            {
+                Some((ident, false))
+            } else if let Pattern::MutBinding(ident) = patt.data {
+                Some((Located::new(patt.span, ident), true))
+            } else {
+                None
             }
-            let mutable = mutable.is_some();
-            let name = this.expect_ident("expected name");
-            if mutable || this.next_if(Token::Colon).is_none() {
-                let span = name.span;
+        }
+
+        let mut next = 0;
+        self.csv_one(Token::RParen, span, |this| {
+            let pattern = this.pattern(mut_var);
+            if let Some((ident, mutable)) = to_ident(&pattern)
+                && this.next_if(Token::Colon).is_some()
+            {
                 Destructure {
-                    name,
+                    name: ident,
                     mutable: mutable || mut_var,
-                    pattern: name.map(|name| Pattern::Path(Path::from(Located::new(span, name)))),
+                    pattern: if matches!(this.peek().data, Token::Comma | Token::RParen) {
+                        if mutable {
+                            Located::new(ident.span, Pattern::MutBinding(ident.data))
+                        } else {
+                            Located::new(ident.span, Pattern::Path(Path::from(ident)))
+                        }
+                    } else {
+                        this.pattern(false)
+                    },
                 }
             } else {
-                Destructure { name, mutable: mutable || mut_var, pattern: this.pattern(false) }
+                let name =
+                    Located::new(pattern.span, this.strings.get_or_intern(format!("{next}")));
+                next += 1;
+                Destructure { name, mutable: false, pattern }
             }
         })
-    }
-
-    fn tuple_like(&mut self, span: Span, mut_var: bool) -> Located<Vec<Located<Pattern>>> {
-        self.csv_one(Token::RParen, span, |this| this.pattern(mut_var))
     }
 
     fn pattern_impl(&mut self, mut_var: bool, ctx: EvalContext) -> Located<Pattern> {
@@ -1558,11 +1574,7 @@ impl<'a> Parser<'a> {
             }
             Token::LParen => {
                 let span = self.next().span;
-                return self.tuple_like(span, mut_var).map(Pattern::Tuple);
-            }
-            Token::LCurly => {
-                let span = self.next().span;
-                return self.struct_like(span, mut_var).map(Pattern::Struct);
+                return self.destructures(span, mut_var).map(Pattern::Destructure);
             }
             Token::LBrace => {
                 let span = self.next().span;
@@ -1599,18 +1611,11 @@ impl<'a> Parser<'a> {
             }
         };
 
-        match self.peek().data {
-            Token::LParen => {
-                let span = self.next().span;
-                self.tuple_like(span, mut_var)
-                    .map(|subpatterns| Pattern::TupleLike { path, subpatterns })
-            }
-            Token::LCurly if ctx != EvalContext::IfWhile => {
-                let span = self.next().span;
-                self.struct_like(span, mut_var)
-                    .map(|subpatterns| Pattern::StructLike { path, subpatterns })
-            }
-            _ => Located::new(path.span(), Pattern::Path(path)),
+        if let Some(span) = self.next_if(Token::LParen) {
+            self.destructures(span, mut_var)
+                .map(|subpatterns| Pattern::VariantDestructure { path, subpatterns })
+        } else {
+            Located::new(path.span(), Pattern::Path(path))
         }
     }
 

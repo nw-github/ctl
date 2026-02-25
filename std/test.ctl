@@ -25,7 +25,7 @@ fn test_runner(tests: [TestInfo..]) {
     mut [passed, skipped] = [0; 3];
     mut failed: [FailedTest] = @[];
     mut prev_mod = "";
-    for {test, name, module, skip, skip_reason} in tests.iter() {
+    for (test:, name:, module:, skip:, skip_reason:) in tests.iter() {
         if module != prev_mod {
             prev_mod = *module;
             eprintln("{module}:");

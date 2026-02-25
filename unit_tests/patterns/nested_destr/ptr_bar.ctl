@@ -4,7 +4,7 @@ unittest "ptr bar" {
         Baz(foo: Foo(a: 3, b: 4))
     ]);
     match Quux::A(&mut bar) {
-        Quux::A({elem: [{foo: {a, b}}, {foo: {a: a2, b: b2}}]}) => {
+        Quux::A((elem: [(foo: (a:, b:)), (foo: (a: a2, b: b2))])) => {
             *a = 5;
             *b = 5;
             *a2 = 5;

@@ -90,7 +90,7 @@ fn install_fault_handler() {
             let start_pc: uint = std::mem::bit_cast(regs[linux::REG_RIP as c_int]);
             std::bt::backtrace(start_pc:, |&resolver, =mut i = 0u, pc| {
                 defer i++;
-                if resolver.resolve(pc) is ?{func, file, line, col, offs} {
+                if resolver.resolve(pc) is ?(func:, file:, line:, col:, offs:) {
                     let func = func ?? std::bt::MaybeMangledName::from_str("??");
                     eprintln_unlocked("{i:>5}: {func} + {offs:#x} [{pc:#x}]");
                     eprintln_unlocked("{"":<8}at {file ?? "??"}:{line}:{col}");

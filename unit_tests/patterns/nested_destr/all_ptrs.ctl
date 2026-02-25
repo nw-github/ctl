@@ -2,7 +2,7 @@ unittest "all pointers" {
     mut fooa = Foo(a: 1, b: 2);
     mut foob = Foo(a: 3, b: 4);
     match Quux::A(&mut Bar(elem: &mut [&mut Baz(foo: &mut fooa), &mut Baz(foo: &mut foob)])) {
-        Quux::A({elem: [{foo: {a, b}}, {foo: {a: a2, b: b2}}]}) => {
+        Quux::A((elem: [(foo: (a:, b:)), (foo: (a: a2, b: b2))])) => {
             *a = 5;
             *b = 5;
             *a2 = 5;
