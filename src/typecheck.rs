@@ -4538,11 +4538,11 @@ impl TypeChecker<'_> {
                     return self.check_unsafe_union_constructor(target, ut, args, span);
                 }
                 ResolvedValue::Fn(func) => {
-                    let span = path.components.last().map(|c| c.0.span).unwrap_or(span);
+                    let span = path.components.last().map(|c| c.0.span).unwrap_or(path.span());
                     return self.check_known_fn_call(func, args, target, span);
                 }
                 ResolvedValue::MemberFn(mut mfn) => {
-                    let span = path.components.last().map(|c| c.0.span).unwrap_or(span);
+                    let span = path.components.last().map(|c| c.0.span).unwrap_or(path.span());
                     let f = self.proj.scopes.get(mfn.func.id);
                     if let Some(id) = f.constructor {
                         let ut = self.proj.scopes.get(id);
