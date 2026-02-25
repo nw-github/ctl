@@ -889,7 +889,7 @@ impl<'a> Parser<'a> {
                 }
             }
             Token::Is => {
-                let pattern = self.pattern_ex(false, ctx);
+                let pattern = self.pattern_ex(false);
                 self.arena.expr(left.span, ExprData::Is { expr: left, pattern })
             }
             Token::As => {
@@ -1244,7 +1244,7 @@ impl<'a> Parser<'a> {
             }
             _ => {
                 params.push((
-                    this.pattern_impl(false, EvalContext::Normal),
+                    this.pattern_impl(false),
                     this.next_if(Token::Colon).map(|_| this.type_hint()),
                 ));
             }
@@ -1552,12 +1552,12 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn pattern_impl(&mut self, mut_var: bool, ctx: EvalContext) -> Located<Pattern> {
+    fn pattern_impl(&mut self, mut_var: bool) -> Located<Pattern> {
         let path = match self.peek().data {
             Token::Question => {
                 // call pattern_impl so `?x | y` is not interpreted as `?(x | y)`
                 let start = self.next();
-                let inner = self.pattern_impl(false, ctx);
+                let inner = self.pattern_impl(false);
                 return Located::new(
                     start.span.extended_to(inner.span),
                     Pattern::Option(inner.into()),
@@ -1565,7 +1565,7 @@ impl<'a> Parser<'a> {
             }
             Token::NoneCoalesce => {
                 let start = self.next();
-                let inner = self.pattern_impl(false, ctx);
+                let inner = self.pattern_impl(false);
                 return Located::new(
                     start.span.extended_to(inner.span),
                     // TODO: fix this span
@@ -1619,13 +1619,13 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn pattern_ex(&mut self, mut_var: bool, ctx: EvalContext) -> Located<Pattern> {
-        let patt = self.pattern_impl(mut_var, ctx);
+    fn pattern_ex(&mut self, mut_var: bool) -> Located<Pattern> {
+        let patt = self.pattern_impl(mut_var);
         if self.matches(Token::BitOr) {
             let mut span = patt.span;
             let mut patterns = vec![patt];
             while self.next_if(Token::BitOr).is_some() {
-                let patt = self.pattern_ex(mut_var, ctx);
+                let patt = self.pattern_ex(mut_var);
                 span.extend_to(patt.span);
                 patterns.push(patt);
             }
@@ -1636,7 +1636,7 @@ impl<'a> Parser<'a> {
     }
 
     fn pattern(&mut self, mut_var: bool) -> Located<Pattern> {
-        self.pattern_ex(mut_var, EvalContext::Normal)
+        self.pattern_ex(mut_var)
     }
 
     fn is_range_end(&mut self, ctx: EvalContext) -> bool {
