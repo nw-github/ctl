@@ -31,6 +31,12 @@ extension f32 {
 
     pub fn %=(mut this, rhs: This) => *this = *this % rhs;
 
+    $[intrinsic(unary_op)]
+    pub fn ++(mut this) { (*this)++; }
+
+    $[intrinsic(unary_op)]
+    pub fn --(mut this) { (*this)--; }
+
     pub fn parse(s: str): ?f32 => s2f::s2f(s.as_bytes()) is :Ok(v) then v;
 
     pub fn to_bits(my this): u32 => unsafe std::mem::bit_cast(this);
@@ -144,6 +150,12 @@ extension f64 {
     pub fn /=(mut this, rhs: This) => *this /= rhs;
 
     pub fn %=(mut this, rhs: This) => *this = *this % rhs;
+
+    $[intrinsic(unary_op)]
+    pub fn ++(mut this) { (*this)++; }
+
+    $[intrinsic(unary_op)]
+    pub fn --(mut this) { (*this)--; }
 
     pub fn parse(s: str): ?f64 => s2d::s2d(s.as_bytes()) is :Ok(v) then v;
 

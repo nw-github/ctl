@@ -4,12 +4,12 @@ use crate::{
     ast::{BinaryOp, FnAbi, UnaryOp, parsed::TypeHint},
     ds::{ComptimeInt, HashArena},
     intern::StrId,
-    utils,
     project::Project,
     sym::{
         ExtensionId, FunctionId, HasTypeParams, ItemId, Layout, ScopeId, Scopes, TraitId,
         UserTypeId, UserTypeKind,
     },
+    utils,
 };
 use derive_more::{Constructor, Deref, DerefMut};
 use enum_as_inner::EnumAsInner;
@@ -628,7 +628,10 @@ impl TypeId {
                     || matches!(this, Type::F32 | Type::F64)
             }
             PostIncrement | PostDecrement | PreIncrement | PreDecrement => {
-                this.is_integral() || this.is_raw_ptr() || this.is_raw_mut_ptr()
+                this.is_integral()
+                    || this.is_raw_ptr()
+                    || this.is_raw_mut_ptr()
+                    || matches!(this, Type::F32 | Type::F64)
             }
             Not => this.is_integral() || this.is_bool(),
             Try => this.as_option_inner(scopes).is_some(),
